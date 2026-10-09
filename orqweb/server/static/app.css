@@ -28,6 +28,8 @@ background:var(--card);cursor:pointer;white-space:nowrap;color:var(--mute);max-w
 .tab .meta{font-size:11px;overflow:hidden;text-overflow:ellipsis}.tab .x{color:var(--mute);padding:0 2px}.tab .x:hover{color:var(--bad)}
 .tab.term{opacity:.75;border-style:dashed}.tab .cv{color:var(--work);font-weight:700;padding:0 2px}.tab .cv:hover{color:var(--ink)}
 .perm.term{border-color:var(--line)}.perm.term .t{color:var(--mute)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:6px;flex:none}
+.tab .sw{margin:0 2px 0 0}
 .tab.plus{padding:7px 12px;font-weight:600}.tab .kbd{font-size:10px;color:var(--mute);border:1px solid var(--line);border-radius:4px;padding:0 4px}
 @keyframes pulse{50%{opacity:.35}}
 /* chat */

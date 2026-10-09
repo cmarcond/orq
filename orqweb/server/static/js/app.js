@@ -33,6 +33,8 @@ const agentApi = (label, op, body = {}) => api(`/api/agent/${encodeURIComponent(
 
 // ---------------------------------------------------------------- cota
 let LAB = {};
+let COL = {}; // cor por conta, vinda do accounts.json (ou da paleta padrão)
+const colorOf = (acc) => COL[acc] || 'var(--mute)';
 function meter(u, k) {
   if (u[k] == null) return '';
   const p = u[k],
@@ -45,7 +47,7 @@ function meter(u, k) {
 function renderUsage(us) {
   $('usage').innerHTML = Object.entries(us)
     .map(
-      ([n, u]) => `<div class="ucard"><div class="name"><span>${esc(LAB[n] || n)}</span>${
+      ([n, u]) => `<div class="ucard" style="border-top:3px solid ${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
       }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}</div>`,
     )
@@ -76,8 +78,10 @@ function renderTabs() {
           : a.tmux
             ? `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`
             : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
-        return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(a.dir || '')}">
-        <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))} · ${esc(a.account || '?')}${sdk ? '' : ' · <i>terminal</i>'}</span>${tail}</div>`;
+        const col = colorOf(a.account);
+        const tip = `${a.dir || ''}\nconta ${LAB[a.account] || a.account || '?'}`;
+        return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(tip)}" style="border-left:4px solid ${col}">
+        <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))}${sdk ? '' : ' · <i>terminal</i>'}</span><i class="sw" style="background:${col}" title="${esc(LAB[a.account] || a.account || '')}"></i>${tail}</div>`;
       })
       .join('') + `<div class="tab plus" id="plus" title="abrir projeto">+</div>`;
   nav.querySelectorAll('.tab[data-l]').forEach(
@@ -145,7 +149,7 @@ function showTerminal(l, a) {
     $('chats').appendChild(t.el);
   }
   t.el.innerHTML = `<div class="inner"><div class="perm term"><div class="t">Sessão do claude no terminal</div>
-    <div class="small mute">tmux <code>${esc(a.tmux || '?')}</code> · conta ${esc(a.account || '?')} · <code>${esc(a.dir || '')}</code>${
+    <div class="small mute">tmux <code>${esc(a.tmux || '?')}</code> · <i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '?')} · <code>${esc(a.dir || '')}</code>${
       a.msg ? ` · ${esc(a.msg)}` : ''
     }</div>
     <p>A conversa dela não passa pela página. <b>Converter</b> dá <code>/exit</code> nela (ou Ctrl-C, se não responder) e reabre a mesma conversa aqui, como agente da página. Nada se perde: o Claude Code grava cada mensagem em disco.</p>
@@ -185,7 +189,11 @@ function status() {
   const t = tabs[cur];
   const a = t && (agents.find((x) => x.label === cur) || t.a);
   const st = a ? a.state : '';
-  $('cstate').textContent = a ? `${ST[st] || st}${a.msg && st !== 'working' ? ' · ' + a.msg : ''}` : '';
+  $('cstate').innerHTML = a
+    ? `<i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '')} · ${esc(ST[st] || st)}${
+        a.msg && st !== 'working' ? ' · ' + esc(a.msg) : ''
+      }`
+    : '';
   $('stop').hidden = st !== 'working';
 }
 function setState(t, st, msg) {
@@ -468,6 +476,7 @@ async function refresh() {
     const s = await api('/api/state');
     if (s.err) return;
     LAB = s.labels;
+    COL = s.colors || {};
     renderUsage(s.usage);
     agents = s.agents;
     for (const a of agents) {

@@ -8,7 +8,13 @@ from orqweb import config
 RAW = {
     "accounts": [
         {"name": "work", "email": "a@x", "label": "Work (a@x)", "config_dir": "~/.claude"},
-        {"name": "gmail", "email": "g@x", "label": "Gmail (g@x)", "config_dir": "~/.claude-gmail"},
+        {
+            "name": "gmail",
+            "email": "g@x",
+            "label": "Gmail (g@x)",
+            "config_dir": "~/.claude-gmail",
+            "color": "#123456",
+        },
     ],
     "permission_mode": "auto",
     "orq_hosts": ["server0"],
@@ -22,6 +28,9 @@ def test_parse_accounts_and_options():
     assert c.accounts["gmail"].config_dir == Path.home() / ".claude-gmail"
     assert c.permission_mode == "auto" and c.hosts == ["server0"]
     assert c.labels == {"work": "Work", "gmail": "Gmail"}
+    assert c.colors == {"work": config.PALETTE[0], "gmail": "#123456"}, (
+        "paleta por posição; color sobrescreve"
+    )
 
 
 def test_defaults():

@@ -121,6 +121,7 @@ def test_snapshot_after_refresh():
     assert snap["usage"]["gmail"]["7d"] == 40
     assert snap["agents"][0]["label"] == "a@laptop" and snap["host_errors"] == {"node1": "sem resposta"}
     assert snap["accounts"] == ["gmail"] and snap["labels"] == {"gmail": "gmail"}
+    assert snap["colors"] == {"gmail": config.PALETTE[0]}
     assert c.live_labels() == {"a@laptop"} and c.running_accounts() == ["gmail"]
 
 

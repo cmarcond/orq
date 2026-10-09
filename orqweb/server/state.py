@@ -68,6 +68,7 @@ class StateCache:
                 "host_errors": dict(self.host_errors),
                 "accounts": list(self.conf.accounts),
                 "labels": self.conf.labels,
+                "colors": self.conf.colors,
             }
 
     # ---- agentes abertos pela página

@@ -43,12 +43,17 @@ def host_of(label: str) -> str:
     return label.rsplit("@", 1)[1] if "@" in label else "laptop"
 
 
+# Paleta padrão por posição no accounts.json; "color" na conta sobrescreve. Legível em claro e escuro.
+PALETTE = ["#2b6cb0", "#c05621", "#2f855a", "#805ad5", "#b7791f", "#c53030", "#0987a0", "#97266d"]
+
+
 @dataclass
 class Account:
     name: str
     config_dir: Path
     label: str
     email: str = ""
+    color: str = PALETTE[0]
 
     @property
     def is_default(self) -> bool:
@@ -75,6 +80,10 @@ class Config:
     def labels(self) -> Dict[str, str]:
         return {n: a.label for n, a in self.accounts.items()}
 
+    @property
+    def colors(self) -> Dict[str, str]:
+        return {n: a.color for n, a in self.accounts.items()}
+
     def account(self, name: str) -> Account:
         try:
             return self.accounts[name]
@@ -86,13 +95,14 @@ class Config:
 
 def parse(raw: dict) -> Config:
     accounts = {}
-    for a in raw.get("accounts", []):
+    for i, a in enumerate(raw.get("accounts", [])):
         d = Path(os.path.expanduser(a.get("config_dir") or "~/.claude"))
         accounts[a["name"]] = Account(
             name=a["name"],
             config_dir=d,
             label=(a.get("label") or a["name"]).split(" (")[0],
             email=a.get("email", ""),
+            color=a.get("color") or PALETTE[i % len(PALETTE)],
         )
     return Config(
         accounts=accounts,
