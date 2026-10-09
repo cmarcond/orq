@@ -89,9 +89,17 @@ def server(agent):
         ("127.0.0.1", 0), H.make_handler(ctx)
     )  # a mesma classe do app: ignora conexões fechadas pelo cliente
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    CTX[srv.server_address[1]] = ctx
     yield srv.server_address[1], ext, state
     srv.shutdown()
     srv.server_close()
+
+
+CTX = {}
+
+
+def server_ctx(port):
+    return CTX[port]
 
 
 def req(port, method, path, body=None, token=TOKEN, host=None):
@@ -283,3 +291,47 @@ def test_index_and_static_are_served_with_types(server):
         status, _, r = req(port, "GET", path)
         assert status == 200 and r.getheader("Content-Type").startswith(ctype), path
     assert req(port, "GET", "/static/js/events.js")[0] == 200
+
+
+# ---------------------------------------------------------------- converter claude de terminal
+def test_convert_endpoint(server):
+    port, ext, state = server
+    calls = []
+    # injeta um claude de terminal no cache e um conversor falso no contexto
+    state.add_provisional(
+        {
+            "label": "kaggle@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/k",
+            "state": "waiting",
+            "tmux": "claude-gmail-kaggle",
+        }
+    )
+    srv_ctx = server_ctx(port)
+    srv_ctx.conf.hosts.append("server0")
+    srv_ctx.convert = lambda host, label: (
+        calls.append((host, label)) or {"ok": True, "label": label, "how": "exit", "msg": "aberto"}
+    )
+    status, body, _ = req(port, "POST", "/api/agent/convert", {"label": "kaggle@server0"})
+    assert status == 200 and body["label"] == "kaggle@server0" and body["how"] == "exit"
+    assert calls == [("server0", "kaggle@server0")]
+    assert any(
+        a["label"] == "kaggle@server0" and a.get("kind") == "sdk" for a in state.snapshot()["agents"]
+    )
+    # agente da página não é convertível; máquina desconhecida é inválida; falha vira 500
+    assert req(port, "POST", "/api/agent/convert", {"label": "proj@laptop"})[0] in (404, 400)
+    assert req(port, "POST", "/api/agent/convert", {"label": "x@nope"})[0] == 400
+    srv_ctx.convert = lambda host, label: {"ok": False, "msg": "não fechou"}
+    state.add_provisional(
+        {
+            "label": "y@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/y",
+            "state": "waiting",
+            "tmux": "t",
+        }
+    )
+    status, body, _ = req(port, "POST", "/api/agent/convert", {"label": "y@server0"})
+    assert status == 500 and body["err"] == "não fechou"

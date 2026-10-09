@@ -11,7 +11,7 @@ rm -rf "$LIB/orqweb"
 cp -R "$HERE/orqweb" "$LIB/orqweb"
 find "$LIB/orqweb" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 python3 -m compileall -q "$LIB/orqweb" >/dev/null 2>&1 || true
-for cmd in orq-agent:orqweb.agent.cli orq-web:orqweb.server.cli; do
+for cmd in orq-agent:orqweb.agent.cli orq-web:orqweb.server.cli converte-web:orqweb.convert; do
   name=${cmd%%:*}; mod=${cmd#*:}
   cat > "$BIN/$name" <<SH
 #!/bin/sh
@@ -21,4 +21,4 @@ SH
   chmod +x "$BIN/$name"
 done
 ver=$(python3 -c "import sys; sys.path.insert(0, '$LIB'); import orqweb; print(orqweb.__version__)")
-echo "orq-web $ver instalado: $BIN/orq-agent e $BIN/orq-web (código em $LIB)"
+echo "orq-web $ver instalado: $BIN/orq-agent, $BIN/orq-web e $BIN/converte-web (código em $LIB)"

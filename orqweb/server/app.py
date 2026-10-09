@@ -61,7 +61,7 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
     conf = conf or config.load()
     ext = External()
     state = StateCache(conf, ext)
-    ctx = Context(conf, state, BridgeRegistry(), ext.spawn, token)
+    ctx = Context(conf, state, BridgeRegistry(), ext.spawn, token, convert=ext.convert)
     try:
         srv = Server(("127.0.0.1", port), make_handler(ctx))
     except OSError as e:

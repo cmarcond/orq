@@ -10,6 +10,9 @@ Uso:
         cada linha JSON do stdin vai para o claude. É o que o orq-web usa, local ou por ssh.
   orq-agent stop NOME          encerra o claude e o supervisor (a conversa fica salva)
   orq-agent list               agentes desta máquina com estado
+  orq-agent convert NOME [--account CONTA]
+        fecha um claude interativo que roda num tmux desta máquina (/exit, Ctrl-C, SIGTERM) e
+        reabre a mesma conversa como agente da página; imprime JSON {ok, label, how, msg}
 
 Estado em ~/.cache/orq/<nome>/: agent.sock, events.jsonl, state.json.
 """
@@ -20,7 +23,7 @@ import sys
 from pathlib import Path
 
 from .. import config
-from . import claude, client, events
+from . import claude, client, convert, events
 from .state import list_agents
 from .supervisor import Supervisor
 
@@ -82,6 +85,41 @@ def cmd_stop(a: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_convert(a: argparse.Namespace) -> int:
+    import json
+    import socket
+    import subprocess
+
+    host = a.label.split("@", 1)[1] if "@" in a.label else socket.gethostname().split(".")[0]
+    try:
+        r = subprocess.run(
+            [str(config.bin_dir() / "orq"), "--status-json"], capture_output=True, text=True, timeout=30
+        )
+        status = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        print(json.dumps({"ok": False, "label": a.label, "how": "", "msg": f"orq --status-json falhou: {e}"}))
+        return 1
+    base = a.label.split("@")[0]
+    entry = next((e for e in convert.terminal_sessions(status) if e.get("label") in (a.label, base)), None)
+    if entry is None:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "label": a.label,
+                    "how": "",
+                    "msg": "não há claude interativo em tmux com esse nome",
+                }
+            )
+        )
+        return 1
+    if a.account:
+        entry["account"] = a.account
+    res = convert.convert(entry, host, client.spawn)
+    print(json.dumps(res, ensure_ascii=False))
+    return 0 if res["ok"] else 1
+
+
 def cmd_list(_: argparse.Namespace) -> int:
     for st in list_agents(config.state_root()):
         print(
@@ -112,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_stop)
     p = sub.add_parser("list")
     p.set_defaults(fn=cmd_list)
+    p = sub.add_parser("convert")
+    p.add_argument("label")
+    p.add_argument("--account")
+    p.set_defaults(fn=cmd_convert)
     return ap
 
 

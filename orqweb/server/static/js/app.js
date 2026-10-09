@@ -59,7 +59,7 @@ let agents = [];
 const hostOf = (l) => l.split('@').pop();
 
 function tabOrder() {
-  const live = agents.filter((a) => a.state !== 'closed' && a.kind === 'sdk').map((a) => a.label);
+  const live = agents.filter((a) => a.state !== 'closed').map((a) => a.label); // sdk e terminal (este só para converter)
   for (const l in tabs) if (!live.includes(l) && tabs[l].el) live.push(l);
   return live;
 }
@@ -70,15 +70,19 @@ function renderTabs() {
     order
       .map((l, i) => {
         const a = agents.find((x) => x.label === l) || tabs[l]?.a || { label: l };
-        return `<div class="tab ${a.state || ''} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(a.dir || '')}">
-        <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))} · ${esc(a.account || '?')}</span>
-        ${i < 9 ? `<span class="kbd">⌘${i + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span></div>`;
+        const sdk = a.kind === 'sdk';
+        const tail = sdk
+          ? `${i < 9 ? `<span class="kbd">⌘${i + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
+          : `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`;
+        return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(a.dir || '')}">
+        <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))} · ${esc(a.account || '?')}${sdk ? '' : ' · <i>terminal</i>'}</span>${tail}</div>`;
       })
       .join('') + `<div class="tab plus" id="plus" title="abrir projeto">+</div>`;
   nav.querySelectorAll('.tab[data-l]').forEach(
     (el) =>
       (el.onclick = (e) => {
         if (e.target.dataset.x) return askStop(e.target.dataset.x);
+        if (e.target.dataset.cv) return convertAgent(e.target.dataset.cv);
         show(el.dataset.l);
       }),
   );
@@ -102,7 +106,7 @@ function tab(l) {
 }
 function show(l) {
   const ag = agents.find((x) => x.label === l);
-  if (ag && ag.kind !== 'sdk') return;
+  if (ag && ag.kind !== 'sdk') return showTerminal(l, ag);
   cur = l;
   const t = tab(l);
   t.a = ag || t.a || { label: l };
@@ -128,6 +132,47 @@ function show(l) {
   status();
   scrollEnd(t);
   $('input').focus();
+}
+function showTerminal(l, a) {
+  cur = l;
+  const t = tab(l);
+  t.a = a;
+  if (!t.el) {
+    t.el = document.createElement('div');
+    t.el.className = 'chat';
+    $('chats').appendChild(t.el);
+  }
+  t.el.innerHTML = `<div class="inner"><div class="perm term"><div class="t">Sessão do claude no terminal</div>
+    <div class="small mute">tmux <code>${esc(a.tmux || '?')}</code> · conta ${esc(a.account || '?')} · <code>${esc(a.dir || '')}</code>${
+      a.msg ? ` · ${esc(a.msg)}` : ''
+    }</div>
+    <p>A conversa dela não passa pela página. <b>Converter</b> dá <code>/exit</code> nela (ou Ctrl-C, se não responder) e reabre a mesma conversa aqui, como agente da página. Nada se perde: o Claude Code grava cada mensagem em disco.</p>
+    <div class="btns"><button class="ok">⇄ Converter para a página</button></div></div></div>`;
+  t.el.querySelector('.ok').onclick = () => convertAgent(l);
+  document.querySelectorAll('.chat').forEach((e) => e.classList.toggle('on', e === t.el));
+  $('empty').style.display = 'none';
+  $('composer').hidden = true;
+  for (const k in tabs)
+    if (tabs[k].es) {
+      tabs[k].es.close();
+      tabs[k].es = null;
+    }
+  renderTabs();
+}
+async function convertAgent(l) {
+  toast(`convertendo ${l.split('@')[0]}… (fecha o claude do terminal e reabre aqui)`);
+  const j = await api('/api/agent/convert', { label: l });
+  if (!j.label) return;
+  toast(`${j.label} convertido${j.how ? ` (fechado por ${j.how})` : ''}`);
+  for (const k of [l, j.label]) {
+    if (tabs[k]) {
+      tabs[k].el?.remove();
+      delete tabs[k];
+    }
+  }
+  cur = null;
+  await refresh();
+  show(j.label);
 }
 function status() {
   const t = tabs[cur];

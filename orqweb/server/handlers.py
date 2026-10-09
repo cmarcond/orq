@@ -139,6 +139,8 @@ def make_handler(ctx: Context):
             path = urlparse(self.path).path
             if path == "/api/agent/open":
                 return self.open_agent(body)
+            if path == "/api/agent/convert":
+                return self.convert_agent(body)
             label, op = self.agent_path(path)
             if op is None:
                 return self.reply(404, {"err": "?"})
@@ -149,6 +151,29 @@ def make_handler(ctx: Context):
             if err:
                 return self.reply(500, {"err": err})
             return self.reply(200, {"msg": f"encerrando {label}"} if op == "stop" else {"ok": True})
+
+        def convert_agent(self, body: dict) -> None:
+            """Fecha o claude interativo daquele tmux e reabre a conversa como agente da página."""
+            label = body.get("label") or ""
+            host = label.rsplit("@", 1)[1] if "@" in label else ""
+            if not ctx.convert or host not in ["laptop"] + list(ctx.conf.hosts):
+                return self.reply(400, {"err": "agente inválido"})
+            with ctx.state.lock:
+                entry = next(
+                    (a for a in ctx.state.agents if a.get("label") == label and a.get("kind") != "sdk"), None
+                )
+            if entry is None:
+                return self.reply(404, {"err": "esse agente não é um claude de terminal"})
+            res = ctx.convert(host, label)
+            if not res.get("ok"):
+                return self.reply(500, {"err": res.get("msg") or "falhou"})
+            new_label = res.get("label") or label
+            ctx.state.add_provisional(
+                provisional_agent(
+                    new_label, host, entry.get("account") or "?", entry.get("dir") or "", time.time()
+                )
+            )
+            return self.reply(200, {"label": new_label, "how": res.get("how"), "msg": res.get("msg")})
 
         def open_agent(self, body: dict) -> None:
             snap = ctx.state.snapshot()

@@ -86,6 +86,28 @@ class External:
             res = list(ex.map(self.agents, [LAPTOP] + list(hosts)))
         return [a for _, lst, _ in res for a in lst], {h: e for h, _, e in res if e}
 
+    # ---- converter claude de terminal em agente da página
+    def convert(self, host: str, label: str) -> dict:
+        """`orq-agent convert` na máquina do tmux. Devolve o JSON dele ou {ok: False, msg}."""
+        try:
+            if host == LAPTOP:
+                r = self.run([str(self.bin / "orq-agent"), "convert", label], 90)
+            else:
+                import shlex
+
+                r = self.run(ssh_cmd(host, "~/.local/bin/orq-agent convert " + shlex.quote(label), 8), 90)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"ok": False, "label": label, "how": "", "msg": str(e)}
+        try:
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return {
+                "ok": False,
+                "label": label,
+                "how": "",
+                "msg": (r.stderr.strip() or r.stdout.strip() or "falhou")[-200:],
+            }
+
     # ---- abrir agente
     def spawn(self, host: str, label: str, cwd: str, account: str, mode: str) -> Optional[str]:
         """Sobe o supervisor na máquina. Devolve mensagem de erro ou None."""
