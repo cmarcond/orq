@@ -47,7 +47,7 @@ function meter(u, k) {
 function renderUsage(us) {
   $('usage').innerHTML = Object.entries(us)
     .map(
-      ([n, u]) => `<div class="ucard" style="border-top:3px solid ${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
+      ([n, u]) => `<div class="ucard" style="--acc:${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
       }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}</div>`,
     )
@@ -80,7 +80,7 @@ function renderTabs() {
             : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
         const col = colorOf(a.account);
         const tip = `${a.dir || ''}\nconta ${LAB[a.account] || a.account || '?'}`;
-        return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(tip)}" style="border-left:4px solid ${col}">
+        return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(tip)}" style="--acc:${col}">
         <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))}${sdk ? '' : ' · <i>terminal</i>'}</span><i class="sw" style="background:${col}" title="${esc(LAB[a.account] || a.account || '')}"></i>${tail}</div>`;
       })
       .join('') + `<div class="tab plus" id="plus" title="abrir projeto">+</div>`;

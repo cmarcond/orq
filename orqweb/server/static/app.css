@@ -28,6 +28,13 @@ background:var(--card);cursor:pointer;white-space:nowrap;color:var(--mute);max-w
 .tab .meta{font-size:11px;overflow:hidden;text-overflow:ellipsis}.tab .x{color:var(--mute);padding:0 2px}.tab .x:hover{color:var(--bad)}
 .tab.term{opacity:.75;border-style:dashed}.tab .cv{color:var(--work);font-weight:700;padding:0 2px}.tab .cv:hover{color:var(--ink)}
 .perm.term{border-color:var(--line)}.perm.term .t{color:var(--mute)}
+/* cor da conta (--acc, inline): aba e cartão tingidos; a aba ativa mais forte; nome da pasta na cor */
+.tab[style*="--acc"]{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 18%,var(--card));color:var(--ink)}
+.tab[style*="--acc"].on{background:color-mix(in srgb,var(--acc) 38%,var(--card));border-bottom-color:color-mix(in srgb,var(--acc) 38%,var(--card));box-shadow:inset 0 3px 0 var(--acc)}
+.tab[style*="--acc"] .meta b{color:var(--acc);filter:brightness(.85)}
+@media (prefers-color-scheme:dark){.tab[style*="--acc"] .meta b{filter:brightness(1.35)}.tab[style*="--acc"]{background:color-mix(in srgb,var(--acc) 26%,var(--card))}.tab[style*="--acc"].on{background:color-mix(in srgb,var(--acc) 48%,var(--card));border-bottom-color:color-mix(in srgb,var(--acc) 48%,var(--card))}}
+.ucard[style*="--acc"]{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,var(--card));box-shadow:inset 0 3px 0 var(--acc)}
+.ucard[style*="--acc"] .name{color:var(--acc);filter:brightness(.85)}@media (prefers-color-scheme:dark){.ucard[style*="--acc"] .name{filter:brightness(1.35)}}
 .sw{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:-1px;margin-right:6px;flex:none}
 .tab .sw{margin:0 2px 0 0}
 .tab.plus{padding:7px 12px;font-weight:600}.tab .kbd{font-size:10px;color:var(--mute);border:1px solid var(--line);border-radius:4px;padding:0 4px}
