@@ -86,6 +86,19 @@ def test_already_gone_is_exit():
     assert t.sent == []
 
 
+def test_is_claude_recognizes_linux_and_macos_names():
+    assert C.is_claude("claude") and C.is_claude("/home/c/.local/bin/claude")
+    assert C.is_claude("2.1.296") and C.is_claude("/Users/c/.local/share/claude/versions/2.1.296")
+    assert not C.is_claude("bash") and not C.is_claude("python3") and not C.is_claude("")
+
+
+def test_close_recognizes_macos_binary_name():
+    t = FakeTmux(exits_on=("Enter",))
+    t.pane_command = lambda sess: "2.1.296" if t.alive else "zsh"
+    assert C.close_claude(t, "s", sleep=nosleep) == "exit"
+    assert "Enter" in t.sent, "não pode achar que já saiu só porque o nome não é 'claude'"
+
+
 def test_terminal_sessions_filter():
     status = [
         {"label": "a", "tmux": "claude-gmail-a", "state": "waiting"},

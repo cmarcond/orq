@@ -32,6 +32,15 @@ Na página: **+** abre um projeto (lista de todas as máquinas, ou `maquina:/cam
 trocam de aba; `Enter` envia, `Shift+Enter` quebra linha, `Esc` interrompe; `✕` duas vezes
 encerra o agente (a conversa fica salva).
 
+Um `claude` interativo que já está rodando num tmux (aberto por `claude-gmail` etc.) aparece na
+página como aba tracejada com o botão **⇄ converter**: a página dá `/exit` nele (ou Ctrl-C, ou
+SIGTERM, nessa ordem) e reabre a mesma conversa como agente da página. No terminal:
+
+```sh
+converte-web                     # lista os claude interativos em tmux de todas as máquinas
+converte-web kaggle@server0    # converte um (ou --all)
+```
+
 Nas máquinas, o servidor chama `~/.local/bin/orq-agent`:
 
 ```sh
@@ -39,6 +48,7 @@ orq-agent spawn --dir ~/acervo --account gmail --label acervo@node0   # o que a 
 orq-agent list                                                          # agentes desta máquina
 orq-agent stop acervo@node0                                           # encerra um
 orq-agent attach acervo@node0 --since 0                               # ponte crua (debug)
+orq-agent convert kaggle@server0                                      # o que o converte-web roda lá
 ```
 
 Configuração (no `accounts.json` do claude-multiconta): `permission_mode` dos agentes da página
@@ -63,6 +73,8 @@ navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attac
 | `orqweb/agent/supervisor.py` | processo + socket + clientes; encerramento limpo |
 | `orqweb/agent/client.py` | `attach` (ponte stdin/stdout), `stop`, `spawn` em tmux `orqs-<nome>` |
 | `orqweb/agent/state.py` | `state.json` atômico, lido pelo `orq --status-json` |
+| `orqweb/agent/convert.py` | fecha um `claude` interativo de tmux em escalada e reabre a conversa como agente |
+| `orqweb/convert.py` | CLI `converte-web`: lista e converte em qualquer máquina |
 | `orqweb/server/external.py` | chamadas aos utilitários e às máquinas (ssh), por um `Runner` injetável |
 | `orqweb/server/assign.py` | escolha da conta pela folga no 7d e rótulo `pasta@maquina` |
 | `orqweb/server/state.py` | cache de cota/agentes/projetos; laços de fundo só com a página aberta |

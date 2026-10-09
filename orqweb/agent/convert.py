@@ -7,6 +7,7 @@ A sequência de fechamento é escalonada: /exit, Ctrl-C duplo, SIGTERM. Nunca SI
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -51,6 +52,16 @@ class Tmux:
         self.run([self.bin, "kill-session", "-t", "=" + sess])
 
 
+VERSION_NAME = re.compile(r"^\d+(\.\d+)+$")
+
+
+def is_claude(name: str) -> bool:
+    """O processo do Claude Code se chama `claude` (Linux) ou pelo número da versão, nome do binário
+    real sob ~/.local/share/claude/versions (macOS)."""
+    base = os.path.basename(name or "")
+    return base.startswith("claude") or bool(VERSION_NAME.match(base))
+
+
 def claude_pids_under(pane_pid: int, run: Runner = _run) -> List[int]:
     """PIDs de processos `claude` descendentes do painel (o Claude Code pode estar sob um shell)."""
     r = run(["ps", "-eo", "pid=,ppid=,comm="])
@@ -66,7 +77,7 @@ def claude_pids_under(pane_pid: int, run: Runner = _run) -> List[int]:
     out, stack = [], [pane_pid]
     while stack:
         p = stack.pop()
-        if os.path.basename(names.get(p, "")).startswith("claude"):
+        if is_claude(names.get(p, "")):
             out.append(p)
         stack += kids.get(p, [])
     return out
@@ -74,7 +85,7 @@ def claude_pids_under(pane_pid: int, run: Runner = _run) -> List[int]:
 
 def claude_gone(tmux: Tmux, sess: str) -> bool:
     """O claude interativo saiu: a sessão acabou, ou o painel voltou a um shell."""
-    return not tmux.has_session(sess) or not tmux.pane_command(sess).startswith("claude")
+    return not tmux.has_session(sess) or not is_claude(tmux.pane_command(sess))
 
 
 def close_claude(
