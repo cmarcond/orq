@@ -9,19 +9,25 @@ button{font:inherit;color:var(--ink);background:var(--card);border:1px solid var
 button:hover{border-color:var(--ink)}button.ghost{background:transparent;border-color:transparent;color:var(--mute)}button.ghost:hover{color:var(--ink)}
 input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 /* cota */
-.usage{display:flex;gap:8px;padding:10px 16px 6px;overflow-x:auto;border-bottom:1px solid var(--line);background:var(--bg)}
-.ucard{flex:1 0 150px;min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-.ucard .name{font-weight:600;font-size:13px;display:flex;justify-content:space-between}
-.urow{display:grid;grid-template-columns:18px 1fr 36px 44px;gap:6px;align-items:center;font-size:11px;color:var(--mute);margin-top:4px}
+/* topo: abas por máquina à esquerda (60%), cota à direita (40%) */
+.top{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--bg)}
+.top .tabs{flex:3;min-width:0;border-bottom:none}
+.usage{flex:2;max-width:40%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:8px 12px 8px 8px;border-left:1px solid var(--line);align-content:start}
+.ucard{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+@media (max-width:900px){.top{flex-direction:column}.usage{max-width:none;border-left:none;border-top:1px solid var(--line);grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+.ucard .name{font-weight:600;font-size:12px;display:flex;justify-content:space-between}
+.urow{display:grid;grid-template-columns:18px 1fr 34px 44px;gap:5px;align-items:center;font-size:11px;color:var(--mute);margin-top:3px}
 .meter{position:relative;height:7px;background:var(--bar);border-radius:4px}
 .meter i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok)}
 .meter b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.8}
 .over i{background:var(--warn)}.far i{background:var(--bad)}.pct{text-align:right;color:var(--ink)}
 /* abas */
-.tabs{display:flex;gap:4px;padding:8px 12px 0;border-bottom:1px solid var(--line);overflow-x:auto;background:var(--bg)}
+.tabs{display:flex;flex-direction:column;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line);background:var(--bg)}
+.trow{display:flex;align-items:flex-end;gap:8px}.trow .host{flex:none;width:84px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);padding-bottom:9px;text-align:right}
+.tline{display:flex;gap:4px;overflow-x:auto;flex:1;min-width:0}.trow+.trow .tline{border-top:1px dashed var(--line);padding-top:4px}
 .tab{display:flex;align-items:center;gap:7px;padding:7px 12px;border:1px solid var(--line);border-bottom:none;border-radius:10px 10px 0 0;
 background:var(--card);cursor:pointer;white-space:nowrap;color:var(--mute);max-width:260px}
-.tab.on{color:var(--ink);background:var(--bg);margin-bottom:-1px;border-bottom:1px solid var(--bg)}
+.tab.on{color:var(--ink);background:var(--bg);border-bottom:1px solid var(--bg)}
 .tab .dot{width:9px;height:9px;border-radius:50%;background:var(--mute);flex:none}
 .tab.working .dot{background:var(--work);animation:pulse 1.4s infinite}.tab.waiting .dot{background:var(--ok)}
 .tab.permission .dot{background:var(--warn);animation:pulse .8s infinite}.tab.error .dot{background:var(--bad)}
@@ -77,4 +83,4 @@ main{flex:1;overflow:hidden;position:relative}
 .plist .p{display:grid;grid-template-columns:90px 1fr 70px 50px;gap:8px;padding:7px 4px;border-top:1px solid var(--line);cursor:pointer;align-items:center}
 .plist .p:hover{background:var(--chip)}.plist .p .path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plist .p .ttl{grid-column:2/5;font-size:12px;color:var(--mute);margin-top:-4px}
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;display:none;max-width:90vw;z-index:10}
-@media (max-width:640px){.ucard{flex:1 0 130px;min-width:130px}.me{max-width:95%}}
+@media (max-width:640px){.me{max-width:95%}}

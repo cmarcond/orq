@@ -68,22 +68,33 @@ function tabOrder() {
 function renderTabs() {
   const nav = $('tabs');
   const order = tabOrder();
-  nav.innerHTML =
-    order
-      .map((l, i) => {
-        const a = agents.find((x) => x.label === l) || tabs[l]?.a || { label: l };
-        const sdk = a.kind === 'sdk';
-        const tail = sdk
-          ? `${i < 9 ? `<span class="kbd">⌘${i + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
-          : a.tmux
-            ? `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`
-            : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
-        const col = colorOf(a.account);
-        const tip = `${a.dir || ''}\nconta ${LAB[a.account] || a.account || '?'}`;
-        return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(tip)}" style="--acc:${col}">
-        <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))}${sdk ? '' : ' · <i>terminal</i>'}</span><i class="sw" style="background:${col}" title="${esc(LAB[a.account] || a.account || '')}"></i>${tail}</div>`;
-      })
-      .join('') + `<div class="tab plus" id="plus" title="abrir projeto">+</div>`;
+  // uma linha por máquina: o rótulo da máquina à esquerda, as abas dela na linha, e um + que já abre ali
+  const hosts = [];
+  for (const l of order) if (!hosts.includes(hostOf(l))) hosts.push(hostOf(l));
+  if (!hosts.includes('laptop')) hosts.unshift('laptop');
+  let i = 0;
+  nav.innerHTML = hosts
+    .map((h) => {
+      const row = order
+        .filter((l) => hostOf(l) === h)
+        .map((l) => {
+          const a = agents.find((x) => x.label === l) || tabs[l]?.a || { label: l };
+          const sdk = a.kind === 'sdk';
+          const n = i++;
+          const tail = sdk
+            ? `${n < 9 ? `<span class="kbd">⌘${n + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
+            : a.tmux
+              ? `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`
+              : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
+          const col = colorOf(a.account);
+          const tip = `${a.dir || ''}\nconta ${LAB[a.account] || a.account || '?'}`;
+          return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(tip)}" style="--acc:${col}">
+          <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b>${sdk ? '' : ' · <i>terminal</i>'}</span><i class="sw" style="background:${col}" title="${esc(LAB[a.account] || a.account || '')}"></i>${tail}</div>`;
+        })
+        .join('');
+      return `<div class="trow"><span class="host" title="máquina">${esc(h)}</span><div class="tline">${row}<div class="tab plus" data-host="${esc(h)}" title="abrir projeto em ${esc(h)}">+</div></div></div>`;
+    })
+    .join('');
   nav.querySelectorAll('.tab[data-l]').forEach(
     (el) =>
       (el.onclick = (e) => {
@@ -92,7 +103,7 @@ function renderTabs() {
         show(el.dataset.l);
       }),
   );
-  $('plus').onclick = openPicker;
+  nav.querySelectorAll('.tab.plus').forEach((el) => (el.onclick = () => openPicker(el.dataset.host)));
   if (!cur && order.length) show(order[0]);
 }
 function askStop(l) {
@@ -438,12 +449,15 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---------------------------------------------------------------- abrir projeto
-async function openPicker() {
+async function openPicker(host) {
   $('picker').hidden = false;
   $('plist').innerHTML = 'carregando…';
+  $('pnew').value = host ? `${host}:~/` : '';
+  $('ptitle').textContent = host ? `Abrir projeto em ${host}` : 'Abrir projeto';
   const s = await api('/api/projects');
   $('plist').innerHTML =
     (s.items || [])
+      .filter((p) => !host || p.host === host)
       .map(
         (p) => `<div class="p" data-p='${esc(JSON.stringify({ host: p.host, cwd: p.cwd, account: p.account }))}'>
       <span>${esc(p.host)}</span><span class="path" title="${esc(p.cwd)}">${esc(p.short || p.cwd)}</span>
