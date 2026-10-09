@@ -22,10 +22,10 @@ class FakeRunner:
 
 
 def test_usage_ok_and_failure():
-    ext = External(Path("/b"), FakeRunner({"claude-usage-fast": (0, '{"gmail": {"7d": 1}}')}))
-    assert ext.usage("claude-usage-fast") == {"gmail": {"7d": 1}}
-    assert ext.usage("codex-usage-fast") == {"err": "falha ao consultar"}
-    assert External(Path("/b"), FakeRunner({})).usage("claude-usage-fast") == {}
+    r = FakeRunner({"usage-all": (0, '{"gmail": {"7d": 1}}')})
+    assert External(Path("/b"), r).usage() == {"gmail": {"7d": 1}}
+    assert r.calls[-1] == ["/b/usage-all", "--json"]
+    assert External(Path("/b"), FakeRunner({})).usage() == {}
 
 
 def test_projects_local_and_remote_commands():
@@ -82,8 +82,8 @@ class FakeExt:
     def __init__(self):
         self.projects_calls = 0
 
-    def usage(self, script):
-        return {"5h": 1} if script.startswith("codex") else {"gmail": {"7d": 40, "7d_pace": 50}}
+    def usage(self):
+        return {"gmail": {"7d": 40, "7d_pace": 50}}
 
     def all_agents(self, hosts):
         return [{"label": "a@laptop", "state": "waiting", "account": "gmail"}], {"node1": "sem resposta"}
@@ -118,9 +118,9 @@ def test_snapshot_after_refresh():
     c.refresh_usage()
     c.refresh_agents()
     snap = c.snapshot()
-    assert snap["usage"]["gmail"]["7d"] == 40 and snap["usage"]["codex"] == {"5h": 1}
+    assert snap["usage"]["gmail"]["7d"] == 40
     assert snap["agents"][0]["label"] == "a@laptop" and snap["host_errors"] == {"node1": "sem resposta"}
-    assert snap["accounts"] == ["gmail"] and snap["labels"] == {"gmail": "gmail", "codex": "Codex"}
+    assert snap["accounts"] == ["gmail"] and snap["labels"] == {"gmail": "gmail"}
     assert c.live_labels() == {"a@laptop"} and c.running_accounts() == ["gmail"]
 
 

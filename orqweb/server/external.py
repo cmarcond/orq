@@ -52,13 +52,13 @@ class External:
         self.run = runner
 
     # ---- cota
-    def usage(self, script: str) -> Dict[str, Any]:
-        """`claude-usage-fast --json` ou `codex-usage-fast --json`."""
+    def usage(self) -> Dict[str, Any]:
+        """`usage-all --json`: por conta, % usado, ritmo e segundos até o reset de 5h e 7d. {} se falhar."""
         try:
-            r = self.run([str(self.bin / script), "--json"], 60)
+            r = self.run([str(self.bin / "usage-all"), "--json"], 60)
             return json.loads(r.stdout)
         except (OSError, ValueError, subprocess.TimeoutExpired):
-            return {"err": "falha ao consultar"} if script.startswith("codex") else {}
+            return {}
 
     # ---- por máquina
     def _local_or_ssh(self, host: str, local: List[str], remote: str, timeout: float):

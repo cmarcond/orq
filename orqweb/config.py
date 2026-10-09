@@ -21,7 +21,7 @@ def conf_path() -> Path:
 
 
 def bin_dir() -> Path:
-    """Onde estão os utilitários do claude-multiconta (claude-last, claude-usage-fast, orq)."""
+    """Onde estão os utilitários do claude-multiconta (claude-last, usage-all, orq)."""
     return Path(os.environ.get("ORQ_BIN", str(HOME / ".local/bin")))
 
 
@@ -69,14 +69,11 @@ class Config:
     accounts: Dict[str, Account] = field(default_factory=dict)
     permission_mode: str = "manual"
     hosts: List[str] = field(default_factory=list)
-    codex: bool = True
     timezone: str = "America/Sao_Paulo"
 
     @property
     def labels(self) -> Dict[str, str]:
-        out = {n: a.label for n, a in self.accounts.items()}
-        out["codex"] = "Codex"
-        return out
+        return {n: a.label for n, a in self.accounts.items()}
 
     def account(self, name: str) -> Account:
         try:
@@ -101,7 +98,6 @@ def parse(raw: dict) -> Config:
         accounts=accounts,
         permission_mode=raw.get("permission_mode") or "manual",
         hosts=list(raw.get("orq_hosts", [])),
-        codex=bool(raw.get("codex", True)),
         timezone=raw.get("timezone") or "America/Sao_Paulo",
     )
 

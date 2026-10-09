@@ -39,9 +39,7 @@ class StateCache:
         return self.clock() - self.seen < OPEN_WINDOW
 
     def refresh_usage(self) -> None:
-        u = self.ext.usage("claude-usage-fast")
-        if self.conf.codex:
-            u["codex"] = self.ext.usage("codex-usage-fast")
+        u = self.ext.usage()
         with self.lock:
             self.usage, self.usage_ts = u, self.clock()
 

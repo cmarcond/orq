@@ -12,7 +12,6 @@ RAW = {
     ],
     "permission_mode": "auto",
     "orq_hosts": ["server0"],
-    "codex": False,
 }
 
 
@@ -21,13 +20,13 @@ def test_parse_accounts_and_options():
     assert list(c.accounts) == ["work", "gmail"]
     assert c.accounts["gmail"].label == "Gmail"
     assert c.accounts["gmail"].config_dir == Path.home() / ".claude-gmail"
-    assert c.permission_mode == "auto" and c.hosts == ["server0"] and c.codex is False
-    assert c.labels == {"work": "Work", "gmail": "Gmail", "codex": "Codex"}
+    assert c.permission_mode == "auto" and c.hosts == ["server0"]
+    assert c.labels == {"work": "Work", "gmail": "Gmail"}
 
 
 def test_defaults():
     c = config.parse({"accounts": []})
-    assert c.permission_mode == "manual" and c.codex is True and c.hosts == []
+    assert c.permission_mode == "manual" and c.hosts == []
 
 
 def test_account_env_default_vs_other():

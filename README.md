@@ -13,7 +13,7 @@ Remote Control, sem depender do claude.ai.
 
 Extraído do projeto [`claude-multiconta`](../claude-multiconta), que continua dono das contas
 (`accounts.json`) e dos utilitários que este pacote chama: `claude-last` (sessão a retomar e
-lista de projetos), `claude-usage-fast`/`codex-usage-fast --json` (cota) e `orq --status-json`
+lista de projetos), `usage-all --json` (cota) e `orq --status-json`
 (agentes por máquina).
 
 ## Uso
@@ -52,7 +52,7 @@ orq-agent convert kaggle@server0                                      # o que o 
 ```
 
 Configuração (no `accounts.json` do claude-multiconta): `permission_mode` dos agentes da página
-(`auto` deixa o Claude decidir o rotineiro; `manual` pergunta tudo), `orq_hosts`, `codex`.
+(`auto` deixa o Claude decidir o rotineiro; `manual` pergunta tudo) e `orq_hosts`.
 Variáveis: `CLAUDE_MULTICONTA_CONF`, `ORQ_BIN` (onde estão os utilitários), `ORQ_STATE_DIR`
 (padrão `~/.cache/orq`), `ORQ_NO_OPEN=1` (não abre o navegador).
 
@@ -61,7 +61,7 @@ Variáveis: `CLAUDE_MULTICONTA_CONF`, `ORQ_BIN` (onde estão os utilitários), `
 ```
 navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attach, local ou ssh)──> socket Unix
                               │                                                           │
-                        StateCache ──> External (claude-usage-fast, claude-last, orq)   Supervisor
+                        StateCache ──> External (usage-all, claude-last, orq)         Supervisor
                                                                                           │
                                                                                  claude -p stream-json
 ```
