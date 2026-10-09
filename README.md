@@ -19,10 +19,14 @@ lista de projetos), `claude-usage-fast`/`codex-usage-fast --json` (cota) e `orq 
 ## Uso
 
 ```sh
-pip install -e ".[dev]"      # ou: uv pip install -e ".[dev]"
+./install.sh                 # esta máquina: copia o pacote para ~/.local/lib/orq-web e cria os comandos (sem pip)
+./deploy.sh                  # laptop + todas as máquinas de orq_hosts (ou: ./deploy.sh server0 node1)
 orq-web                      # abre http://127.0.0.1:8765/?t=<token> no navegador
 orq-web --port 8766          # outra porta; um segundo orq-web na mesma porta reaproveita o link
 ```
+
+Para desenvolver, `pip install -e ".[dev]"` (ou `uv pip install -e ".[dev]"`) instala o pacote em
+modo editável com as ferramentas de teste.
 
 Na página: **+** abre um projeto (lista de todas as máquinas, ou `maquina:/caminho`); `⌘1`–`⌘9`
 trocam de aba; `Enter` envia, `Shift+Enter` quebra linha, `Esc` interrompe; `✕` duas vezes
@@ -113,5 +117,3 @@ em Node 22. O supervisor roda nas máquinas remotas, por isso o código fica com
 - anexar arquivos pela página;
 - trocar de conta automaticamente quando a cota acaba (hoje só o `orq-run` do terminal faz);
 - acesso pelo celular (servidor numa máquina sempre ligada, com Tailscale e login);
-- instalar este pacote pelo `install.sh` do claude-multiconta, substituindo `bin/orq-agent`
-  e o `orq web` de lá.
