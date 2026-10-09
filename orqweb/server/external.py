@@ -4,6 +4,7 @@ Tudo passa por `Runner`, que os testes substituem por respostas prontas.
 """
 
 import json
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -107,6 +108,27 @@ class External:
         with ThreadPoolExecutor(max_workers=12) as ex:
             res = list(ex.map(self.agents, [LAPTOP] + list(hosts)))
         return [a for _, lst, _ in res for a in lst], {h: e for h, _, e in res if e}
+
+    # ---- enviar arquivo para a pasta do agente
+    def put_file(self, host: str, path: str, data: bytes, timeout: float = 300) -> Optional[str]:
+        """Grava `data` em `path` na máquina, criando a pasta. Remoto: ssh com os bytes no stdin.
+
+        Devolve texto de erro ou None."""
+        import shlex
+
+        try:
+            if host == LAPTOP:
+                p = Path(os.path.expanduser(path))
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(data)
+                return None
+            remote = f"mkdir -p {shlex.quote(os.path.dirname(path))} && cat > {shlex.quote(path)}"
+            r = subprocess.run(ssh_cmd(host, remote, 8), input=data, capture_output=True, timeout=timeout)
+            if r.returncode:
+                return (r.stderr.decode(errors="ignore").strip() or "falhou")[-200:]
+            return None
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return str(e)
 
     # ---- converter claude de terminal em agente da página
     def convert(self, host: str, label: str) -> dict:

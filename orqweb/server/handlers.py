@@ -24,7 +24,9 @@ CSP = (
     "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
 )
 TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
-AGENT_RE = re.compile(r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop)$")
+AGENT_RE = re.compile(r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload)$")
+INBOX = "_inbox"
+UPLOAD_MAX = 200 * 1024 * 1024
 
 
 class Context:
@@ -41,6 +43,7 @@ class Context:
     ):
         self.conf, self.state, self.bridges, self.spawn = conf, state, bridges, spawn
         self.convert = convert  # (host, label) -> {ok, label, how, msg}; None desliga /api/agent/convert
+        self.put_file = None  # (host, path, data) -> erro ou None; None desliga /api/agent/<x>/upload
         self.token = token or secrets.token_urlsafe(16)
 
 
@@ -140,6 +143,9 @@ def make_handler(ctx: Context):
         def do_POST(self) -> None:
             if not self.authed():
                 return self.reply(403, {"err": "token"})
+            label, op = self.agent_path(urlparse(self.path).path)
+            if op == "upload":
+                return self.upload(label)
             body = self.read_json()
             if body is None:
                 return self.reply(400, {"err": "json"})
@@ -186,6 +192,33 @@ def make_handler(ctx: Context):
             )
             return self.reply(200, {"label": new_label, "how": res.get("how"), "msg": res.get("msg")})
 
+        def upload(self, label: str) -> None:
+            """Grava o corpo cru em <pasta do agente>/_inbox/<X-Filename>, na máquina do agente."""
+            if not ctx.put_file:
+                return self.reply(400, {"err": "envio de arquivos desligado"})
+            name = safe_filename(unquote(self.headers.get("X-Filename", "")))
+            if not name:
+                return self.reply(400, {"err": "nome de arquivo inválido"})
+            n = int(self.headers.get("Content-Length", 0))
+            if n <= 0 or n > UPLOAD_MAX:
+                return self.reply(
+                    413 if n > UPLOAD_MAX else 400,
+                    {"err": f"tamanho inválido ({n} bytes; máximo {UPLOAD_MAX})"},
+                )
+            with ctx.state.lock:
+                entry = next(
+                    (a for a in ctx.state.agents if a.get("label") == label and a.get("state") != "closed"),
+                    None,
+                )
+            if entry is None or not entry.get("dir"):
+                return self.reply(404, {"err": "agente desconhecido"})
+            data = self.rfile.read(n)
+            path = f"{entry['dir'].rstrip('/')}/{INBOX}/{name}"
+            err = ctx.put_file(entry.get("host") or "laptop", path, data)
+            if err:
+                return self.reply(500, {"err": f"não consegui gravar em {entry.get('host')}: {err}"})
+            return self.reply(200, {"path": path, "bytes": n})
+
         def open_agent(self, body: dict) -> None:
             snap = ctx.state.snapshot()
             p, err = pick_host_and_label(body, ctx.conf.hosts, ctx.state.live_labels())
@@ -216,6 +249,13 @@ def make_handler(ctx: Context):
             return self.reply(200, {"label": p["label"], "acc": p["acc"], "why": p["why"]})
 
     return Handler
+
+
+def safe_filename(name: str) -> str:
+    """Só o nome, sem caminho, sem controle; vazio se não sobrar nada."""
+    base = name.replace("\\", "/").split("/")[-1].strip()
+    base = "".join(ch for ch in base if ch.isprintable() and ch not in '<>:"|?*')
+    return "" if base in ("", ".", "..") else base[:200]
 
 
 def build_message(op: str, body: dict) -> Optional[dict]:

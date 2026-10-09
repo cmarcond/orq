@@ -1,5 +1,5 @@
 // Estado da página, API e DOM. A lógica pura está em format.js, classify.js e events.js.
-import { esc, left, ago, md } from './format.js';
+import { esc, left, ago, md, withAttachments, fmtBytes } from './format.js';
 import { firstLine, originLabel, permissionBody, toolName } from './classify.js';
 import { reduce, collectAnswers } from './events.js';
 
@@ -411,11 +411,58 @@ function askForm(t, a) {
   p.querySelector('.no').onclick = () => agentApi(t.a.label, 'permission', { request_id: a.requestId, allow: false });
 }
 
+// ---------------------------------------------------------------- anexos
+let queue = []; // arquivos escolhidos, ainda não enviados (File[])
+function renderFiles() {
+  const box = $('files');
+  box.hidden = !queue.length;
+  box.innerHTML = queue
+    .map((f, i) => `<span class="fchip" title="${esc(f.name)}">📄 ${esc(f.name)} <small>${fmtBytes(f.size)}</small><b data-i="${i}" title="remover">✕</b></span>`)
+    .join('');
+  box.querySelectorAll('b[data-i]').forEach((b) => (b.onclick = () => { queue.splice(+b.dataset.i, 1); renderFiles(); }));
+}
+function addFiles(list) {
+  for (const f of list) if (f && f.size >= 0) queue.push(f);
+  renderFiles();
+  $('input').focus();
+}
+async function uploadAll(label) {
+  const paths = [];
+  for (const f of queue) {
+    toast(`enviando ${f.name}…`);
+    const r = await fetch(`/api/agent/${encodeURIComponent(label)}/upload`, {
+      method: 'POST',
+      headers: { 'X-Orq-Token': T, 'X-Filename': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' },
+      body: f,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (j.err) {
+      toast(`falhou ${f.name}: ${j.err}`);
+      return null;
+    }
+    paths.push(j.path);
+  }
+  return paths;
+}
+$('attach').onclick = () => $('fileinput').click();
+$('fileinput').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+for (const ev of ['dragenter', 'dragover']) document.addEventListener(ev, (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); document.body.classList.add('drag'); } });
+for (const ev of ['dragleave', 'drop']) document.addEventListener(ev, (e) => { if (ev === 'drop' || e.relatedTarget === null) document.body.classList.remove('drag'); });
+document.addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); if (cur) addFiles(e.dataTransfer.files); else toast('abra uma aba antes de soltar arquivos'); } });
+
 // ---------------------------------------------------------------- composer
 async function send() {
-  const text = $('input').value.trim();
-  if (!text || !cur) return;
+  const typed = $('input').value.trim();
+  if ((!typed && !queue.length) || !cur) return;
   const t = tabs[cur];
+  let paths = [];
+  if (queue.length) {
+    paths = await uploadAll(cur);
+    if (!paths) return; // falhou: mantém texto e fila para tentar de novo
+    queue = [];
+    renderFiles();
+  }
+  const text = withAttachments(typed, paths);
   $('input').value = '';
   $('input').style.height = 'auto';
   t.pending.push(text);

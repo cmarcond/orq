@@ -34,3 +34,18 @@ export function md(text, libs = globalThis) {
   }
   return esc(text).replace(/\n/g, '<br>');
 }
+
+/** Mensagem final com os caminhos dos arquivos enviados para a _inbox do projeto. */
+export function withAttachments(text, paths) {
+  if (!paths || !paths.length) return text;
+  const list = paths.map((p) => `- ${p}`).join('\n');
+  const head = text.trim() || (paths.length === 1 ? 'Veja o arquivo enviado.' : 'Veja os arquivos enviados.');
+  return `${head}\n\nArquivo(s) enviado(s) para a pasta _inbox do projeto:\n${list}`;
+}
+
+/** Tamanho legível: 812 B, 3,4 KB, 12 MB. */
+export function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1).replace('.', ',')} KB`;
+  return `${Math.round(n / 1024 / 1024)} MB`;
+}

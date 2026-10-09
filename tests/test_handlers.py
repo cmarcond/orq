@@ -372,3 +372,81 @@ def test_open_refuses_folder_with_live_terminal_claude_and_convert_needs_tmux(se
     srv_ctx.convert = lambda host, label: {"ok": True, "label": label}
     status, body, _ = req(port, "POST", "/api/agent/convert", {"label": "grade@laptop"})
     assert status == 400 and "grade" in body["err"]
+
+
+# ---------------------------------------------------------------- upload para a _inbox
+def test_upload_writes_into_agent_inbox_and_validates(server, short_tmp):
+    port, ext, state = server
+    puts = []
+    srv_ctx = server_ctx(port)
+    srv_ctx.put_file = lambda host, path, data: puts.append((host, path, data)) or None
+    state.add_provisional(
+        {
+            "label": "k@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/home/c/k",
+            "state": "waiting",
+            "kind": "sdk",
+        }
+    )
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.request(
+        "POST",
+        "/api/agent/k%40server0/upload",
+        body=b"%PDF-1.4 conteudo",
+        headers={
+            "X-Orq-Token": TOKEN,
+            "X-Filename": "../../relat%C3%B3rio.pdf",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+    r = c.getresponse()
+    body = json.loads(r.read())
+    assert r.status == 200 and body["path"] == "/home/c/k/_inbox/relatório.pdf" and body["bytes"] == 17
+    assert puts == [("server0", "/home/c/k/_inbox/relatório.pdf", b"%PDF-1.4 conteudo")]
+    # nome vazio, agente desconhecido, corpo vazio
+    for headers, expected in (
+        ({"X-Filename": "..%2F"}, 400),
+        ({"X-Filename": "a.txt"}, 404),
+    ):
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        path = "/api/agent/nada%40laptop/upload" if expected == 404 else "/api/agent/k%40server0/upload"
+        c.request("POST", path, body=b"x", headers={"X-Orq-Token": TOKEN, **headers})
+        assert c.getresponse().status == expected, headers
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.request(
+        "POST",
+        "/api/agent/k%40server0/upload",
+        body=b"",
+        headers={"X-Orq-Token": TOKEN, "X-Filename": "a.txt"},
+    )
+    assert c.getresponse().status == 400
+    # erro do put_file vira 500 com a máquina no texto
+    srv_ctx.put_file = lambda host, path, data: "disco cheio"
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.request(
+        "POST",
+        "/api/agent/k%40server0/upload",
+        body=b"x",
+        headers={"X-Orq-Token": TOKEN, "X-Filename": "a.txt"},
+    )
+    r = c.getresponse()
+    assert r.status == 500 and "server0" in json.loads(r.read())["err"]
+
+
+def test_safe_filename():
+    assert H.safe_filename("relatório final.pdf") == "relatório final.pdf"
+    assert H.safe_filename("/etc/passwd") == "passwd"
+    assert H.safe_filename("..\\..\\x.txt") == "x.txt"
+    assert H.safe_filename("..") == "" and H.safe_filename("") == ""
+    assert H.safe_filename('a<b>:"|?*.txt') == "ab.txt"
+    assert len(H.safe_filename("x" * 300)) == 200
+
+
+def test_put_file_local(short_tmp):
+    from orqweb.server.external import External
+
+    ext = External(Path("/b"))
+    assert ext.put_file("laptop", str(short_tmp / "proj" / "_inbox" / "a.bin"), b"\x00\x01") is None
+    assert (short_tmp / "proj" / "_inbox" / "a.bin").read_bytes() == b"\x00\x01"

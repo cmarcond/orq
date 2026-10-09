@@ -30,7 +30,9 @@ modo editável com as ferramentas de teste.
 
 Na página: **+** abre um projeto (lista de todas as máquinas, ou `maquina:/caminho`); `⌘1`–`⌘9`
 trocam de aba; `Enter` envia, `Shift+Enter` quebra linha, `Esc` interrompe; `✕` duas vezes
-encerra o agente (a conversa fica salva).
+encerra o agente (a conversa fica salva). **📎** ou arrastar arquivos para o chat envia-os para
+`_inbox/` dentro da pasta do projeto, na máquina do agente (por ssh quando remota), e a mensagem
+sai com os caminhos, para o Claude ler o PDF, a planilha etc. direto de lá.
 
 Um `claude` interativo que já está rodando num tmux (aberto por `claude-gmail` etc.) aparece na
 página como aba tracejada com o botão **⇄ converter**: a página dá `/exit` nele (ou Ctrl-C, ou
@@ -126,6 +128,5 @@ em Node 22. O supervisor roda nas máquinas remotas, por isso o código fica com
 
 ## Por fazer
 
-- anexar arquivos pela página;
 - trocar de conta automaticamente quando a cota acaba (hoje só o `orq-run` do terminal faz);
 - acesso pelo celular (servidor numa máquina sempre ligada, com Tailscale e login);

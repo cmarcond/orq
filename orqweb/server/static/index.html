@@ -16,8 +16,11 @@
 <main id="chats"><div class="empty" id="empty">Abra um projeto no <b>+</b> para começar.</div></main>
 <footer id="composer" class="composer" hidden>
   <div class="cstatus"><span id="cstate"></span><button id="stop" class="ghost" hidden title="interromper (Esc)">■ parar</button></div>
+  <div id="files" class="files" hidden></div>
   <div class="crow">
-    <textarea id="input" rows="1" placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha)"></textarea>
+    <button id="attach" class="ghost" title="anexar arquivos (ou arraste para o chat): vão para _inbox/ na pasta do projeto">📎</button>
+    <input id="fileinput" type="file" multiple hidden>
+    <textarea id="input" rows="1" placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha; arraste arquivos aqui)"></textarea>
     <button id="send" title="enviar">➤</button>
   </div>
 </footer>

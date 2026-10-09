@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { esc, left, ago, md } from '../../orqweb/server/static/js/format.js';
+import { esc, left, ago, md, withAttachments, fmtBytes } from '../../orqweb/server/static/js/format.js';
 
 test('esc escapa tudo que vira HTML', () => {
   assert.equal(esc(`<a href="x">'&'</a>`), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
@@ -33,4 +33,16 @@ test('md usa marked+DOMPurify quando existem e cai no texto escapado sem eles', 
 test('md não propaga erro das bibliotecas', () => {
   const libs = { marked: { parse: () => { throw new Error('x'); } }, DOMPurify: { sanitize: (h) => h } };
   assert.equal(md('ok', libs), 'ok');
+});
+
+test('withAttachments acrescenta os caminhos e dá um texto padrão sem mensagem', () => {
+  assert.equal(withAttachments('oi', []), 'oi');
+  assert.equal(withAttachments('  ', ['/p/_inbox/a.pdf']), 'Veja o arquivo enviado.\n\nArquivo(s) enviado(s) para a pasta _inbox do projeto:\n- /p/_inbox/a.pdf');
+  assert.match(withAttachments('resuma', ['/a', '/b']), /^resuma\n\n.*\n- \/a\n- \/b$/s);
+});
+
+test('fmtBytes', () => {
+  assert.equal(fmtBytes(812), '812 B');
+  assert.equal(fmtBytes(3500), '3,4 KB');
+  assert.equal(fmtBytes(12 * 1024 * 1024), '12 MB');
 });
