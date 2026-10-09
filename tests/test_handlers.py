@@ -84,7 +84,7 @@ def server(agent):
     ext = FakeExt()
     state = StateCache(conf, ext)
     state.refresh_usage()
-    ctx = H.Context(conf, state, BridgeRegistry(factory=bridge_factory), ext.spawn, TOKEN)
+    ctx = H.Context(conf, state, BridgeRegistry(factory=bridge_factory), ext.spawn, TOKEN, convert=None)
     srv = Server(
         ("127.0.0.1", 0), H.make_handler(ctx)
     )  # a mesma classe do app: ignora conexões fechadas pelo cliente
@@ -335,3 +335,18 @@ def test_convert_endpoint(server):
     )
     status, body, _ = req(port, "POST", "/api/agent/convert", {"label": "y@server0"})
     assert status == 500 and body["err"] == "não fechou"
+
+
+def test_context_accepts_convert_like_app_does():
+    """app.serve monta Context(..., convert=ext.convert); o construtor precisa aceitar."""
+    conf = config.parse({"accounts": []})
+    ctx = H.Context(
+        conf,
+        StateCache(conf, FakeExt()),
+        BridgeRegistry(),
+        lambda *a: None,
+        "t",
+        convert=lambda host, label: {"ok": True},
+    )
+    assert ctx.convert("h", "l") == {"ok": True}
+    assert H.Context(conf, StateCache(conf, FakeExt()), BridgeRegistry(), lambda *a: None).convert is None

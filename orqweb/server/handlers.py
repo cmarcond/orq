@@ -31,9 +31,16 @@ class Context:
     """Tudo que as rotas precisam; montado por app.serve e pelos testes."""
 
     def __init__(
-        self, conf, state: StateCache, bridges: BridgeRegistry, spawn: Callable, token: Optional[str] = None
+        self,
+        conf,
+        state: StateCache,
+        bridges: BridgeRegistry,
+        spawn: Callable,
+        token: Optional[str] = None,
+        convert: Optional[Callable] = None,
     ):
         self.conf, self.state, self.bridges, self.spawn = conf, state, bridges, spawn
+        self.convert = convert  # (host, label) -> {ok, label, how, msg}; None desliga /api/agent/convert
         self.token = token or secrets.token_urlsafe(16)
 
 
