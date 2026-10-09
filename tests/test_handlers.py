@@ -271,3 +271,15 @@ def test_build_message_shapes():
     assert H.build_message("interrupt", {})["request"] == {"subtype": "interrupt"}
     assert H.build_message("stop", {}) == {"orq": "quit"}
     assert H.build_message("x", {}) is None
+
+
+# ---------------------------------------------------------------- página e estáticos
+def test_index_and_static_are_served_with_types(server):
+    port, _, _ = server
+    status, body, r = req(port, "GET", "/")
+    assert status == 200 and r.getheader("Content-Type").startswith("text/html")
+    assert b'<script type="module" src="/static/js/app.js">' in body
+    for path, ctype in (("/static/app.css", "text/css"), ("/static/js/app.js", "application/javascript")):
+        status, _, r = req(port, "GET", path)
+        assert status == 200 and r.getheader("Content-Type").startswith(ctype), path
+    assert req(port, "GET", "/static/js/events.js")[0] == 200
