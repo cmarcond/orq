@@ -10,6 +10,7 @@ Uso:
         cada linha JSON do stdin vai para o claude. É o que o orq-web usa, local ou por ssh.
   orq-agent stop NOME          encerra o claude e o supervisor (a conversa fica salva)
   orq-agent list               agentes desta máquina com estado
+  (spawn/start com --mode resume recusam pasta onde um claude interativo está aberto; --force ignora)
   orq-agent convert NOME [--account CONTA]
         fecha um claude interativo que roda num tmux desta máquina (/exit, Ctrl-C, SIGTERM) e
         reabre a mesma conversa como agente da página; imprime JSON {ok, label, how, msg}
@@ -21,6 +22,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 from .. import config
 from . import claude, client, convert, events
@@ -36,6 +38,11 @@ def cmd_start(a: argparse.Namespace) -> int:
         print(e.args[0], file=sys.stderr)
         return 1
     folder = Path(os.path.expanduser(a.dir))
+    if not a.force:
+        err = _refuse_if_terminal_live(str(folder), a.mode)
+        if err:
+            print(err, file=sys.stderr)
+            return 1
     sid = claude.pick_session(config.bin_dir(), acc.name, folder) if a.mode == "resume" else None
     transcript = events.project_dir(acc.config_dir, folder) / f"{sid}.jsonl" if sid else None
     sup = Supervisor(
@@ -63,6 +70,11 @@ def cmd_spawn(a: argparse.Namespace) -> int:
     except KeyError as e:
         print(e.args[0], file=sys.stderr)
         return 1
+    if not a.force:
+        err = _refuse_if_terminal_live(a.dir, a.mode)
+        if err:
+            print(err, file=sys.stderr)
+            return 1
     try:
         print(client.spawn(a.label, a.dir, a.account, a.mode))
         print("pronto")
@@ -115,9 +127,33 @@ def cmd_convert(a: argparse.Namespace) -> int:
         return 1
     if a.account:
         entry["account"] = a.account
-    res = convert.convert(entry, host, client.spawn)
+    res = convert.convert(entry, host, client.spawn, others=convert.others_in_folder(status, entry))
     print(json.dumps(res, ensure_ascii=False))
     return 0 if res["ok"] else 1
+
+
+def _status() -> list:
+    import json
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            [str(config.bin_dir() / "orq"), "--status-json"], capture_output=True, text=True, timeout=30
+        )
+        return json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+
+
+def _refuse_if_terminal_live(folder: str, mode: str) -> Optional[str]:
+    """Retomar uma pasta onde um claude interativo está aberto põe dois processos na mesma conversa."""
+    if mode != "resume":
+        return None
+    live = convert.live_terminal_in_folder(_status(), os.path.expanduser(folder))
+    if not live:
+        return None
+    names = ", ".join(a.get("tmux", "?") for a in live)
+    return f"há um claude aberto no terminal nesta pasta (tmux {names}). Converta-o ou feche-o antes."
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -140,6 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--account", required=True)
         p.add_argument("--label", required=True)
         p.add_argument("--mode", choices=("resume", "new"), default="resume")
+        p.add_argument(
+            "--force", action="store_true", help="retoma mesmo com um claude interativo aberto na pasta"
+        )
         p.set_defaults(fn=fn)
     p = sub.add_parser("attach")
     p.add_argument("label")

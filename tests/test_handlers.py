@@ -350,3 +350,29 @@ def test_context_accepts_convert_like_app_does():
     )
     assert ctx.convert("h", "l") == {"ok": True}
     assert H.Context(conf, StateCache(conf, FakeExt()), BridgeRegistry(), lambda *a: None).convert is None
+
+
+def test_open_refuses_folder_with_live_terminal_claude_and_convert_needs_tmux(server):
+    port, ext, state = server
+    state.add_provisional(
+        {
+            "label": "p@laptop",
+            "host": "laptop",
+            "account": "gmail",
+            "dir": "/p",
+            "state": "waiting",
+            "tmux": "claude-gmail-p",
+        }
+    )
+    status, body, _ = req(port, "POST", "/api/agent/open", {"host": "laptop", "cwd": "/p", "mode": "resume"})
+    assert status == 409 and "converter" in body["err"]
+    assert req(port, "POST", "/api/agent/open", {"host": "laptop", "cwd": "/p", "mode": "new"})[0] == 200, (
+        "conversa nova pode"
+    )
+    state.add_provisional(
+        {"label": "grade@laptop", "host": "laptop", "account": "gmail", "dir": "/g", "state": "menu"}
+    )
+    srv_ctx = server_ctx(port)
+    srv_ctx.convert = lambda host, label: {"ok": True, "label": label}
+    status, body, _ = req(port, "POST", "/api/agent/convert", {"label": "grade@laptop"})
+    assert status == 400 and "grade" in body["err"]

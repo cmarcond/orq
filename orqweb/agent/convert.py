@@ -135,6 +135,22 @@ def terminal_sessions(status: List[dict]) -> List[dict]:
     return [a for a in status if a.get("kind") != "sdk" and a.get("tmux") and a.get("state") != "closed"]
 
 
+def others_in_folder(status: List[dict], entry: dict) -> List[dict]:
+    """Outros claude interativos vivos na mesma pasta: tornam ambígua a conversa a retomar."""
+    d = os.path.realpath(entry.get("dir") or "")
+    return [
+        a
+        for a in terminal_sessions(status)
+        if a is not entry and a.get("tmux") != entry.get("tmux") and os.path.realpath(a.get("dir") or "") == d
+    ]
+
+
+def live_terminal_in_folder(status: List[dict], folder: str) -> List[dict]:
+    """Claude interativo vivo nesta pasta (qualquer tmux): retomar por cima dele é perigoso."""
+    d = os.path.realpath(folder)
+    return [a for a in terminal_sessions(status) if os.path.realpath(a.get("dir") or "") == d]
+
+
 def account_for(dir_: str, account: Optional[str], bin_dir: Path, run: Runner = _run) -> Optional[str]:
     """Conta da sessão: a do processo, ou a da conversa mais recente da pasta (claude-last --projects)."""
     if account and account != "?":
@@ -155,14 +171,28 @@ def convert(
     spawn: Callable[[str, str, str, str], str],
     tmux: Optional[Tmux] = None,
     bin_dir: Optional[Path] = None,
+    others: Optional[List[dict]] = None,
     **close_kw,
 ) -> dict:
-    """Converte uma entrada de terminal_sessions(). Devolve {ok, label, how, msg}."""
+    """Converte uma entrada de terminal_sessions(). Devolve {ok, label, how, msg}.
+
+    `others`: outros claude interativos vivos na mesma pasta. Com eles, a conversa mais recente da
+    pasta pode ser a de outro processo ainda aberto, então a conversão é recusada sem fechar nada.
+    """
     tmux = tmux or Tmux()
     bin_dir = bin_dir or config.bin_dir()
     sess, dir_ = entry["tmux"], entry.get("dir") or ""
     base = os.path.basename(dir_.rstrip("/")) or "home"
     label = f"{base}@{host}"
+    if others:
+        names = ", ".join(a.get("tmux", "?") for a in others)
+        return {
+            "ok": False,
+            "label": label,
+            "how": "",
+            "msg": f"há outro claude aberto nesta pasta (tmux {names}); feche-o ou converta-o antes, "
+            "senão não dá para saber qual conversa é de qual",
+        }
     acc = account_for(dir_, entry.get("account"), bin_dir)
     if not acc:
         return {

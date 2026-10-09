@@ -24,6 +24,28 @@ def ssh_cmd(host: str, remote: str, connect_timeout: int = 5) -> List[str]:
     return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}", host, remote]
 
 
+def dedupe_labels(items: List[dict]) -> List[dict]:
+    """Duas sessões de terminal com o mesmo rótulo (mesma pasta) viram `pasta-2@host`, `pasta-3@host`…
+
+    Agentes da página (kind=sdk) ficam com o rótulo exato: ele é a chave do socket.
+    """
+    seen: Dict[str, int] = {}
+    for a in items:
+        lab = a.get("label", "?")
+        if a.get("kind") == "sdk":
+            seen[lab] = seen.get(lab, 0) + 1
+    for a in items:
+        if a.get("kind") == "sdk":
+            continue
+        lab = a.get("label", "?")
+        n = seen.get(lab, 0)
+        seen[lab] = n + 1
+        if n:
+            base, _, host = lab.rpartition("@")
+            a["label"] = f"{base}-{n + 1}@{host}" if host else f"{lab}-{n + 1}"
+    return items
+
+
 class External:
     def __init__(self, bin_dir: Optional[Path] = None, runner: Runner = run):
         self.bin = bin_dir or config.bin_dir()
@@ -68,7 +90,7 @@ class External:
             a["host"] = host
             if "@" not in a.get("label", ""):
                 a["label"] = f"{a.get('label', '?')}@{host}"
-        return host, items, None
+        return host, dedupe_labels(items), None
 
     def all_projects(self, hosts: List[str], limit: int = 30) -> Tuple[List[dict], Dict[str, str]]:
         with ThreadPoolExecutor(max_workers=12) as ex:

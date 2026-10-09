@@ -73,7 +73,9 @@ function renderTabs() {
         const sdk = a.kind === 'sdk';
         const tail = sdk
           ? `${i < 9 ? `<span class="kbd">⌘${i + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
-          : `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`;
+          : a.tmux
+            ? `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`
+            : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
         return `<div class="tab ${a.state || ''} ${sdk ? '' : 'term'} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" title="${esc(a.dir || '')}">
         <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b> · ${esc(hostOf(l))} · ${esc(a.account || '?')}${sdk ? '' : ' · <i>terminal</i>'}</span>${tail}</div>`;
       })
@@ -147,8 +149,13 @@ function showTerminal(l, a) {
       a.msg ? ` · ${esc(a.msg)}` : ''
     }</div>
     <p>A conversa dela não passa pela página. <b>Converter</b> dá <code>/exit</code> nela (ou Ctrl-C, se não responder) e reabre a mesma conversa aqui, como agente da página. Nada se perde: o Claude Code grava cada mensagem em disco.</p>
-    <div class="btns"><button class="ok">⇄ Converter para a página</button></div></div></div>`;
-  t.el.querySelector('.ok').onclick = () => convertAgent(l);
+    <div class="btns">${
+      a.tmux
+        ? '<button class="ok">⇄ Converter para a página</button>'
+        : '<span class="small mute">painel da grade antiga do orq: feche-o no terminal (q no menu)</span>'
+    }</div></div></div>`;
+  const ok = t.el.querySelector('.ok');
+  if (ok) ok.onclick = () => convertAgent(l);
   document.querySelectorAll('.chat').forEach((e) => e.classList.toggle('on', e === t.el));
   $('empty').style.display = 'none';
   $('composer').hidden = true;

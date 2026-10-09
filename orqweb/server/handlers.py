@@ -171,6 +171,10 @@ def make_handler(ctx: Context):
                 )
             if entry is None:
                 return self.reply(404, {"err": "esse agente não é um claude de terminal"})
+            if not entry.get("tmux"):
+                return self.reply(
+                    400, {"err": "painel da grade antiga do orq, sem tmux próprio; feche-o no terminal"}
+                )
             res = ctx.convert(host, label)
             if not res.get("ok"):
                 return self.reply(500, {"err": res.get("msg") or "falhou"})
@@ -188,6 +192,21 @@ def make_handler(ctx: Context):
             if err:
                 return self.reply(400, {"err": err})
             assign([p], snap["usage"], list(ctx.conf.accounts), ctx.state.running_accounts())
+            if p["mode"] == "resume":
+                live = [
+                    a
+                    for a in snap["agents"]
+                    if a.get("kind") != "sdk"
+                    and a.get("tmux")
+                    and a.get("state") != "closed"
+                    and a.get("host") == p["host"]
+                    and (a.get("dir") or "").rstrip("/") == p["cwd"].rstrip("/")
+                ]
+                if live:
+                    who = live[0]["label"]
+                    return self.reply(
+                        409, {"err": f"há um claude aberto no terminal nessa pasta ({who}); use ⇄ converter"}
+                    )
             err = ctx.spawn(p["host"], p["label"], p["cwd"], p["acc"], p["mode"])
             if err:
                 return self.reply(500, {"err": err})

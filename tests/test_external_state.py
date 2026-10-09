@@ -161,3 +161,16 @@ def test_pick_host_and_label():
         "projeto inválido",
     )
     assert S.pick_host_and_label({"host": "laptop"}, [], set())[1] == "projeto inválido"
+
+
+def test_dedupe_labels_suffixes_terminal_duplicates_but_not_sdk():
+    from orqweb.server.external import dedupe_labels
+
+    items = [
+        {"label": "p@h", "tmux": "t1"},
+        {"label": "p@h", "tmux": "t2"},
+        {"label": "p@h", "kind": "sdk"},
+        {"label": "q@h", "tmux": "t3"},
+    ]
+    out = dedupe_labels(items)
+    assert [a["label"] for a in out] == ["p-2@h", "p-3@h", "p@h", "q@h"]

@@ -171,3 +171,27 @@ def test_convert_reports_spawn_error():
     entry = {"label": "x", "tmux": "s", "dir": "/p", "account": "gmail"}
     res = C.convert(entry, "h", spawn, tmux=t, bin_dir=Path("/b"), sleep=nosleep)
     assert not res["ok"] and "socket" in res["msg"] and res["how"] == "exit"
+
+
+def test_others_in_folder_and_refusal():
+    status = [
+        {"label": "p", "tmux": "a", "dir": "/x", "state": "waiting"},
+        {"label": "p", "tmux": "b", "dir": "/x/", "state": "working"},
+        {"label": "q", "tmux": "c", "dir": "/y", "state": "waiting"},
+        {"label": "s@h", "kind": "sdk", "dir": "/x", "state": "waiting"},
+    ]
+    entry = status[0]
+    assert [o["tmux"] for o in C.others_in_folder(status, entry)] == ["b"]
+    assert [o["tmux"] for o in C.live_terminal_in_folder(status, "/x")] == ["a", "b"]
+    assert C.live_terminal_in_folder(status, "/z") == []
+    t = FakeTmux(exits_on=("Enter",))
+    res = C.convert(
+        dict(entry, account="gmail"),
+        "h",
+        lambda *a: "",
+        tmux=t,
+        bin_dir=Path("/b"),
+        others=[status[1]],
+        sleep=nosleep,
+    )
+    assert not res["ok"] and "tmux b" in res["msg"] and t.sent == [], "com ambiguidade não fecha nada"
