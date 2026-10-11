@@ -37,6 +37,19 @@ except Exception as e:
     print(f"Não consegui ler {CONF} ({e}). Rode o install.sh do claude-multiconta.", file=sys.stderr); sys.exit(1)
 
 COLOR = sys.stdout.isatty()
+STATE_DIR = pathlib.Path(os.environ.get("ORQ_STATE_DIR", pathlib.Path.home() / ".cache/orq"))
+
+def orq_sids():
+    """Conversas dos agentes da página (orq-web), pelo state.json de cada um: sid -> é nível de cima?
+    Elas rodam como `claude -p` (entrypoint sdk-cli), igual a scripts, mas são conversas de verdade;
+    já a de um nível (professor etc.) não deve ser retomada como se fosse a do projeto."""
+    out = {}
+    for f in STATE_DIR.glob("*/state.json"):
+        try: st = json.loads(f.read_text())
+        except Exception: continue
+        if st.get("sid"): out[st["sid"]] = bool(st.get("parent"))
+    return out
+ORQ = orq_sids()
 def c(code, s): return f"\033[{code}m{s}\033[0m" if COLOR else s
 
 def project_dir(cfg):
@@ -63,6 +76,8 @@ def info(f):
                     t = o.get("type")
                     if t == "ai-title" and o.get("aiTitle"): title = o["aiTitle"]
                     elif t == "last-prompt" and o.get("lastPrompt"): last = o["lastPrompt"]
+                    elif t == "user" and first is None and (o.get("origin") or {}).get("kind") == "peer":
+                        first = (o.get("origin") or {}).get("body") or None   # tarefa vinda de outra sessão (nível de cima)
                     elif t == "user" and first is None and not o.get("isMeta"):
                         m = (o.get("message") or {}).get("content")
                         if isinstance(m, list):
@@ -111,8 +126,9 @@ if "--projects" in args:
             if not d.is_dir(): continue
             files = sorted(d.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)[:6]
             for f in files:            # a mais recente interativa, não vazia nem renovação de token
+                if ORQ.get(f.stem): continue             # conversa de um nível (professor) da página
                 cwd, ep = conv_meta(f)
-                if ep and ep != "cli": continue          # claude -p de script/cron
+                if ep and ep != "cli" and f.stem not in ORQ: continue   # claude -p de script/cron
                 if not cwd or cwd == home or not os.path.isdir(cwd): break
                 if re.match(r"^(/private)?/tmp(/|$)", cwd): break
                 t = info(f)
@@ -129,6 +145,7 @@ for a in conf.get("accounts", []):
     cfg = pathlib.Path(os.path.expanduser(a.get("config_dir") or "~/.claude"))
     for d in project_dir(cfg):
         for f in d.glob("*.jsonl"):
+            if ORQ.get(f.stem): continue   # nível da página: não é a conversa do projeto
             try: m = f.stat().st_mtime
             except OSError: continue
             rows.append((m, a["name"], a.get("label", a["name"]).split(" (")[0], f.stem, f))
