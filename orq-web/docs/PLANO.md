@@ -72,7 +72,12 @@ arquivo de senha, confere `GET /login` 200 e que `/api/state` sem cookie dá 403
 Verificação real: subir no server0, abrir `http://10.0.0.10:8765/` do laptop e do celular pelo
 ZeroTier, logar, abrir uma aba do `kaggle@server0` e do `dev@node3`.
 
-## Fase 2 — monorepo privado e CI/CD
+## Fase 2 — monorepo privado e CI/CD  ✅ feita em 2026-10-11
+
+`https://github.com/cmarcond/orq` (privado). CI por projeto verde; imagem `ghcr.io/cmarcond/orq-web:latest`.
+O monorepo é a fonte de verdade a partir daqui; as pastas `~/Projects/orq-web` e `~/Projects/claude-multiconta` são
+cópias antigas. O deploy do server0 continua pelo `push-server0.sh`; para puxar do GHCR, `docker login ghcr.io`
+lá com um PAT `read:packages`.
 
 ### 2.1 Layout
 
