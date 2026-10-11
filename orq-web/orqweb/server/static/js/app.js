@@ -958,10 +958,11 @@ async function refresh() {
       }
       if (a.pid) t.pid = a.pid;
       if (t.a?.state === 'closed') a.state = 'closed'; // encerrado pela página: a máquina pode atrasar
-      else if (t.es && a.state !== 'closed') {
-        // a aba sabe o estado pelos eventos; a consulta às máquinas atrasa até 15 s
-        a.state = t.a?.state || a.state;
-        a.msg = t.a?.msg ?? a.msg;
+      else if (t.es && a.state !== 'closed' && t.a?.state && t.a.state !== 'starting') {
+        // a aba sabe o estado pelos eventos; a consulta às máquinas atrasa até 15 s. Exceção: 'abrindo…'
+        // é o chute provisório da página, e só a máquina diz quando o agente de fato ficou pronto
+        a.state = t.a.state;
+        a.msg = t.a.msg ?? a.msg;
       }
       t.a = a;
     }

@@ -16,6 +16,7 @@ AGENTS_EVERY = 15
 PROJECTS_TTL = 60
 OPEN_WINDOW = 60  # s desde o último pedido para considerar a página aberta
 CLOSING_TTL = 30  # s em que um agente mandado encerrar fica "closed" mesmo que a máquina ainda o veja vivo
+PROVISIONAL_TTL = 60  # s em que um agente recém-aberto fica na lista até a máquina confirmá-lo vivo
 
 
 class StateCache:
@@ -31,6 +32,7 @@ class StateCache:
         self.projects: Optional[List[dict]] = None
         self.projects_ts = 0.0
         self.closing: Dict[str, float] = {}  # rótulo -> até quando contar como fechado
+        self.provisional: Dict[str, dict] = {}  # rótulo -> entrada recém-aberta, até a máquina confirmar
         self.on_agents: Optional[Callable[[List[dict]], Any]] = None  # chamado com a lista nova (migração)
         self.seen = clock()
         self._stop = threading.Event()
@@ -55,6 +57,17 @@ class StateCache:
             for a in ag:
                 if a.get("label") in self.closing:
                     a["state"] = "closed"
+            # A consulta às máquinas leva segundos: se começou antes de um agente ser aberto, volta sem ele
+            # (ou com o state.json "closed" da vida anterior) e a aba sumiria da página até a próxima
+            # consulta. O recém-aberto fica na lista até a máquina o devolver vivo, por PROVISIONAL_TTL.
+            self.provisional = {k: v for k, v in self.provisional.items() if now - v["ts"] < PROVISIONAL_TTL}
+            seen = {a.get("label"): a for a in ag}
+            for label, entry in list(self.provisional.items()):
+                got = seen.get(label)
+                if got is not None and got.get("state") != "closed":
+                    del self.provisional[label]  # confirmado pela máquina
+                    continue
+                ag = [a for a in ag if a.get("label") != label] + [entry]
             self.agents, self.host_errors, self.agents_ts = ag, errs, now
         if self.on_agents:
             try:
@@ -98,6 +111,7 @@ class StateCache:
         """Mostra o agente recém-aberto antes da próxima consulta às máquinas."""
         with self.lock:
             self.closing.pop(agent["label"], None)
+            self.provisional[agent["label"]] = agent
             self.agents = [a for a in self.agents if a.get("label") != agent["label"]] + [agent]
 
     def mark_closing(self, label: str) -> None:

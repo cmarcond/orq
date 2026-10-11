@@ -215,6 +215,32 @@ def test_provisional_replaces_same_label():
     assert a["state"] == "starting" and a["kind"] == "sdk"
 
 
+def test_provisional_survives_stale_listing_until_host_confirms():
+    """A consulta que começou antes do spawn volta sem o novo (ou com o "closed" da vida anterior)."""
+    clk = Clock()
+    c = make_cache(clk)
+    c.refresh_agents()
+    c.add_provisional(S.provisional_agent("novo@laptop", "laptop", "gmail", "/n", clk.t))
+
+    def state_of(label):
+        return next(a["state"] for a in c.snapshot()["agents"] if a["label"] == label)
+
+    c.refresh_agents()  # a máquina ainda não devolve novo@laptop
+    assert state_of("novo@laptop") == "starting" and "a@laptop" in c.live_labels()
+    c.ext.all_agents = lambda hosts: ([{"label": "novo@laptop", "state": "closed", "account": "gmail"}], {})
+    c.refresh_agents()  # state.json de uma rodada anterior
+    assert state_of("novo@laptop") == "starting"
+    c.ext.all_agents = lambda hosts: ([{"label": "novo@laptop", "state": "waiting", "account": "gmail"}], {})
+    c.refresh_agents()  # confirmado
+    assert state_of("novo@laptop") == "waiting" and "novo@laptop" not in c.provisional
+    # sem confirmação, o provisório expira
+    c.add_provisional(S.provisional_agent("x@laptop", "laptop", "gmail", "/x", clk.t))
+    c.ext.all_agents = lambda hosts: ([], {})
+    clk.t += S.PROVISIONAL_TTL + 1
+    c.refresh_agents()
+    assert "x@laptop" not in c.live_labels()
+
+
 def test_pick_host_and_label():
     p, err = S.pick_host_and_label({"host": "node1", "cwd": "~/acervo"}, ["node1"], {"acervo@node1"})
     assert err is None and p["label"] == "acervo-2@node1" and p["mode"] == "resume"
