@@ -164,8 +164,12 @@ def test_page_redirects_to_login_without_credentials(server):
     port, _ = server
     status, _, r = req(port, "GET", "/")
     assert status == 303 and r.getheader("Location") == "/login"
-    status, body, _ = req(port, "GET", "/login")
+    status, body, r = req(port, "GET", "/login")
     assert status == 200 and b"<form" in body
+    csp = r.getheader("Content-Security-Policy")
+    assert "form-action 'self'" in csp, (
+        "form-action 'none' bloqueia o próprio formulário de login no navegador"
+    )
     assert req(port, "GET", "/api/state")[0] == 403
 
 

@@ -10,6 +10,7 @@ ao CDN.
 import json
 import re
 import secrets
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -25,7 +26,7 @@ from .state import StateCache, pick_host_and_label, provisional_agent
 STATIC = Path(__file__).with_name("static")
 CSP = (
     "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; "
-    "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
+    "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'"
 )
 TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
 AGENT_RE = re.compile(r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload)$")
@@ -229,6 +230,7 @@ def make_handler(ctx: Context):
                     429, login_page("muitas tentativas; espere um minuto").encode(), "text/html"
                 )
             sid = ctx.auth.login((form.get("password") or [""])[0], ip)
+            print(f"login {'ok' if sid else 'falhou'} de {ip}", file=sys.stderr, flush=True)
             if not sid:
                 return self.reply(403, login_page("senha incorreta").encode(), "text/html")
             return self.redirect("/", (("Set-Cookie", ctx.auth.cookie_header(sid)),))
