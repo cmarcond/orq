@@ -66,6 +66,17 @@ Variáveis: `CLAUDE_MULTICONTA_CONF`, `ORQ_BIN` (onde estão os utilitários), `
 (padrão `~/.cache/orq`), `ORQ_NO_OPEN=1` (não abre o navegador), `ORQ_USAGE_HOST` (máquina que
 responde a cota, por ssh; para o servidor rodar onde não há credenciais).
 
+## Pela rede (container no server0)
+
+`deploy/push-server0.sh` manda o código ao server0 e roda `deploy/server0/deploy.sh` lá: gera a
+senha em `~/.config/orq-web/password` (se não houver), um `ssh_config` só do container com os IPs
+das máquinas, autoriza ssh para a própria máquina e sobe o compose publicado só no IP do ZeroTier.
+A imagem tem só Python e o cliente ssh: agentes, cota e utilitários rodam nas máquinas, por ssh
+(`ORQ_LOCAL_HOST=none`). Entrar: `http://<ip zerotier>:8765/`, senha `ssh server0 cat
+~/.config/orq-web/password`. Variáveis do servidor na rede: `ORQ_BIND` (fora de 127.0.0.1 exige a
+senha), `ORQ_PASSWORD_FILE`, `ORQ_ALLOWED_HOSTS`, `ORQ_LOCAL_HOST`, `ORQ_EXTRA_HOSTS`, `ORQ_SSH_CONFIG`,
+`ORQ_USAGE_HOST`.
+
 ## Arquitetura
 
 ```

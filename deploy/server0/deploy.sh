@@ -29,7 +29,9 @@ grep -qF "$(cut -d' ' -f2 "$KEY.pub")" "$HOME/.ssh/authorized_keys" || cat "$KEY
 hosts=$(python3 -c "import json;print(' '.join(json.load(open('$CONF')).get('orq_hosts',[])))")
 {
   echo "# gerado por deploy.sh em $(date -Is); não edite, rode o deploy de novo"
+  seen=" "
   for h in $hosts laptop "$HOSTNAME_"; do
+    case "$seen" in *" $h "*) continue;; esac; seen="$seen$h "
     ip=$(ssh -G "$h" 2>/dev/null | awk '/^hostname /{print $2}')
     case "$ip" in ""|"$h") ip=$(getent hosts "$h" 2>/dev/null | awk '{print $1; exit}');; esac
     [ "$h" = "$HOSTNAME_" ] && ip="$ZT_IP"

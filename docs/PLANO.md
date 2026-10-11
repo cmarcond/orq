@@ -18,7 +18,12 @@ depois a verificação real nas máquinas. Nada vai para o server0 sem a suíte 
 
 ---
 
-## Fase 1 — acesso pela rede e container no server0
+## Fase 1 — acesso pela rede e container no server0  ✅ feita em 2026-10-11
+
+No ar em `http://10.0.0.10:8765/` (senha: `ssh server0 cat ~/.config/orq-web/password`).
+O container enxerga server0, node3 e laptop por ssh; a cota vem do server0; `tmux run-shell` resolve o
+Keychain do laptop. Diferenças em relação ao planejado: não existe `ORQ_BIN` no container (nada roda local);
+o `push-server0.sh` manda o código por uma conexão ssh só, porque scp/sftp caíam na rede instável.
 
 ### 1.1 Login com cookie (`orqweb/server/auth.py`)
 
