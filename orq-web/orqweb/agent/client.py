@@ -87,8 +87,16 @@ def stop(sock_path: Path) -> bool:
         return False
 
 
-def start_command(label: str, folder: str, account: str, mode: str) -> List[str]:
-    return [
+def start_command(
+    label: str,
+    folder: str,
+    account: str,
+    mode: str,
+    role_file: Optional[str] = None,
+    parent: Optional[str] = None,
+    level: Optional[str] = None,
+) -> List[str]:
+    cmd = [
         sys.executable,
         "-m",
         "orqweb.agent.cli",
@@ -102,9 +110,35 @@ def start_command(label: str, folder: str, account: str, mode: str) -> List[str]
         "--mode",
         mode,
     ]
+    if role_file:
+        cmd += ["--role-file", role_file]
+    if parent:
+        cmd += ["--parent", parent]
+    if level:
+        cmd += ["--level", level]
+    return cmd
 
 
-def spawn(label: str, folder: str, account: str, mode: str = "resume", wait: float = 20.0) -> str:
+def tmux_shell(cmd: List[str], env: dict) -> str:
+    """Linha de shell para o tmux: leva o PYTHONPATH junto.
+
+    Se já existe um servidor tmux (aberto por outra coisa), a sessão nova herda o ambiente DELE, não o
+    nosso, e o `python3 -m orqweb…` do wrapper de ~/.local/bin não acharia o pacote.
+    """
+    pp = env.get("PYTHONPATH")
+    return shlex.join((["env", f"PYTHONPATH={pp}"] if pp else []) + cmd)
+
+
+def spawn(
+    label: str,
+    folder: str,
+    account: str,
+    mode: str = "resume",
+    wait: float = 20.0,
+    role_file: Optional[str] = None,
+    parent: Optional[str] = None,
+    level: Optional[str] = None,
+) -> str:
     """Garante o supervisor rodando: numa sessão tmux `orqs-<nome>` ou, sem tmux, em segundo plano.
 
     Devolve uma linha descrevendo o que fez. Levanta RuntimeError se o socket não aparecer.
@@ -113,7 +147,7 @@ def spawn(label: str, folder: str, account: str, mode: str = "resume", wait: flo
     sock = d / "agent.sock"
     if socket_alive(sock):
         return "já rodando"
-    cmd = start_command(label, folder, account, mode)
+    cmd = start_command(label, folder, account, mode, role_file, parent, level)
     env = dict(os.environ)
     env.pop("TMUX", None)
     Path(os.path.expanduser(folder)).mkdir(parents=True, exist_ok=True)
@@ -122,7 +156,7 @@ def spawn(label: str, folder: str, account: str, mode: str = "resume", wait: flo
         sess = "orqs-" + config.safe_label(label.split("@")[0])
         subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
         subprocess.run(
-            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser(folder), shlex.join(cmd)],
+            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser(folder), tmux_shell(cmd, env)],
             env=env,
             check=True,
         )

@@ -2,9 +2,13 @@
 
 Uso:
   orq-agent spawn  --dir PASTA --account CONTA --label NOME [--mode resume|new]
-        garante o supervisor rodando numa sessão tmux "orqs-<nome>" desta máquina (sem tmux: nohup)
-  orq-agent start  --dir PASTA --account CONTA --label NOME [--mode resume|new]
-        roda o supervisor em primeiro plano (é o que o spawn abre dentro do tmux)
+                   [--role-file ARQ|-] [--parent RÓTULO] [--level NÍVEL]
+        garante o supervisor rodando numa sessão tmux "orqs-<nome>" desta máquina (sem tmux: nohup).
+        Um nível de cima (professor etc.) sobe com o papel (--role-file; "-" lê do stdin e guarda em
+        ~/.cache/orq/<nome>/role.txt), o rótulo do agente logo abaixo (--parent) e o nome do nível.
+  orq-agent start  --dir PASTA --account CONTA --label NOME [--mode resume|new] [--role-file ARQ] …
+        roda o supervisor em primeiro plano (é o que o spawn abre dentro do tmux). Todo agente sobe
+        com `claude -n <nome saneado>`, para ser endereçável pelo SendMessage de outra sessão
   orq-agent attach NOME [--since N]
         liga stdin/stdout ao socket do agente: primeiro os eventos a partir de N, depois ao vivo;
         cada linha JSON do stdin vai para o claude. É o que o orq-web usa, local ou por ssh.
@@ -45,15 +49,31 @@ def cmd_start(a: argparse.Namespace) -> int:
             return 1
     sid = claude.pick_session(config.bin_dir(), acc.name, folder) if a.mode == "resume" else None
     transcript = events.project_dir(acc.config_dir, folder) / f"{sid}.jsonl" if sid else None
+    role = None
+    if a.role_file:
+        try:
+            role = Path(a.role_file).read_text().strip() or None
+        except OSError as e:
+            print(f"não consegui ler o papel em {a.role_file}: {e}", file=sys.stderr)
+            return 1
     sup = Supervisor(
         label=a.label,
         folder=folder,
         account=acc.name,
-        command=claude.build_command(claude.find_claude(config.bin_dir()), conf.permission_mode, sid),
+        command=claude.build_command(
+            claude.find_claude(config.bin_dir()),
+            conf.permission_mode,
+            sid,
+            name=config.session_name(a.label),
+            system_prompt=role,
+        ),
         env=acc.env(),
         state_dir=config.state_dir(a.label),
         sid=sid,
         transcript=transcript,
+        name=config.session_name(a.label),
+        parent=a.parent,
+        level=a.level,
     )
     try:
         sup.run()
@@ -75,8 +95,19 @@ def cmd_spawn(a: argparse.Namespace) -> int:
         if err:
             print(err, file=sys.stderr)
             return 1
+    role_file = a.role_file
+    if role_file == "-":  # o papel vem pelo stdin (é como o servidor manda por ssh) e fica no estado
+        text = sys.stdin.read()
+        path = config.state_dir(a.label) / "role.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        role_file = str(path)
     try:
-        print(client.spawn(a.label, a.dir, a.account, a.mode))
+        print(
+            client.spawn(
+                a.label, a.dir, a.account, a.mode, role_file=role_file, parent=a.parent, level=a.level
+            )
+        )
         print("pronto")
     except RuntimeError as e:
         print(e, file=sys.stderr)
@@ -179,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--force", action="store_true", help="retoma mesmo com um claude interativo aberto na pasta"
         )
+        p.add_argument(
+            "--role-file", help="papel do nível (--append-system-prompt); no spawn, '-' lê do stdin"
+        )
+        p.add_argument("--parent", help="nível de cima: rótulo do agente logo abaixo")
+        p.add_argument("--level", help="nome do nível na receita (professor, arquiteto…)")
         p.set_defaults(fn=fn)
     p = sub.add_parser("attach")
     p.add_argument("label")

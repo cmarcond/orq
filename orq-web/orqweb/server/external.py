@@ -14,11 +14,11 @@ from .. import config
 
 LAPTOP = "laptop"
 
-Runner = Callable[[List[str], float], "subprocess.CompletedProcess[str]"]
+Runner = Callable[..., "subprocess.CompletedProcess[str]"]  # (cmd, timeout[, input=texto])
 
 
-def run(cmd: List[str], timeout: float) -> "subprocess.CompletedProcess[str]":
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def run(cmd: List[str], timeout: float, input: Optional[str] = None) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=input)
 
 
 def usage_remote_cmd() -> str:
@@ -184,16 +184,38 @@ class External:
             }
 
     # ---- abrir agente
-    def spawn(self, host: str, label: str, cwd: str, account: str, mode: str) -> Optional[str]:
-        """Sobe o supervisor na máquina. Devolve mensagem de erro ou None."""
+    def spawn(
+        self,
+        host: str,
+        label: str,
+        cwd: str,
+        account: str,
+        mode: str,
+        role: Optional[str] = None,
+        parent: Optional[str] = None,
+        level: Optional[str] = None,
+    ) -> Optional[str]:
+        """Sobe o supervisor na máquina. Devolve mensagem de erro ou None.
+
+        Um nível de cima leva o papel (`role`) pelo stdin do `orq-agent spawn --role-file -`, que o
+        guarda na máquina do agente; `parent` é o rótulo do agente logo abaixo e `level` o nome do nível.
+        """
         args = ["spawn", "--dir", cwd, "--account", account, "--label", label, "--mode", mode]
+        if parent:
+            args += ["--parent", parent]
+        if level:
+            args += ["--level", level]
+        extra = {}
+        if role is not None:
+            args += ["--role-file", "-"]
+            extra["input"] = role
         try:
             if host == self.local:
-                r = self.run([str(self.bin / "orq-agent")] + args, 60)
+                r = self.run([str(self.bin / "orq-agent")] + args, 60, **extra)
             else:
                 import shlex
 
-                r = self.run(self.ssh(host, "~/.local/bin/orq-agent " + shlex.join(args), 8), 60)
+                r = self.run(self.ssh(host, "~/.local/bin/orq-agent " + shlex.join(args), 8), 60, **extra)
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
         if r.returncode:

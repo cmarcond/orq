@@ -10,11 +10,19 @@ def find_claude(bin_dir: Path) -> str:
     return shutil.which("claude") or str(bin_dir / "claude")
 
 
-def build_command(claude: str, permission_mode: str, resume: Optional[str] = None) -> List[str]:
+def build_command(
+    claude: str,
+    permission_mode: str,
+    resume: Optional[str] = None,
+    name: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+) -> List[str]:
     """`claude -p` em stream-json nos dois sentidos, com permissões pelo stdio (protocolo do Agent SDK).
 
     --include-partial-messages: texto palavra a palavra; --replay-user-messages: o claude ecoa as
     mensagens que recebe, assim tudo que a página mostra passou pelo mesmo fluxo e fica persistido.
+    `name` (-n) é o nome pelo qual outras sessões acham esta no ListAgents/SendMessage; `system_prompt`
+    (--append-system-prompt) é o papel de um nível (professor, arquiteto…).
     """
     cmd = [
         claude,
@@ -33,6 +41,10 @@ def build_command(claude: str, permission_mode: str, resume: Optional[str] = Non
     ]
     if resume:
         cmd += ["--resume", resume]
+    if name:
+        cmd += ["-n", name]
+    if system_prompt:
+        cmd += ["--append-system-prompt", system_prompt]
     return cmd
 
 

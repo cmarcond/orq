@@ -107,7 +107,22 @@ que `orqweb/server/static` entra no pacote e que o `Dockerfile` copia o que o `o
 `--json`. `install.sh` ganha um teste de shell que roda num `HOME` temporário e confere aliases e
 `settings.json`. Pequeno, mas tira o projeto do zero de cobertura.
 
-## Fase 3 — níveis (highlevel) dentro do orq-web
+## Fase 3 — níveis (highlevel) dentro do orq-web  ✅ feita em 2026-10-11
+
+O que mudou em relação ao planejado, descoberto no teste real com duas sessões `claude -p`:
+- o `SendMessage` recusa nome com `@` ("to must be a bare teammate name"), então `-n` recebe o rótulo
+  saneado (`config.session_name`: `kaggle@server0` → `kaggle-server0`); `{acima}`/`{abaixo}` nos papéis
+  viram esses nomes, não os rótulos;
+- a mensagem chega como `user` com `isReplay`/`isSynthetic` e `origin = {kind: "peer", name, body, msg_id}`;
+  o supervisor carimba `orq_origin: "agent"`. O `tool_result` do SendMessage traz o `msg_id`, que a página
+  usa para marcar o fio como entregue;
+- o executor costuma responder para o endereço `uds:/tmp/cc-socks/<pid>.sock` em vez do nome; a página
+  mostra como "resposta";
+- cada mensagem de peer reabre o turno com um novo `system init` no stream (inofensivo);
+- as receitas listam só os níveis que sobem ACIMA do agente da aba (ele é o executor, sem papel novo);
+  não há `bootstrap`: a primeira mensagem da pessoa já vai ao professor, cujo papel manda delegar;
+- o papel viaja pelo stdin do `orq-agent spawn --role-file -` (por ssh) e fica em `~/.cache/orq/<nome>/role.txt`;
+- Python < 3.11 no servidor usa um leitor TOML mínimo (`pipelines._parse_minimal`), testado contra o `tomllib`.
 
 ### 3.1 O que muda no supervisor
 

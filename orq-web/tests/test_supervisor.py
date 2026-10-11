@@ -396,3 +396,84 @@ def test_handle_client_message_is_threadsafe_under_burst(sup):
         ]
     assert sorted(echoes) == [f"m{i}" for i in range(n)]
     c.close()
+
+
+def test_named_levels_exchange_messages_through_peer_channel(short_tmp):
+    """Professor e executor falsos, ambos com -n, pelo supervisor real: o SendMessage de um chega
+    no outro como `user` carimbado `agent`, e a resposta volta pelo mesmo caminho."""
+    peers = short_tmp / "peers"
+    peers.mkdir()
+    env = dict(os.environ, FAKE_PEER_DIR=str(peers))
+    sups = {}
+    for label, extra in (
+        ("exe@laptop", {}),
+        ("exe~professor@laptop", {"parent": "exe@laptop", "level": "professor"}),
+    ):
+        name = label.replace("@", "-").replace("~", "-")
+        cmd = [sys.executable, str(FAKE), "-n", name]
+        if extra:
+            cmd += ["--append-system-prompt", "Você é o professor de exe-laptop"]
+        s = Supervisor(
+            label=label,
+            folder=short_tmp / "proj",
+            account="gmail",
+            command=cmd,
+            env=env,
+            state_dir=short_tmp / "st" / name,
+            log=lambda *_: None,
+            name=name,
+            **extra,
+        )
+        s.start()
+        sups[label] = s
+    try:
+        exe, prof = Conn(sups["exe@laptop"].sock_path), Conn(sups["exe~professor@laptop"].sock_path)
+        init = prof.until(lambda e: e.get("subtype") == "init")[-1]
+        assert init["fake_name"] == "exe-professor-laptop" and init["fake_role"].startswith(
+            "Você é o professor"
+        )
+        exe.until(lambda e: e.get("subtype") == "init")
+        st = state_of(sups["exe~professor@laptop"])
+        assert (
+            st["name"] == "exe-professor-laptop"
+            and st["parent"] == "exe@laptop"
+            and st["level"] == "professor"
+        )
+        assert state_of(sups["exe@laptop"])["name"] == "exe-laptop" and "parent" not in state_of(
+            sups["exe@laptop"]
+        )
+
+        prof.user("delegue: responda PONG para exe-laptop")
+        got = prof.until(is_result)
+        out = next(
+            e
+            for e in got
+            if e["type"] == "assistant" and e["message"]["content"][0].get("type") == "tool_use"
+        )
+        assert out["message"]["content"][0]["name"] == "SendMessage"
+        assert out["message"]["content"][0]["input"]["to"] == "exe-laptop"
+        # no executor: chega como user carimbado agent, com quem mandou e o texto limpo
+        got = exe.until(lambda e: e.get("orq_origin") == "agent")
+        peer = got[-1]
+        assert peer["origin"]["name"] == "exe-professor-laptop" and peer["origin"]["body"] == "responda PONG"
+        assert "<cross-session-message" in peer["message"]["content"]
+        exe.until(is_result)
+        # a resposta volta ao professor pelo mesmo canal
+        got = prof.until(lambda e: e.get("orq_origin") == "agent")
+        assert got[-1]["origin"]["name"] == "exe-laptop" and got[-1]["origin"]["body"] == "PONG"
+        got = prof.until(is_result)
+        assert any("o peer disse: PONG" in json.dumps(e, ensure_ascii=False) for e in got)
+        exe.close()
+        prof.close()
+    finally:
+        for s in sups.values():
+            s.quit()
+        for s in sups.values():
+            s.wait(10)
+
+
+def test_tmux_shell_carries_pythonpath():
+    from orqweb.agent.client import tmux_shell
+
+    assert tmux_shell(["python3", "-m", "x"], {}) == "python3 -m x"
+    assert tmux_shell(["python3", "-m", "x"], {"PYTHONPATH": "/a b"}) == "env 'PYTHONPATH=/a b' python3 -m x"

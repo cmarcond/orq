@@ -15,6 +15,7 @@ USAGE_EVERY = 150
 AGENTS_EVERY = 15
 PROJECTS_TTL = 60
 OPEN_WINDOW = 60  # s desde o último pedido para considerar a página aberta
+CLOSING_TTL = 30  # s em que um agente mandado encerrar fica "closed" mesmo que a máquina ainda o veja vivo
 
 
 class StateCache:
@@ -29,6 +30,7 @@ class StateCache:
         self.host_errors: Dict[str, str] = {}
         self.projects: Optional[List[dict]] = None
         self.projects_ts = 0.0
+        self.closing: Dict[str, float] = {}  # rótulo -> até quando contar como fechado
         self.seen = clock()
         self._stop = threading.Event()
 
@@ -47,7 +49,12 @@ class StateCache:
     def refresh_agents(self) -> None:
         ag, errs = self.ext.all_agents(self.conf.hosts)
         with self.lock:
-            self.agents, self.host_errors, self.agents_ts = ag, errs, self.clock()
+            now = self.clock()
+            self.closing = {k: v for k, v in self.closing.items() if v > now}
+            for a in ag:
+                if a.get("label") in self.closing:
+                    a["state"] = "closed"
+            self.agents, self.host_errors, self.agents_ts = ag, errs, now
 
     def get_projects(self) -> List[dict]:
         with self.lock:
@@ -84,7 +91,17 @@ class StateCache:
     def add_provisional(self, agent: dict) -> None:
         """Mostra o agente recém-aberto antes da próxima consulta às máquinas."""
         with self.lock:
+            self.closing.pop(agent["label"], None)
             self.agents = [a for a in self.agents if a.get("label") != agent["label"]] + [agent]
+
+    def mark_closing(self, label: str) -> None:
+        """Agente mandado encerrar: fica `closed` já, e por CLOSING_TTL s mesmo que a máquina, consultada
+        enquanto o claude ainda está saindo (até 15 s de graça), o devolva vivo."""
+        with self.lock:
+            self.closing[label] = self.clock() + CLOSING_TTL
+            for a in self.agents:
+                if a.get("label") == label:
+                    a["state"] = "closed"
 
     # ---- laços de fundo
     def _usage_loop(self) -> None:
@@ -106,8 +123,11 @@ class StateCache:
         self._stop.set()
 
 
-def provisional_agent(label: str, host: str, account: str, cwd: str, now: float) -> dict:
-    return {
+def provisional_agent(label: str, host: str, account: str, cwd: str, now: float, **extra: Any) -> dict:
+    """Entrada de agente recém-aberto; `extra` leva o que o state.json vai ter (name, parent, level)."""
+    from ..config import session_name
+
+    a = {
         "label": label,
         "host": host,
         "account": account,
@@ -117,7 +137,10 @@ def provisional_agent(label: str, host: str, account: str, cwd: str, now: float)
         "ts": now,
         "kind": "sdk",
         "orq": True,
+        "name": session_name(label),
     }
+    a.update({k: v for k, v in extra.items() if v is not None})
+    return a
 
 
 def pick_host_and_label(

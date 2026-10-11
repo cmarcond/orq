@@ -60,6 +60,18 @@ class TestStampOrigin:
         assert "orq_origin" not in ev.stamp_origin(tr, ev.SentTexts())
         assert "orq_origin" not in ev.stamp_origin(user("meta", isMeta=True), ev.SentTexts())
 
+    def test_peer_message_is_stamped_agent_even_if_text_was_sent(self):
+        sent = ev.SentTexts()
+        sent.add("PONG")
+        e = ev.stamp_origin(
+            user(
+                "<cross-session-message>PONG</cross-session-message>",
+                origin={"kind": "peer", "name": "exe", "body": "PONG"},
+            ),
+            sent,
+        )
+        assert e["orq_origin"] == "agent" and e["origin"]["name"] == "exe"
+
     def test_text_blocks_count_as_text(self):
         e = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "bloco"}]}}
         assert ev.stamp_origin(e, ev.SentTexts())["orq_origin"] == "injected"

@@ -38,6 +38,16 @@ def state_dir(label: str) -> Path:
     return state_root() / safe_label(label)
 
 
+def session_name(label: str) -> str:
+    """Nome que o `claude -n` recebe e pelo qual o SendMessage endereça a sessão.
+
+    O `@` do rótulo é recusado pelo SendMessage ("to must be a bare teammate name"), por isso o nome é
+    o rótulo saneado: `kaggle@server0` -> `kaggle-server0`; `kaggle~professor@server0` ->
+    `kaggle-professor-server0`.
+    """
+    return safe_label(label)
+
+
 def host_of(label: str) -> str:
     """`pasta@maquina` -> `maquina`; sem `@` é o laptop."""
     return label.rsplit("@", 1)[1] if "@" in label else "laptop"

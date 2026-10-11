@@ -36,9 +36,30 @@ class FakeExt:
     def all_projects(self, hosts, limit=30):
         return [{"cwd": "/p", "host": "laptop", "mtime": 1, "account": "gmail", "title": "t"}], {}
 
-    def spawn(self, host, label, cwd, account, mode):
-        self.spawned.append((host, label, cwd, account, mode))
-        return "falhou de propósito" if cwd == "/falha" else None
+    def spawn(self, host, label, cwd, account, mode, role=None, parent=None, level=None):
+        self.spawned.append((host, label, cwd, account, mode, role, parent, level))
+        if cwd == "/falha":
+            return "falhou de propósito"
+        if self.real is not None:  # sobe um supervisor de verdade com o claude falso (níveis)
+            name = config.session_name(label)
+            cmd = [sys.executable, str(FAKE), "-n", name] + (["--append-system-prompt", role] if role else [])
+            s = Supervisor(
+                label=label,
+                folder=Path(cwd),
+                account=account,
+                command=cmd,
+                env=dict(os.environ, FAKE_PEER_DIR=self.real["peers"]),
+                state_dir=config.state_dir(label),
+                log=lambda *_: None,
+                name=name,
+                parent=parent,
+                level=level,
+            )
+            s.start()
+            self.real.setdefault("sups", []).append(s)
+        return None
+
+    real = None
 
 
 @pytest.fixture
@@ -52,16 +73,20 @@ def short_tmp():
 def agent(short_tmp, monkeypatch):
     """Supervisor local com claude falso; ORQ_STATE_DIR aponta para ele, como o attach espera."""
     monkeypatch.setenv("ORQ_STATE_DIR", str(short_tmp))
+    peers = short_tmp / "peers"
+    peers.mkdir()
     s = Supervisor(
         label="proj@laptop",
         folder=short_tmp / "proj",
         account="gmail",
-        command=[sys.executable, str(FAKE)],
-        env=dict(os.environ),
+        command=[sys.executable, str(FAKE), "-n", "proj-laptop"],
+        env=dict(os.environ, FAKE_PEER_DIR=str(peers)),
         state_dir=config.state_dir("proj@laptop"),
         log=lambda *_: None,
+        name="proj-laptop",
     )
     s.start()
+    s.peers = peers
     yield s
     s.quit()
     s.wait(10)
@@ -175,7 +200,7 @@ def test_open_agent_assigns_account_and_spawns(server):
         port, "POST", "/api/agent/open", {"host": "laptop", "cwd": "/novo/x", "mode": "new"}
     )
     assert status == 200 and body["label"] == "x@laptop" and body["acc"] == "gmail"
-    assert ext.spawned == [("laptop", "x@laptop", "/novo/x", "gmail", "new")]
+    assert ext.spawned == [("laptop", "x@laptop", "/novo/x", "gmail", "new", None, None, None)]
     assert any(a["label"] == "x@laptop" and a["state"] == "starting" for a in state.snapshot()["agents"])
     # mesmo nome de pasta de novo ganha sufixo
     status, body, _ = req(port, "POST", "/api/agent/open", {"host": "laptop", "cwd": "/outro/x"})
@@ -450,3 +475,151 @@ def test_put_file_local(short_tmp):
     ext = External(Path("/b"))
     assert ext.put_file("laptop", str(short_tmp / "proj" / "_inbox" / "a.bin"), b"\x00\x01") is None
     assert (short_tmp / "proj" / "_inbox" / "a.bin").read_bytes() == b"\x00\x01"
+
+
+# ---------------------------------------------------------------- níveis
+def base_entry(label="proj@laptop", cwd="/p", **extra):
+    a = H.provisional_agent(label, "laptop", "gmail", cwd, time.time(), **extra)
+    a["state"] = "waiting"
+    return a
+
+
+def test_pipelines_endpoint(server):
+    port, _, _ = server
+    status, body, _ = req(port, "GET", "/api/pipelines")
+    assert status == 200 and body["default"] == "professor-executor"
+    ids = [p["id"] for p in body["items"]]
+    assert "professor-executor" in ids and "professor-arquiteto-executor" in ids
+    prof = next(p for p in body["items"] if p["id"] == "professor-executor")
+    assert prof["niveis"] == ["professor"] and prof["titulo"]
+
+
+def test_upgrade_refusals(server):
+    port, ext, state = server
+    assert req(port, "POST", "/api/agent/x@laptop/upgrade", {})[0] == 404
+    term = {
+        "label": "t@laptop",
+        "host": "laptop",
+        "kind": "term",
+        "tmux": "s",
+        "state": "waiting",
+        "dir": "/p",
+    }
+    state.add_provisional(term)
+    status, body, _ = req(port, "POST", "/api/agent/t@laptop/upgrade", {})
+    assert status == 400 and "terminal" in body["err"]
+    old = base_entry("velho@laptop")
+    del old["name"]  # agente aberto antes desta versão: subiu sem -n
+    state.add_provisional(old)
+    status, body, _ = req(port, "POST", "/api/agent/velho@laptop/upgrade", {})
+    assert status == 409 and "reabra" in body["err"]
+    state.add_provisional(base_entry())
+    status, body, _ = req(port, "POST", "/api/agent/proj@laptop/upgrade", {"pipeline": "nao-existe"})
+    assert status == 400 and "desconhecida" in body["err"]
+    assert ext.spawned == []
+
+
+def test_upgrade_spawns_levels_bottom_up_and_downgrade_needs_them(server):
+    port, ext, state = server
+    state.add_provisional(base_entry())
+    status, body, _ = req(port, "POST", "/api/agent/proj@laptop/downgrade", {})
+    assert status == 400
+    status, body, _ = req(
+        port, "POST", "/api/agent/proj@laptop/upgrade", {"pipeline": "professor-arquiteto-executor"}
+    )
+    assert status == 200, body
+    assert (
+        body["levels"] == ["proj~arquiteto@laptop", "proj~professor@laptop"]
+        and body["top"] == "proj~professor@laptop"
+    )
+    assert [s[1] for s in ext.spawned] == body["levels"]
+    host, label, cwd, acc, mode, role, parent, level = ext.spawned[0]
+    assert (host, cwd, acc, mode, parent, level) == (
+        "laptop",
+        "/p",
+        "gmail",
+        "new",
+        "proj@laptop",
+        "arquiteto",
+    )
+    assert "`proj-laptop`" in role and "`proj-professor-laptop`" in role
+    assert ext.spawned[1][6] == "proj~arquiteto@laptop" and ext.spawned[1][7] == "professor"
+    snap = req(port, "GET", "/api/state")[1]
+    levels = {a["label"]: a for a in snap["agents"] if a.get("parent")}
+    assert levels["proj~professor@laptop"]["parent"] == "proj~arquiteto@laptop"
+    assert (
+        levels["proj~arquiteto@laptop"]["level"] == "arquiteto"
+        and levels["proj~arquiteto@laptop"]["name"] == "proj-arquiteto-laptop"
+    )
+    # de novo: já tem níveis; e um nível não ganha níveis
+    assert req(port, "POST", "/api/agent/proj@laptop/upgrade", {})[0] == 409
+    status, body, _ = req(port, "POST", "/api/agent/proj~professor@laptop/upgrade", {})
+    assert status == 400 and "nível de cima" in body["err"]
+
+
+def test_upgrade_failure_in_second_level_rolls_back_first(server, monkeypatch):
+    port, ext, state = server
+    state.add_provisional(base_entry())
+    calls = []
+    ext.spawn = lambda host, label, cwd, acc, mode, **kw: (
+        calls.append(label) or ("quebrou" if len(calls) > 1 else None)
+    )
+    server_ctx(port).spawn = ext.spawn
+    quits = []
+    server_ctx(port).bridges.deliver = lambda label, obj, linger=1.5: quits.append((label, obj)) or None
+    status, body, _ = req(
+        port, "POST", "/api/agent/proj@laptop/upgrade", {"pipeline": "professor-arquiteto-executor"}
+    )
+    assert status == 500 and "proj~professor@laptop" in body["err"]
+    assert quits == [("proj~arquiteto@laptop", {"orq": "quit"})]
+
+
+def test_levels_end_to_end_through_http(server, agent):
+    """Upgrade sobe um professor falso de verdade; a página fala com ele, ele delega ao agente da aba,
+    os fios aparecem nos dois streams; downgrade encerra o nível."""
+    port, ext, state = server
+    ext.real = {"peers": str(agent.peers)}
+    state.add_provisional(base_entry(cwd=str(agent.folder)))
+    try:
+        status, body, _ = req(port, "POST", "/api/agent/proj@laptop/upgrade", {})
+        assert status == 200, body
+        top = body["top"]
+        assert top == "proj~professor@laptop"
+        sock = config.state_dir(top) / "agent.sock"
+        deadline = time.time() + 10
+        while not sock.exists() and time.time() < deadline:
+            time.sleep(0.1)
+        prof = SSE(port, top)
+        init = prof.until(lambda e: e.get("subtype") == "init")[-1]
+        assert init["fake_name"] == "proj-professor-laptop" and "proj-laptop" in init["fake_role"]
+        base = SSE(port, "proj@laptop")
+        base.until(lambda e: e.get("subtype") == "init")
+        assert (
+            req(port, "POST", f"/api/agent/{top}/send", {"text": "delegue: responda PONG para proj-laptop"})[
+                0
+            ]
+            == 200
+        )
+        got = prof.until(
+            lambda e: e.get("type") == "assistant" and e["message"]["content"][0].get("name") == "SendMessage"
+        )
+        assert got[-1]["message"]["content"][0]["input"]["to"] == "proj-laptop"
+        got = base.until(lambda e: e.get("orq_origin") == "agent")
+        assert (
+            got[-1]["origin"]["name"] == "proj-professor-laptop"
+            and got[-1]["origin"]["body"] == "responda PONG"
+        )
+        got = prof.until(lambda e: e.get("orq_origin") == "agent")
+        assert got[-1]["origin"]["body"] == "PONG"
+        prof.close()
+        base.close()
+        status, body, _ = req(port, "POST", "/api/agent/proj@laptop/downgrade", {})
+        assert status == 200 and body["stopped"] == [top] and body["errors"] == {}
+        assert ext.real["sups"][0].wait(10)
+        assert not sock.exists()
+        snap = req(port, "GET", "/api/state")[1]
+        assert next(a for a in snap["agents"] if a["label"] == top)["state"] == "closed"
+    finally:
+        for s in ext.real.get("sups", []):
+            s.quit()
+            s.wait(10)

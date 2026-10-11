@@ -6,6 +6,7 @@
 //   bubble{text,pending} | machine{text,origin} | toolResult{toolUseId,text,isError}
 //   text{text} | toolUse{id,name,summary} | streamStart | streamDelta{text}
 //   permission{requestId,request} | ask{requestId,request} | result{isError,text}
+//   wireOut{id,to,summary,message} (SendMessage para outra sessão) | wireIn{from,text,msgId} (chegou de outra)
 // Cada ação pode trazer `state` ('working' | 'permission' | 'waiting' | 'error') e `msg`.
 
 import { clean, internal, isMachine, toolSummary } from './classify.js';
@@ -39,6 +40,13 @@ function reduceOrq(e) {
 
 function reduceUser(e, ctx) {
   if (e.isMeta) return [{ kind: 'ignore' }];
+  if (e.orq_origin === 'agent' || e.origin?.kind === 'peer') {
+    const o = e.origin || {};
+    const text = o.body ?? peerBody(clean(typeof e.message?.content === 'string' ? e.message.content : ''));
+    const a = { kind: 'wireIn', from: o.name || 'outra sessão', text, msgId: o.msg_id || '' };
+    if (!e.replay) a.state = 'working';
+    return [a];
+  }
   const c = e.message?.content;
   const texts = typeof c === 'string' ? [c] : blocks(e).filter((b) => b.type === 'text').map((b) => b.text);
   const out = [];
@@ -66,7 +74,10 @@ function reduceAssistant(e) {
   const out = [];
   for (const b of blocks(e)) {
     if (b.type === 'text') out.push({ kind: 'text', text: b.text });
-    else if (b.type === 'tool_use') out.push({ kind: 'toolUse', id: b.id, name: b.name, summary: toolSummary(b.input) });
+    else if (b.type === 'tool_use' && b.name === 'SendMessage') {
+      const i = b.input || {};
+      out.push({ kind: 'wireOut', id: b.id, to: String(i.to || ''), summary: String(i.summary || ''), message: String(i.message || '') });
+    } else if (b.type === 'tool_use') out.push({ kind: 'toolUse', id: b.id, name: b.name, summary: toolSummary(b.input) });
   }
   if (!e.replay && out.length) out[0].state = 'working';
   return out.length ? out : [{ kind: 'ignore' }];
@@ -88,6 +99,22 @@ function reducePermission(e) {
     a.msg = r.tool_name;
   }
   return [a];
+}
+
+/** Texto de dentro do embrulho <cross-session-message>; sem embrulho, o texto inteiro. */
+export function peerBody(text) {
+  const m = /<cross-session-message[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(text || '');
+  return (m ? m[1] : String(text || '')).trim();
+}
+
+/** msg_id de um tool_result do SendMessage (JSON em texto), ou ''. */
+export function sentMsgId(text) {
+  try {
+    const j = JSON.parse(String(text || '').trim());
+    return j && j.success !== false && j.msg_id ? String(j.msg_id) : '';
+  } catch (_) {
+    return '';
+  }
 }
 
 /** Respostas de um formulário AskUserQuestion -> {pergunta: "opção, opção"}; null se faltou alguma. */

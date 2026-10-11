@@ -48,10 +48,16 @@ class Supervisor:
         sid: Optional[str] = None,
         transcript: Optional[Path] = None,
         log: Callable[[str], None] = print,
+        name: Optional[str] = None,
+        parent: Optional[str] = None,
+        level: Optional[str] = None,
     ):
         self.label, self.folder, self.account = label, folder, account
         self.command, self.env, self.sid = command, env, sid
         self.transcript = transcript
+        self.name = name  # nome da sessão (-n): como outras sessões a endereçam no SendMessage
+        self.parent = parent  # nível acima de outro agente: rótulo do agente logo abaixo
+        self.level = level  # nome do nível na receita (professor, arquiteto…)
         self.dir = state_dir
         self.sock_path = state_dir / "agent.sock"
         self.state = StateFile(state_dir / "state.json")
@@ -77,6 +83,12 @@ class Supervisor:
             kind="sdk",
             sock=str(self.sock_path),
         )
+        if self.name:
+            fields["name"] = self.name
+        if self.parent:
+            fields["parent"] = self.parent
+        if self.level:
+            fields["level"] = self.level
         if msg is not None:
             fields["msg"] = msg
         try:
@@ -236,6 +248,8 @@ class Supervisor:
         self._srv.listen(8)
         os.chmod(str(self.sock_path), 0o600)
         how = f"retomando {self.sid[:8]}" if self.sid else "conversa nova"
+        if self.level and self.parent:
+            how += f"  nível {self.level} sobre {self.parent}"
         self.note(f"{self.label}  conta {self.account}  {how}")
         if self.sid and self.transcript is not None:
             for entry in ev.transcript_entries(self.transcript):

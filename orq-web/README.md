@@ -34,6 +34,22 @@ encerra o agente (a conversa fica salva). **📎** ou arrastar arquivos para o c
 `_inbox/` dentro da pasta do projeto, na máquina do agente (por ssh quando remota), e a mensagem
 sai com os caminhos, para o Claude ler o PDF, a planilha etc. direto de lá.
 
+## Níveis (professor → executor)
+
+Qualquer agente da página pode ganhar um **nível de cima**: **⇅ subir nível** na barra do chat escolhe uma
+receita (`orqweb/pipelines/*.toml`: `professor → executor` ou `professor → arquiteto → executor`) e sobe
+os níveis na mesma máquina, pasta e conta, cada um como um agente normal da página (`orq-agent spawn
+--role-file - --parent … --level …`). A aba passa a conversar com o nível de cima; o agente original
+vira o executor, escondido atrás, e recebe o trabalho pelo `SendMessage` nativo do Claude Code (as
+sessões se acham pelo `ListAgents`). O painel à direita mostra um cartão por nível (estado; clique para
+ver o chat cru daquele nível) e os **fios**: cada mensagem entre níveis, marcada ✓✓ quando chega do
+outro lado. **↓ desfazer** encerra os níveis de cima e a aba volta ao executor.
+
+Para isso todo agente sobe com `claude -n <nome>`, o nome que o `SendMessage` usa: o rótulo saneado
+(`kaggle@server0` → `kaggle-server0`; o `@` é recusado). Agentes abertos antes desta versão não têm
+nome: feche-os (✕) e abra de novo antes de subir níveis. Os níveis sobem no mesmo `permission_mode`:
+modos diferentes fazem o Claude Code reter a mensagem entre eles.
+
 Um `claude` interativo que já está rodando num tmux (aberto por `claude-gmail` etc.) aparece na
 página como aba tracejada com o botão **⇄ converter**: a página dá `/exit` nele (ou Ctrl-C, ou
 SIGTERM, nessa ordem) e reabre a mesma conversa como agente da página. No terminal:
@@ -58,6 +74,8 @@ orq-agent list                                                          # agente
 orq-agent stop acervo@node0                                           # encerra um
 orq-agent attach acervo@node0 --since 0                               # ponte crua (debug)
 orq-agent convert kaggle@server0                                      # o que o converte-web roda lá
+orq-agent spawn --dir ~/acervo --account gmail --label acervo~professor@node0 \
+          --mode new --role-file - --parent acervo@node0 --level professor  # nível (papel pelo stdin)
 ```
 
 Configuração (no `accounts.json` do claude-multiconta): `permission_mode` dos agentes da página
@@ -100,7 +118,8 @@ navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attac
 | `orqweb/server/assign.py` | escolha da conta pela folga no 7d e rótulo `pasta@maquina` |
 | `orqweb/server/state.py` | cache de cota/agentes/projetos; laços de fundo só com a página aberta |
 | `orqweb/server/bridge.py` | uma ponte por aba; ponte passageira para entregar sem aba |
-| `orqweb/server/handlers.py` | rotas, SSE, token, CSP, estáticos |
+| `orqweb/server/pipelines.py` | receitas de níveis (`orqweb/pipelines/*.toml`), rótulos `base~nível@host`, papéis com os vizinhos resolvidos |
+| `orqweb/server/handlers.py` | rotas, SSE, token, CSP, estáticos, níveis (`/api/pipelines`, `upgrade`, `downgrade`) |
 | `orqweb/server/app.py` | porta, link com token, segundo servidor, encerramento |
 | `static/js/format.js` | escape, tempos, Markdown sanitizado |
 | `static/js/classify.js` | registros internos, origem de máquina, resumos de ferramenta |
@@ -115,8 +134,9 @@ stream-json do `claude -p`, mais:
 - `{"type": "orq", "level": ..., "text": ...}` avisos do supervisor;
 - `{"type": "orq", "subtype": "permission_answered", "request_id": ..., "behavior": ...}` a página
   respondeu uma permissão (o replay fecha o cartão);
-- mensagens `user` ganham `orq_origin`: `page` (eco do que a página mandou) ou `injected` (sem
-  marca de humano: cron, loop, sistema);
+- mensagens `user` ganham `orq_origin`: `page` (eco do que a página mandou), `agent` (veio de outra
+  sessão pelo SendMessage: `origin.name` diz quem, `origin.body` é o texto sem o embrulho) ou
+  `injected` (sem marca de humano: cron, loop, sistema);
 - `{"orq": "quit"}` do cliente encerra o agente.
 
 `stream_event` (texto parcial) só vai ao vivo; não entra na sequência nem no `events.jsonl`.
@@ -137,7 +157,8 @@ make fmt
 ```
 
 Os testes de integração usam `tests/fake_claude.py`, que imita o protocolo stream-json
-(permissão, AskUserQuestion, interrupção, injeção, streaming), então a CI não precisa do Claude.
+(permissão, AskUserQuestion, interrupção, injeção, streaming, e `SendMessage` entre dois processos
+falsos por uma caixa de correio em `FAKE_PEER_DIR`), então a CI não precisa do Claude.
 `tests/test_supervisor.py` cobre o supervisor pelo socket; `tests/test_handlers.py` sobe o
 servidor HTTP real com o supervisor atrás da ponte. Sockets Unix exigem caminhos curtos, por isso
 esses testes usam `/tmp`.

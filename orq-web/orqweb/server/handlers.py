@@ -1,5 +1,5 @@
-"""Rotas HTTP da página: estáticos, /api/state, /api/projects, /api/agent/* (abrir, stream SSE, enviar,
-permissão, interromper, parar).
+"""Rotas HTTP da página: estáticos, /api/state, /api/projects, /api/pipelines, /api/agent/* (abrir,
+stream SSE, enviar, permissão, interromper, parar, níveis: upgrade/downgrade).
 
 Segurança: só responde aos Hosts permitidos (127.0.0.1/localhost e, se configurado, o IP da rede
 privada); tudo em /api exige o token (cabeçalho X-Orq-Token, ou ?t= no SSE, que não aceita
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
+from . import pipelines
 from .assign import assign
 from .auth import Auth, login_page
 from .bridge import BridgeRegistry
@@ -29,7 +30,9 @@ CSP = (
     "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'"
 )
 TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
-AGENT_RE = re.compile(r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload)$")
+AGENT_RE = re.compile(
+    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade)$"
+)
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
 
@@ -140,6 +143,9 @@ def make_handler(ctx: Context):
             if u.path == "/api/projects":
                 items = ctx.state.get_projects()
                 return self.reply(200, {"items": items})
+            if u.path == "/api/pipelines":
+                items = [p.summary() for p in pipelines.catalog().values()]
+                return self.reply(200, {"items": items, "default": pipelines.DEFAULT})
             label, op = self.agent_path(u.path)
             if op == "stream":
                 return self.stream(label, int((q.get("since") or ["0"])[0]))
@@ -201,6 +207,10 @@ def make_handler(ctx: Context):
             label, op = self.agent_path(path)
             if op is None:
                 return self.reply(404, {"err": "?"})
+            if op == "upgrade":
+                return self.upgrade(label, body)
+            if op == "downgrade":
+                return self.downgrade(label)
             msg = build_message(op, body)
             if msg is None:
                 return self.reply(400, {"err": "mensagem vazia" if op == "send" else "pedido inválido"})
@@ -208,6 +218,7 @@ def make_handler(ctx: Context):
             if err:
                 return self.reply(500, {"err": err})
             if op == "stop":  # a lista de agentes é consultada a cada 15 s; antecipa para a aba sumir logo
+                ctx.state.mark_closing(label)
                 threading.Timer(2.0, ctx.state.refresh_agents).start()
                 threading.Timer(6.0, ctx.state.refresh_agents).start()
             return self.reply(200, {"msg": f"encerrando {label}"} if op == "stop" else {"ok": True})
@@ -288,6 +299,72 @@ def make_handler(ctx: Context):
             if err:
                 return self.reply(500, {"err": f"não consegui gravar em {entry.get('host')}: {err}"})
             return self.reply(200, {"path": path, "bytes": n})
+
+        def upgrade(self, label: str, body: dict) -> None:
+            """Sobe os níveis de uma receita acima do agente da aba (mesma máquina, pasta e conta)."""
+            with ctx.state.lock:
+                agents = list(ctx.state.agents)
+            base = next((a for a in agents if a.get("label") == label and a.get("state") != "closed"), None)
+            if base is None:
+                return self.reply(404, {"err": "agente desconhecido"})
+            if base.get("kind") != "sdk":
+                return self.reply(
+                    400, {"err": "só um agente da página ganha níveis; converta o do terminal antes"}
+                )
+            if base.get("parent"):
+                return self.reply(400, {"err": "esse agente já é um nível de cima"})
+            if pipelines.levels_above(agents, label):
+                return self.reply(409, {"err": "já tem níveis; desfaça-os antes de trocar de receita"})
+            if not base.get("name"):
+                msg = "reabra o agente (✕ e abrir de novo): ele precisa subir com nome para ter níveis"
+                return self.reply(409, {"err": msg})
+            try:
+                p = pipelines.get(body.get("pipeline") or None)
+            except KeyError as e:
+                return self.reply(400, {"err": e.args[0]})
+            host = base.get("host") or ctx.local_host or "?"
+            acc, cwd = base.get("account") or "?", base.get("dir") or ""
+            plan = pipelines.plan_levels(p, label)
+            started = []
+            for lv in plan:
+                err = ctx.spawn(
+                    host,
+                    lv["label"],
+                    cwd,
+                    acc,
+                    "new",
+                    role=lv["role"],
+                    parent=lv["parent"],
+                    level=lv["level"],
+                )
+                if err:
+                    for done in reversed(started):  # não deixa nível órfão rodando
+                        ctx.bridges.deliver(done, {"orq": "quit"})
+                    return self.reply(500, {"err": f"não consegui subir {lv['label']}: {err}"})
+                started.append(lv["label"])
+                ctx.state.add_provisional(
+                    provisional_agent(
+                        lv["label"], host, acc, cwd, time.time(), parent=lv["parent"], level=lv["level"]
+                    )
+                )
+            return self.reply(200, {"pipeline": p.id, "levels": started, "top": started[-1]})
+
+        def downgrade(self, label: str) -> None:
+            """Encerra os níveis acima do agente da aba; a aba volta a falar com ele."""
+            with ctx.state.lock:
+                agents = list(ctx.state.agents)
+            above = pipelines.levels_above(agents, label)
+            if not above:
+                return self.reply(400, {"err": "esse agente não tem níveis acima"})
+            errors = {}
+            for lv in reversed(above):  # do topo para baixo
+                err = ctx.bridges.deliver(lv, {"orq": "quit"})
+                if err:
+                    errors[lv] = err
+                ctx.state.mark_closing(lv)
+            threading.Timer(2.0, ctx.state.refresh_agents).start()
+            threading.Timer(6.0, ctx.state.refresh_agents).start()
+            return self.reply(200, {"stopped": above, "errors": errors})
 
         def open_agent(self, body: dict) -> None:
             snap = ctx.state.snapshot()

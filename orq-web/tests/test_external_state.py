@@ -78,6 +78,44 @@ def test_all_projects_sorted_and_limited_with_host_errors():
     assert [p["cwd"] for p in items] == ["/b", "/a"] and errs == {}
 
 
+class InputRunner(FakeRunner):
+    def __call__(self, cmd, timeout, input=None):
+        self.inputs = getattr(self, "inputs", []) + [input]
+        return super().__call__(cmd, timeout)
+
+
+def test_spawn_level_sends_role_on_stdin_with_parent_and_level():
+    r = InputRunner({"orq-agent": (0, "pronto")})
+    ext = External(Path("/b"), r)
+    assert (
+        ext.spawn(
+            LAPTOP,
+            "p~professor@laptop",
+            "/p",
+            "gmail",
+            "new",
+            role="Você é…",
+            parent="p@laptop",
+            level="professor",
+        )
+        is None
+    )
+    cmd = r.calls[-1]
+    assert cmd[cmd.index("--role-file") + 1] == "-" and cmd[cmd.index("--parent") + 1] == "p@laptop"
+    assert cmd[cmd.index("--level") + 1] == "professor" and r.inputs[-1] == "Você é…"
+    assert (
+        ext.spawn(
+            "server0", "p~professor@server0", "~/p", "gmail", "new", role="papel", parent="p@server0"
+        )
+        is None
+    )
+    assert r.calls[-1][0] == "ssh" and "--role-file -" in r.calls[-1][-1] and r.inputs[-1] == "papel"
+    # sem papel, o runner antigo (sem `input`) continua servindo
+    plain = FakeRunner({"orq-agent": (0, "pronto")})
+    assert External(Path("/b"), plain).spawn(LAPTOP, "p@laptop", "/p", "gmail", "resume") is None
+    assert "--role-file" not in plain.calls[-1]
+
+
 def test_spawn_local_and_remote():
     r = FakeRunner({"orq-agent": (0, "pronto")})
     ext = External(Path("/b"), r)
@@ -199,3 +237,30 @@ def test_usage_host_is_passed_to_external():
     assert ext.usage_host == "server0"
     S.StateCache(conf, ext).refresh_usage()
     assert ext.usage_host is None
+
+
+def test_mark_closing_keeps_agent_closed_while_host_still_sees_it():
+    class Ext:
+        def __init__(self):
+            self.state = "waiting"
+
+        def all_agents(self, hosts):
+            return [{"label": "p@h", "state": self.state}], {}
+
+    now = [1000.0]
+    ext = Ext()
+    cache = S.StateCache(type("C", (), {"hosts": []})(), ext, clock=lambda: now[0])
+    cache.refresh_agents()
+    assert cache.agents[0]["state"] == "waiting"
+    cache.mark_closing("p@h")
+    assert cache.agents[0]["state"] == "closed"
+    cache.refresh_agents()  # a máquina ainda vê o processo (graça de 15 s)
+    assert cache.agents[0]["state"] == "closed"
+    now[0] += S.CLOSING_TTL + 1
+    cache.refresh_agents()
+    assert cache.agents[0]["state"] == "waiting" and cache.closing == {}
+    # reabrir o mesmo rótulo cancela o "fechando"
+    cache.mark_closing("p@h")
+    cache.add_provisional(S.provisional_agent("p@h", "h", "g", "/p", now[0]))
+    cache.refresh_agents()
+    assert cache.agents[0]["state"] == "waiting"

@@ -91,6 +91,8 @@ class SentTexts:
 def stamp_origin(event: Dict[str, Any], sent: SentTexts) -> Dict[str, Any]:
     """Carimba `orq_origin` numa mensagem `user` vinda do claude.
 
+    - `agent`: veio de outra sessão do Claude Code pelo SendMessage (origin.kind == "peer"; o texto
+      limpo está em origin.body e quem mandou em origin.name);
     - `page`: eco de algo que a página mandou (o claude re-emite com --replay-user-messages);
     - `injected`: sem marca de humano (origin.kind) nem de cliente (promptSource): cron, loop, sistema;
     - sem carimbo: mensagem humana digitada no terminal, ou meta.
@@ -100,7 +102,9 @@ def stamp_origin(event: Dict[str, Any], sent: SentTexts) -> Dict[str, Any]:
     txt = text_of(event.get("message"))
     if not txt:
         return event
-    if sent.take(txt):
+    if (event.get("origin") or {}).get("kind") == "peer":
+        event["orq_origin"] = "agent"
+    elif sent.take(txt):
         event["orq_origin"] = "page"
     elif (event.get("origin") or {}).get("kind") != "human" and event.get("promptSource") not in (
         "sdk",
