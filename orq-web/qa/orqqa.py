@@ -20,11 +20,14 @@ e ver o resultado em captura de tela, console e estado:
   python qa/orqqa.py watch [segundos]     fica ouvindo console, erros e requisições que falham
 
 Todo comando grava captura e console em qa/out/ (ORQ_QA_VIDEO=1 grava também um vídeo). Alvo: o orq-web
-do `up`, ou ORQ_QA_URL (ex.: http://10.0.0.10:8765/ com ORQ_QA_PASSWORD) para a página da rede.
+do `up`, ou ORQ_QA_URL (ex.: http://10.0.0.10:8765/ com ORQ_QA_PASSWORD) para a página da rede;
+ORQ_QA_VIA=server0 chega a ela por um túnel ssh (e lê a senha lá), porque a privacidade de rede local do
+macOS só deixa binários da Apple alcançarem o endereço ZeroTier — o Chromium recebe "No route to host".
 ORQ_QA_HEADED=1 mostra o navegador; ORQ_QA_LABEL=rótulo escolhe a aba antes de `say`, `esc`, `allow`,
 `deny` e `stop`.
 """
 
+import atexit
 import json
 import os
 import re
@@ -118,11 +121,81 @@ def server_down(port: int = PORT, wait: float = 10) -> bool:
     return False
 
 
+# ---------------------------------------------------------------- túnel até a página da rede
+TUNNEL_PORT = int(os.environ.get("ORQ_QA_TUNNEL_PORT", "18765"))
+_tunnel: Optional[Tuple[str, Optional[str], subprocess.Popen]] = None  # (url local, senha, ssh)
+
+
+def tunnel_up(url: str, via: str, port: int = TUNNEL_PORT, wait: float = 30) -> Tuple[str, Optional[str]]:
+    """Túnel ssh por `via` até a página em `url`. Devolve (url local, senha lida em `via`).
+
+    Daqui, só binários da Apple (curl, ssh) alcançam o endereço ZeroTier: a privacidade de rede local do
+    macOS nega o Chromium do Playwright e o python ("No route to host"). Uma única conexão ssh traz a
+    senha de ~/.config/orq-web/password (duas seguidas à mesma máquina caem) e segura o túnel até sair."""
+    global _tunnel
+    if _tunnel:
+        return _tunnel[0], _tunnel[1]
+    u = urlparse(url)
+    remote = f"{u.hostname}:{u.port or (443 if u.scheme == 'https' else 80)}"
+    marker = "__orq_qa_tunel__"
+    p = subprocess.Popen(
+        [
+            "ssh",
+            *("-o", "BatchMode=yes", "-o", "ConnectTimeout=12", "-o", "ExitOnForwardFailure=yes"),
+            *("-L", f"127.0.0.1:{port}:{remote}"),
+            via,
+            f"cat ~/.config/orq-web/password 2>/dev/null; echo; echo {marker}; exec sleep 86400",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    lines: List[str] = []
+    for line in p.stdout:  # type: ignore[union-attr]
+        if line.strip() == marker:
+            break
+        lines.append(line.strip())
+    else:
+        raise RuntimeError(f"túnel ssh por {via} não abriu: {' / '.join(x for x in lines if x)}")
+    password = next((x for x in lines if x), None)
+    local = f"http://127.0.0.1:{port}"
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(local + "/", timeout=3).read(64)
+            break
+        except OSError:
+            time.sleep(0.3)
+    else:
+        tunnel_down(p)
+        raise RuntimeError(f"a página {url} não respondeu pelo túnel {local} (via {via})")
+    _tunnel = (local, password, p)
+    atexit.register(tunnel_down)
+    return local, password
+
+
+def tunnel_down(p: Optional[subprocess.Popen] = None) -> None:
+    global _tunnel
+    p = p or (_tunnel[2] if _tunnel else None)
+    _tunnel = None
+    if p and p.poll() is None:
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
 def target() -> Tuple[str, Optional[str], Optional[str]]:
-    """(url base, token, senha): ORQ_QA_URL (página da rede) ou o orq-web local do QA."""
+    """(url base, token, senha): ORQ_QA_URL (página da rede, por túnel com ORQ_QA_VIA) ou o orq-web do QA."""
     url = os.environ.get("ORQ_QA_URL")
     if url:
-        return url.rstrip("/"), None, os.environ.get("ORQ_QA_PASSWORD")
+        password = os.environ.get("ORQ_QA_PASSWORD")
+        if os.environ.get("ORQ_QA_VIA"):
+            url, read = tunnel_up(url, os.environ["ORQ_QA_VIA"])
+            password = password or read
+        return url.rstrip("/"), None, password
     url = local_url()
     if not url:
         raise SystemExit(

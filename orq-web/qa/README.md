@@ -16,7 +16,11 @@ uv pip install --python .venv/bin/python -e ".[qa]" && .venv/bin/python -m playw
 ```
 
 Variáveis: `ORQ_QA_URL` + `ORQ_QA_PASSWORD` testam a página da rede (`http://10.0.0.10:8765/`)
-em vez de subir um servidor; `ORQ_QA_PORT` (8790) e `ORQ_QA_KEEP=1` (não derruba o servidor no fim);
+em vez de subir um servidor; `ORQ_QA_VIA=server0` chega a ela por um túnel ssh (`make qa-rede`) e, sem
+`ORQ_QA_PASSWORD`, lê a senha em `~/.config/orq-web/password` dessa máquina na mesma conexão — preciso
+no macOS, onde a privacidade de rede local só deixa binários da Apple (curl, ssh) alcançarem o endereço
+ZeroTier: o Chromium do Playwright e o python recebem "No route to host" (`ORQ_QA_TUNNEL_PORT`, 18765);
+`ORQ_QA_PORT` (8790) e `ORQ_QA_KEEP=1` (não derruba o servidor no fim);
 `ORQ_QA_PROJECT` (`laptop:~/Projects/orq-qa`, pasta descartável onde o agente abre); `ORQ_QA_HEADED=1`
 mostra o navegador.
 
