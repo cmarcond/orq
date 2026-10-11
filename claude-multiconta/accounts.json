@@ -1,0 +1,42 @@
+{
+  "_doc": "Fonte única de verdade das contas. name = sufixo dos aliases (claude-<name>, claude-<name>-login, claude-usage-<name>). config_dir = CLAUDE_CONFIG_DIR daquela conta; '~/.claude' é o diretório padrão do Claude Code (usado sem a variável). default_account = conta que o `claude` puro abre. tmux = abrir cada conta numa sessão tmux nova (claude-<pasta> para a padrão, claude-<nome>-<pasta> para as outras); attach manual com tmux attach -t <nome>. codex = instalar o codex e criar os aliases codex-login e codex-usage (o Codex não entra no usage-all). orq_hosts = máquinas remotas (ssh) que o orq consulta e onde abre agentes; o laptop entra sempre. permission_mode = modo de permissão dos agentes da página (orq web / orq-agent): auto (o Claude decide o rotineiro e pergunta o sensível), manual (pergunta tudo), acceptEdits, plan.",
+  "accounts": [
+    {
+      "name": "work",
+      "email": "you@example.org",
+      "label": "Work (you@example.org)",
+      "config_dir": "~/.claude"
+    },
+    {
+      "name": "gmail",
+      "email": "you@example.com",
+      "label": "Gmail (you@example.com)",
+      "config_dir": "~/.claude-gmail"
+    },
+    {
+      "name": "work2",
+      "email": "you2@example.org",
+      "label": "Work 2 (you2@example.org)",
+      "config_dir": "~/.claude-work2"
+    },
+    {
+      "name": "work3",
+      "email": "you3@example.org",
+      "label": "Work 3 (you3@example.org)",
+      "config_dir": "~/.claude-work3"
+    }
+  ],
+  "default_account": "work",
+  "tmux": true,
+  "codex": true,
+  "timezone": "America/Sao_Paulo",
+  "tip_on_login": true,
+  "orq_hosts": [
+    "server0",
+    "node0",
+    "node1",
+    "node2",
+    "node3"
+  ],
+  "permission_mode": "auto"
+}

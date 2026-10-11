@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Qual conta teve a conversa mais recente numa pasta (para o --resume).
+
+Uso: claude-last [-a|--all] [pasta]     (sem pasta = a atual)
+  padrão      a conversa mais recente de cada conta, da mais nova para a mais velha
+  -a, --all   as 15 conversas mais recentes, de qualquer conta
+  --pick [N]  só imprime "conta id" da linha N (padrão 1); usado pela função claude-resume
+  --as CONTA  com --pick: copia a conversa para CONTA (se for de outra) e imprime "CONTA id"
+  --projects  JSON com a conversa mais recente de cada pasta desta máquina, em qualquer conta (usado pelo orq)
+
+Para abrir na conta certa: claude-resume (a mais recente) ou claude-resume N (a linha N).
+claude-resume -a N usa a numeração do claude-last -a.
+Para retomar usando outra conta (ex.: a original acabou a cota): claude-resume --as gmail [N].
+"""
+import json, os, re, sys, pathlib, datetime
+
+CONF = pathlib.Path(os.environ.get("CLAUDE_MULTICONTA_CONF",
+                    pathlib.Path.home() / ".config/claude-multiconta/accounts.json"))
+args = sys.argv[1:]
+if any(a in ("-h", "--help") for a in args):
+    print(__doc__.strip()); sys.exit(0)
+AS = None
+for i, a in enumerate(list(args)):
+    if a.startswith("--as="): AS = a.split("=", 1)[1]
+    elif a == "--as" and i + 1 < len(args): AS = args[i + 1]; args[i + 1] = "-"   # consome o valor
+PICK = "--pick" in args
+ALL = any(a in ("-a", "--all") for a in args)
+rest = [a for a in args if not a.startswith("-")]
+N = 1
+if rest and rest[0].isdigit():
+    N = int(rest.pop(0))
+folder = pathlib.Path(rest[0] if rest else os.getcwd()).expanduser().resolve()
+
+try:
+    conf = json.loads(CONF.read_text())
+except Exception as e:
+    print(f"Não consegui ler {CONF} ({e}). Rode o install.sh do claude-multiconta.", file=sys.stderr); sys.exit(1)
+
+COLOR = sys.stdout.isatty()
+def c(code, s): return f"\033[{code}m{s}\033[0m" if COLOR else s
+
+def project_dir(cfg):
+    """Pasta do projeto dentro do config_dir: o Claude Code troca todo caractere não alfanumérico por '-'.
+    Caminhos muito longos são truncados com sufixo; nesse caso procura pelo prefixo."""
+    enc = re.sub(r"[^a-zA-Z0-9]", "-", str(folder))
+    base = cfg / "projects"
+    if (base / enc).is_dir(): return [base / enc]
+    if len(enc) > 200 and base.is_dir():
+        return [d for d in base.iterdir() if d.is_dir() and d.name.startswith(enc[:200])]
+    return []
+
+NOISE = {"responda apenas: ok"}   # pedidos de renovação de token do usage-all
+
+def info(f):
+    """Título (ai-title), senão o primeiro prompt do usuário. None = conversa a esconder."""
+    title = first = last = None
+    try:
+        with open(f, encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if '"ai-title"' in line or '"last-prompt"' in line or (first is None and '"type":"user"' in line):
+                    try: o = json.loads(line)
+                    except Exception: continue
+                    t = o.get("type")
+                    if t == "ai-title" and o.get("aiTitle"): title = o["aiTitle"]
+                    elif t == "last-prompt" and o.get("lastPrompt"): last = o["lastPrompt"]
+                    elif t == "user" and first is None and not o.get("isMeta"):
+                        m = (o.get("message") or {}).get("content")
+                        if isinstance(m, list):
+                            m = " ".join(x.get("text", "") for x in m if isinstance(x, dict) and x.get("type") == "text")
+                        if isinstance(m, str) and m.strip() and not m.lstrip().startswith("<"):
+                            first = m
+    except Exception:
+        return ""
+    prompts = {x.strip() for x in (first, last) if x}
+    if prompts and prompts <= NOISE: return None   # mesmo que tenha ganho título automático
+    if not (title or first or last): return None   # conversa vazia: não dá para retomar
+    return (title or first or last).replace("\n", " ").strip()
+
+def ago(ts):
+    s = int(datetime.datetime.now().timestamp() - ts)
+    if s < 3600:   return f"{max(1, s // 60)}min"
+    if s < 86400:  return f"{s // 3600}h"
+    return f"{s // 86400}d"
+
+def conv_meta(f):
+    """(pasta real, entrypoint) da conversa. entrypoint 'cli' = interativa; 'sdk-cli' = claude -p de script."""
+    cwd = ep = None
+    try:
+        with open(f, encoding="utf-8", errors="ignore") as fh:
+            for i, line in enumerate(fh):
+                if '"cwd"' in line and '"entrypoint"' in line:
+                    try:
+                        o = json.loads(line); return o.get("cwd"), o.get("entrypoint")
+                    except Exception: pass
+                elif '"cwd"' in line and cwd is None:
+                    try: cwd = json.loads(line).get("cwd")
+                    except Exception: pass
+                if i > 400: break
+    except Exception:
+        pass
+    return cwd, ep
+
+if "--projects" in args:
+    best = {}    # cwd -> registro mais recente
+    home = str(pathlib.Path.home())
+    for a in conf.get("accounts", []):
+        cfg = pathlib.Path(os.path.expanduser(a.get("config_dir") or "~/.claude"))
+        base = cfg / "projects"
+        if not base.is_dir(): continue
+        for d in base.iterdir():
+            if not d.is_dir(): continue
+            files = sorted(d.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)[:6]
+            for f in files:            # a mais recente interativa, não vazia nem renovação de token
+                cwd, ep = conv_meta(f)
+                if ep and ep != "cli": continue          # claude -p de script/cron
+                if not cwd or cwd == home or not os.path.isdir(cwd): break
+                if re.match(r"^(/private)?/tmp(/|$)", cwd): break
+                t = info(f)
+                if t is None: continue
+                m = f.stat().st_mtime
+                if cwd not in best or m > best[cwd]["mtime"]:
+                    best[cwd] = {"cwd": cwd, "account": a["name"], "sid": f.stem, "mtime": m, "title": t}
+                break
+    out = sorted(best.values(), key=lambda r: -r["mtime"])[:40]
+    print(json.dumps(out, ensure_ascii=False)); sys.exit(0)
+
+rows = []   # (mtime, conta, rótulo, sessionId, arquivo)
+for a in conf.get("accounts", []):
+    cfg = pathlib.Path(os.path.expanduser(a.get("config_dir") or "~/.claude"))
+    for d in project_dir(cfg):
+        for f in d.glob("*.jsonl"):
+            try: m = f.stat().st_mtime
+            except OSError: continue
+            rows.append((m, a["name"], a.get("label", a["name"]).split(" (")[0], f.stem, f))
+rows.sort(reverse=True)
+
+def filtered():
+    """Esconde conversas vazias e de renovação de token; anexa o título."""
+    for r in rows:
+        t = info(r[4])
+        if t is None: continue
+        yield r + (t,)
+
+def copy_to(target, f, sid, src):
+    """Copia a conversa (e os anexos dela, e a memória do projeto que faltar) para a conta target.
+    Uma cópia anterior diferente na conta destino vira <id>.jsonl.bak-<data>, nada se perde."""
+    import shutil
+    acc = {a["name"]: a for a in conf.get("accounts", [])}
+    if target not in acc:
+        print(f"conta desconhecida: {target}. Disponíveis: {', '.join(acc)}", file=sys.stderr); sys.exit(1)
+    cfg = pathlib.Path(os.path.expanduser(acc[target].get("config_dir") or "~/.claude"))
+    dst_dir = cfg / "projects" / f.parent.name
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / f.name
+    if dst.exists():
+        if dst.read_bytes() == f.read_bytes():
+            print(f"(a conversa já estava na conta {target})", file=sys.stderr); return target
+        bak = dst.with_name(f"{dst.name}.bak-{datetime.datetime.now():%Y%m%d-%H%M%S}")
+        dst.rename(bak)
+        print(f"(a cópia antiga na conta {target} ficou em {bak.name})", file=sys.stderr)
+    shutil.copy2(f, dst)
+    side = f.parent / sid               # subagentes e anexos da conversa, quando existem
+    if side.is_dir() and not (dst_dir / sid).exists():
+        shutil.copytree(side, dst_dir / sid)
+    mem, n = f.parent / "memory", 0     # memória do projeto: só os arquivos que faltam no destino
+    if mem.is_dir():
+        for x in mem.rglob("*"):
+            y = dst_dir / "memory" / x.relative_to(mem)
+            if x.is_file() and not y.exists():
+                y.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(x, y); n += 1
+    print(f"copiada de {src} para {target}" + (f" (+{n} arquivo(s) de memória)" if n else "")
+          + ". A original fica intacta.", file=sys.stderr)
+    return target
+
+out = []
+seen = set()
+for r in filtered():
+    if not ALL:   # só a mais recente de cada conta
+        if r[1] in seen: continue
+        seen.add(r[1])
+    out.append(r)
+    if len(out) >= (15 if ALL else len(conf.get("accounts", []))): break
+
+if PICK:
+    if len(out) < N:
+        print(f"não há conversa número {N} em {folder}", file=sys.stderr); sys.exit(1)
+    m, name, lab, sid, f, t = out[N - 1]
+    if AS and AS != name:
+        name = copy_to(AS, f, sid, name)
+    print(name, sid); sys.exit(0)
+
+home = str(pathlib.Path.home())
+show = str(folder).replace(home, "~", 1)
+if not out:
+    print(f"Nenhuma conversa do Claude em {show} em nenhuma conta."); sys.exit(1)
+
+print(c("2", f"{show}   (claude-resume N abre a conversa N)"))
+W = 52
+for i, (m, name, lab, sid, f, t) in enumerate(out, 1):
+    t = (t[:W - 1] + "…") if len(t) > W else t
+    line = f"{i:>2}  {lab:<10} {ago(m):>5}  {t}"
+    print(c("1", line) if i == 1 else line)
+m, name, lab, sid, f, t = out[0]
+print(c("2", f"    = claude-{name} --resume {sid}"))

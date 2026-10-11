@@ -1,0 +1,6 @@
+#!/bin/sh
+# Usado como $BROWSER no `claude auth login`: NÃO abre navegador nenhum, só mostra
+# a URL. Abra no navegador que quiser, logado na conta certa (ou em janela anônima),
+# e cole o código de volta no terminal.
+printf '\n>>> Abra esta URL logado na conta certa (ou em janela anônima) e cole o código aqui:\n\n    %s\n\n' "$1" >&2
+exit 0
