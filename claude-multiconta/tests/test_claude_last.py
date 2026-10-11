@@ -5,8 +5,12 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+
+import pytest
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "bin" / "claude-last"
@@ -34,11 +38,18 @@ def run(env, *args):
     return r.returncode, r.stdout, r.stderr
 
 
-def test_projects_include_page_agents_but_not_levels_or_scripts(tmp_path):
+@pytest.fixture
+def proj():
+    """Pasta de projeto fora de /tmp: o claude-last esconde de propósito projetos de /tmp, e no CI o
+    tmp_path do pytest fica lá."""
+    d = pathlib.Path(tempfile.mkdtemp(prefix="orq-cl-", dir=HERE / "tests"))
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_projects_include_page_agents_but_not_levels_or_scripts(tmp_path, proj):
     home = tmp_path / "home"
     cfg = home / ".claude-g"
-    proj = tmp_path / "proj"
-    proj.mkdir()
     cron = tmp_path / "cron"
     cron.mkdir()
     conf = tmp_path / "accounts.json"
