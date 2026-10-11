@@ -28,3 +28,20 @@ jobs:
         with:
           node-version: "22"
       - run: node --test 'tests/js/*.test.mjs'
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [python, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t orq-web:ci .
+      - name: fumaça: sobe o container e confere /login e a recusa sem cookie
+        run: |
+          mkdir -p /tmp/orq && echo '{"accounts":[],"orq_hosts":[]}' > /tmp/orq/accounts.json && echo senha > /tmp/orq/password
+          docker run -d --name orq -p 8765:8765 -e ORQ_ALLOWED_HOSTS=localhost \
+            -e CLAUDE_MULTICONTA_CONF=/cfg/accounts.json -e ORQ_PASSWORD_FILE=/cfg/password -e ORQ_STATE_DIR=/tmp \
+            -v /tmp/orq:/cfg:ro orq-web:ci
+          for i in $(seq 1 20); do curl -fs http://localhost:8765/login >/dev/null && break; sleep 1; done
+          curl -fs http://localhost:8765/login | grep -q '<form'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8765/api/state)" = 403
+          docker logs orq | tail -5
