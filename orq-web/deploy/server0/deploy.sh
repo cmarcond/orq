@@ -45,7 +45,8 @@ echo "ssh_config do container: $(grep -c '^Host ' "$CFG/ssh_config") máquinas"
 
 cd "$HERE"
 export ORQ_ZT_IP="$ZT_IP" ORQ_HOSTNAME="$HOSTNAME_" UID="$(id -u)" GID="$(id -g)" USER="$(id -un)" HOME
-docker compose up -d --build
+# imagem da CI (GHCR) se houver login (docker login ghcr.io com PAT read:packages); senão constrói aqui
+if docker compose pull --quiet 2>/dev/null; then docker compose up -d; else echo "GHCR indisponível; construindo localmente"; docker compose up -d --build; fi
 sleep 3
 docker compose ps --format 'table {{.Name}}\t{{.Status}}'
 echo

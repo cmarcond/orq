@@ -1,5 +1,5 @@
 #!/bin/sh
-# Do laptop: manda o código para o server0 e roda o deploy lá. Fase 2 troca isto pelo pull do GHCR.
+# Do laptop: manda o código para o server0 e roda o deploy lá (que puxa a imagem do GHCR se logado, senão constrói).
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 HOST=${1:-server0}

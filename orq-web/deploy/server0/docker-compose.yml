@@ -2,7 +2,7 @@
 # senha e o ssh_config do container. A porta fica publicada apenas no IP do ZeroTier.
 services:
   orq-web:
-    image: orq-web:local
+    image: ghcr.io/cmarcond/orq-web:latest   # publicada pela CI; sem acesso ao GHCR, o deploy constrói localmente com este nome
     build:
       context: ../..
       args: { UID: "${UID:-1000}", GID: "${GID:-1000}", USER: "${USER:-user}" }

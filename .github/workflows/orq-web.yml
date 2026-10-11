@@ -1,8 +1,14 @@
-name: ci
+name: orq-web
 on:
   push:
     branches: [main]
+    paths: ["orq-web/**", ".github/workflows/orq-web.yml"]
   pull_request:
+    paths: ["orq-web/**", ".github/workflows/orq-web.yml"]
+
+defaults:
+  run:
+    working-directory: orq-web
 
 jobs:
   python:
@@ -32,10 +38,13 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [python, frontend]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t orq-web:ci .
-      - name: fumaça: sobe o container e confere /login e a recusa sem cookie
+      - name: fumaça
         run: |
           mkdir -p /tmp/orq && echo '{"accounts":[],"orq_hosts":[]}' > /tmp/orq/accounts.json && echo senha > /tmp/orq/password
           docker run -d --name orq -p 8765:8765 -e ORQ_ALLOWED_HOSTS=localhost \
@@ -44,4 +53,11 @@ jobs:
           for i in $(seq 1 20); do curl -fs http://localhost:8765/login >/dev/null && break; sleep 1; done
           curl -fs http://localhost:8765/login | grep -q '<form'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8765/api/state)" = 403
-          docker logs orq | tail -5
+      - name: publica no GHCR (só em main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMG=ghcr.io/${{ github.repository_owner }}/orq-web
+          docker tag orq-web:ci "$IMG:latest"
+          docker tag orq-web:ci "$IMG:${GITHUB_SHA::7}"
+          docker push "$IMG:latest" && docker push "$IMG:${GITHUB_SHA::7}"

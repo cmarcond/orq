@@ -1,0 +1,27 @@
+name: claude-multiconta
+on:
+  push:
+    branches: [main]
+    paths: ["claude-multiconta/**", ".github/workflows/claude-multiconta.yml"]
+  pull_request:
+    paths: ["claude-multiconta/**", ".github/workflows/claude-multiconta.yml"]
+
+defaults:
+  run:
+    working-directory: claude-multiconta
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.8", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: for f in install.sh add-account.sh make-tarball.sh; do sh -n "$f"; done
+      - run: python3 -m py_compile bin/*
+      - run: python3 -c "import json; json.load(open('accounts.json'))"
+      - run: pip install pytest && python3 -m pytest -q tests
