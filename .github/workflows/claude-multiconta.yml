@@ -21,7 +21,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: for f in install.sh add-account.sh make-tarball.sh; do sh -n "$f"; done
-      - run: python3 -m py_compile bin/*
+      - name: sintaxe dos scripts (python pelo shebang, shell pelo sh -n)
+        run: |
+          for f in install.sh add-account.sh make-tarball.sh bin/*; do
+            if head -1 "$f" | grep -q python; then python3 -m py_compile "$f"; else sh -n "$f"; fi
+          done
       - run: python3 -c "import json; json.load(open('accounts.json'))"
       - run: pip install pytest && python3 -m pytest -q tests
