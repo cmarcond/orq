@@ -65,8 +65,11 @@ reenvia a mensagem. A página avisa com um toast e a aba continua na mesma conve
 ## Notificações
 
 O 🔔 no topo pede permissão ao navegador uma vez. Depois, com a página fora de vista, cada agente que
-pede permissão, faz uma pergunta ou termina um turno gera uma notificação; o título da aba mostra
-quantos agentes esperam você, por exemplo `(2) orq`, até você abrir cada um.
+pede permissão, faz uma pergunta ou termina um turno gera uma notificação e um bipe; o título da aba mostra
+quantos agentes esperam você, por exemplo `(2) orq`, até você abrir cada um. Navegadores só dão
+notificação em `https` ou `localhost`: pela rede em `http://<ip>` o sino avisa isso e fica só o bipe (o
+clique nele destrava o áudio) e a contagem no título. Para ter notificação no laptop, abra a página por um
+túnel: `ssh -N -L 8765:<ip zerotier>:8765 server0` e `http://127.0.0.1:8765/`.
 
 Um `claude` interativo que já está rodando num tmux (aberto por `claude-gmail` etc.) aparece na
 página como aba tracejada com o botão **⇄ converter**: a página dá `/exit` nele (ou Ctrl-C, ou

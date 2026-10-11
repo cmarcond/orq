@@ -51,8 +51,9 @@ function needsYou(label, why, body) {
   if (label === cur && !document.hidden) return; // você está olhando
   attn.add(label);
   updateTitle();
-  if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    beep();
+  if (!document.hidden) return;
+  beep(); // mesmo sem permissão de notificação (em http o navegador nunca dá): o bipe basta
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     try {
       const n = new Notification(`${label.split('@')[0]}: ${why}`, { body: (body || '').slice(0, 120), tag: label });
       n.onclick = () => {
@@ -79,9 +80,18 @@ function testNotify() {
   }
 }
 function askNotify() {
+  // Fora de https/localhost o navegador recusa sem perguntar; o clique ao menos destrava o áudio do bipe.
+  if (!window.isSecureContext) {
+    beep();
+    return toast('notificações do navegador só em https ou localhost; nesta página (http) ficam o bipe e a contagem no título — bipe ligado');
+  }
   if (typeof Notification === 'undefined') return toast('este navegador não tem notificações');
   if (Notification.permission === 'granted') return testNotify();
-  Notification.requestPermission().then((p) => (p === 'granted' ? testNotify() : toast('notificações recusadas')));
+  Notification.requestPermission().then((p) => {
+    if (p === 'granted') return testNotify();
+    beep();
+    toast('notificações recusadas pelo navegador (libere no cadeado da barra de endereço); o bipe fica ligado');
+  });
 }
 
 // ---------------------------------------------------------------- infra
