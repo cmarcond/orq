@@ -8,6 +8,7 @@ X-Orq-Token, ou ?t= no SSE, que não aceita cabeçalhos); CSP restringe scripts 
 import json
 import re
 import secrets
+import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -163,6 +164,9 @@ def make_handler(ctx: Context):
             err = ctx.bridges.deliver(label, msg)
             if err:
                 return self.reply(500, {"err": err})
+            if op == "stop":  # a lista de agentes é consultada a cada 15 s; antecipa para a aba sumir logo
+                threading.Timer(2.0, ctx.state.refresh_agents).start()
+                threading.Timer(6.0, ctx.state.refresh_agents).start()
             return self.reply(200, {"msg": f"encerrando {label}"} if op == "stop" else {"ok": True})
 
         def convert_agent(self, body: dict) -> None:

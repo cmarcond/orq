@@ -61,9 +61,8 @@ let agents = [];
 const hostOf = (l) => l.split('@').pop();
 
 function tabOrder() {
-  const live = agents.filter((a) => a.state !== 'closed').map((a) => a.label); // sdk e terminal (este só para converter)
-  for (const l in tabs) if (!live.includes(l) && tabs[l].el) live.push(l);
-  return live;
+  // sdk e terminal (este só para converter); agente fechado ou sumido não ocupa aba
+  return agents.filter((a) => a.state !== 'closed').map((a) => a.label);
 }
 function renderTabs() {
   const nav = $('tabs');
@@ -196,6 +195,23 @@ async function convertAgent(l) {
   await refresh();
   show(j.label);
 }
+function dropClosed() {
+  // abas cujo agente fechou (✕, /exit, claude saiu) ou sumiu da lista: fecham o stream e saem da barra
+  const liveLabels = new Set(agents.filter((a) => a.state !== 'closed').map((a) => a.label));
+  for (const l of Object.keys(tabs)) {
+    const t = tabs[l];
+    const gone = !liveLabels.has(l) || t.a?.state === 'closed';
+    if (!gone) continue;
+    if (t.es) t.es.close();
+    t.el?.remove();
+    delete tabs[l];
+    if (cur === l) {
+      cur = null;
+      $('composer').hidden = true;
+      $('empty').style.display = '';
+    }
+  }
+}
 function status() {
   const t = tabs[cur];
   const a = t && (agents.find((x) => x.label === cur) || t.a);
@@ -264,7 +280,12 @@ function apply(t, a) {
   if (a.state) setState(t, a.state, a.msg);
   switch (a.kind) {
     case 'sys':
-      return add(t, `<div class="sys ${esc(a.level)}">${esc(a.text)}</div>`);
+      add(t, `<div class="sys ${esc(a.level)}">${esc(a.text)}</div>`);
+      if (/agente encerrado|claude saiu/.test(a.text)) {
+        setState(t, 'closed', '');
+        setTimeout(refresh, 1500);
+      }
+      return;
     case 'interrupted':
       return add(t, `<div class="sys">interrompido por você</div>`);
     case 'permissionAnswered': {
@@ -543,13 +564,14 @@ async function refresh() {
     for (const a of agents) {
       const t = tabs[a.label];
       if (!t) continue;
-      if (t.es && a.state !== 'closed') {
+      if (t.es && a.state !== 'closed' && t.a?.state !== 'closed') {
         // a aba sabe o estado pelos eventos; a consulta às máquinas atrasa até 15 s
         a.state = t.a?.state || a.state;
         a.msg = t.a?.msg ?? a.msg;
       }
       t.a = a;
     }
+    dropClosed();
     renderTabs();
     status();
   } catch (_) {
