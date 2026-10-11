@@ -27,7 +27,7 @@ class FakeExt:
     def __init__(self):
         self.spawned = []
 
-    def usage(self):
+    def usage(self, host=None):
         return {"gmail": {"5h": 1, "7d": 10, "7d_pace": 50, "7d_left": 100}}
 
     def all_agents(self, hosts):

@@ -28,6 +28,20 @@ def test_usage_ok_and_failure():
     assert External(Path("/b"), FakeRunner({})).usage() == {}
 
 
+def test_usage_remote_goes_through_tmux_run_shell_with_fallback():
+    r = FakeRunner({"usage-all": (0, '{"gmail": {"7d": 2}}')})
+    assert External(Path("/b"), r).usage("laptop-zt") == {"gmail": {"7d": 2}}
+    cmd = r.calls[-1]
+    assert cmd[0] == "ssh" and "laptop-zt" in cmd
+    assert (
+        cmd[-1].startswith('tmux run-shell "$HOME/.local/bin/usage-all --json"')
+        and "|| ~/.local/bin/usage-all --json" in cmd[-1]
+    )
+    # host local não usa ssh
+    External(Path("/b"), r).usage("laptop")
+    assert r.calls[-1] == ["/b/usage-all", "--json"]
+
+
 def test_projects_local_and_remote_commands():
     r = FakeRunner({"--projects": (0, '[{"cwd": "/p", "mtime": 5}]')})
     ext = External(Path("/b"), r)
@@ -82,7 +96,8 @@ class FakeExt:
     def __init__(self):
         self.projects_calls = 0
 
-    def usage(self):
+    def usage(self, host=None):
+        self.usage_host = host
         return {"gmail": {"7d": 40, "7d_pace": 50}}
 
     def all_agents(self, hosts):
@@ -175,3 +190,12 @@ def test_dedupe_labels_suffixes_terminal_duplicates_but_not_sdk():
     ]
     out = dedupe_labels(items)
     assert [a["label"] for a in out] == ["p-2@h", "p-3@h", "p@h", "q@h"]
+
+
+def test_usage_host_is_passed_to_external():
+    conf = config.parse({"accounts": [{"name": "gmail", "config_dir": "~/.claude-gmail"}]})
+    ext = FakeExt()
+    S.StateCache(conf, ext, usage_host="server0").refresh_usage()
+    assert ext.usage_host == "server0"
+    S.StateCache(conf, ext).refresh_usage()
+    assert ext.usage_host is None

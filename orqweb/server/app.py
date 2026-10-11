@@ -60,7 +60,7 @@ def open_browser(url: str) -> None:
 def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optional[str] = None) -> int:
     conf = conf or config.load()
     ext = External()
-    state = StateCache(conf, ext)
+    state = StateCache(conf, ext, usage_host=os.environ.get("ORQ_USAGE_HOST") or None)
     ctx = Context(conf, state, BridgeRegistry(), ext.spawn, token, convert=ext.convert)
     ctx.put_file = ext.put_file
     try:

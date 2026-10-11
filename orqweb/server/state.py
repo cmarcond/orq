@@ -18,8 +18,9 @@ OPEN_WINDOW = 60  # s desde o último pedido para considerar a página aberta
 
 
 class StateCache:
-    def __init__(self, conf: Config, ext: External, clock=time.time):
+    def __init__(self, conf: Config, ext: External, clock=time.time, usage_host: Optional[str] = None):
         self.conf, self.ext, self.clock = conf, ext, clock
+        self.usage_host = usage_host  # None = esta máquina; senão, por ssh (o container não tem credenciais)
         self.lock = threading.Lock()
         self.usage: Dict[str, Any] = {}
         self.usage_ts = 0.0
@@ -39,7 +40,7 @@ class StateCache:
         return self.clock() - self.seen < OPEN_WINDOW
 
     def refresh_usage(self) -> None:
-        u = self.ext.usage()
+        u = self.ext.usage(self.usage_host)
         with self.lock:
             self.usage, self.usage_ts = u, self.clock()
 

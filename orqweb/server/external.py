@@ -21,6 +21,11 @@ def run(cmd: List[str], timeout: float) -> "subprocess.CompletedProcess[str]":
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+def usage_remote_cmd() -> str:
+    """Cota numa máquina remota: pelo servidor tmux (Keychain no Mac), senão direto."""
+    return 'tmux run-shell "$HOME/.local/bin/usage-all --json" 2>/dev/null || ~/.local/bin/usage-all --json'
+
+
 def ssh_cmd(host: str, remote: str, connect_timeout: int = 5) -> List[str]:
     return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}", host, remote]
 
@@ -53,10 +58,18 @@ class External:
         self.run = runner
 
     # ---- cota
-    def usage(self) -> Dict[str, Any]:
-        """`usage-all --json`: por conta, % usado, ritmo e segundos até o reset de 5h e 7d. {} se falhar."""
+    def usage(self, host: Optional[str] = None) -> Dict[str, Any]:
+        """`usage-all --json`: por conta, % usado, ritmo e segundos até o reset de 5h e 7d. {} se falhar.
+
+        Com `host`, roda lá por ssh. Num Mac a credencial fica no Keychain, que uma sessão ssh não
+        enxerga; `tmux run-shell` executa dentro do servidor tmux da sessão gráfica, que enxerga.
+        Sem servidor tmux (Linux, ou Mac sem o LaunchAgent) cai no comando direto.
+        """
         try:
-            r = self.run([str(self.bin / "usage-all"), "--json"], 60)
+            if host in (None, LAPTOP):
+                r = self.run([str(self.bin / "usage-all"), "--json"], 60)
+            else:
+                r = self.run(ssh_cmd(host, usage_remote_cmd()), 90)
             return json.loads(r.stdout)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return {}

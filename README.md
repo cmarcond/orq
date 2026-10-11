@@ -43,6 +43,13 @@ converte-web                     # lista os claude interativos em tmux de todas 
 converte-web kaggle@server0    # converte um (ou --all)
 ```
 
+**Mac como máquina remota.** Um Mac que recebe agentes por ssh precisa de um servidor tmux nascido na
+sessão gráfica, porque o Keychain (onde o Claude Code guarda a credencial) não abre para sessões ssh.
+`deploy/macos-tmux-keep.sh` instala um LaunchAgent de usuário que mantém uma sessão `keep` viva desde o
+login; os agentes entram nesse servidor e a cota remota é lida com `tmux run-shell`. Também é preciso
+`sshd` ligado (`sudo systemsetup -setremotelogin on`) e um `~/.zshenv` com `~/.local/bin` e
+`/opt/homebrew/bin` no `PATH`, já que sessões ssh não leem o `.zshrc`.
+
 Nas máquinas, o servidor chama `~/.local/bin/orq-agent`:
 
 ```sh
@@ -56,7 +63,8 @@ orq-agent convert kaggle@server0                                      # o que o 
 Configuração (no `accounts.json` do claude-multiconta): `permission_mode` dos agentes da página
 (`auto` deixa o Claude decidir o rotineiro; `manual` pergunta tudo) e `orq_hosts`.
 Variáveis: `CLAUDE_MULTICONTA_CONF`, `ORQ_BIN` (onde estão os utilitários), `ORQ_STATE_DIR`
-(padrão `~/.cache/orq`), `ORQ_NO_OPEN=1` (não abre o navegador).
+(padrão `~/.cache/orq`), `ORQ_NO_OPEN=1` (não abre o navegador), `ORQ_USAGE_HOST` (máquina que
+responde a cota, por ssh; para o servidor rodar onde não há credenciais).
 
 ## Arquitetura
 
