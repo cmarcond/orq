@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>orq</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <nav id="tabs" class="tabs"></nav>
+  <aside id="usage" class="usage"></aside>
+</header>
+<main id="chats"><div class="empty" id="empty">Abra um projeto no <b>+</b> para começar.</div></main>
+<footer id="composer" class="composer" hidden>
+  <div class="cstatus"><span id="cstate"></span><button id="stop" class="ghost" hidden title="interromper (Esc)">■ parar</button></div>
+  <div id="files" class="files" hidden></div>
+  <div class="crow">
+    <button id="attach" class="ghost" title="anexar arquivos (ou arraste para o chat): vão para _inbox/ na pasta do projeto">📎</button>
+    <input id="fileinput" type="file" multiple hidden>
+    <textarea id="input" rows="1" placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha; arraste arquivos aqui)"></textarea>
+    <button id="send" title="enviar">➤</button>
+  </div>
+</footer>
+<div id="picker" class="picker" hidden><div class="pbox">
+  <div class="prow"><b id="ptitle">Abrir projeto</b><button class="ghost" id="pclose">fechar</button></div>
+  <div class="prow small mute">Projetos recentes em todas as máquinas. Ou uma pasta nova: <code>maquina:/caminho</code></div>
+  <div class="prow"><input id="pnew" placeholder="server0:~/Projects/novo"><button id="popen">abrir</button></div>
+  <div id="plist" class="plist mute">carregando…</div>
+</div></div>
+<div id="toast"></div>
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
