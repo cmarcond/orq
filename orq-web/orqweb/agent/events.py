@@ -122,9 +122,36 @@ def _short_input(inp: Dict[str, Any]) -> str:
     return ""
 
 
-def derive_state(event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Estado do agente implicado por um evento do claude: (estado, mensagem curta), ou None se não muda."""
+QUOTA_RE = re.compile(
+    r"(usage|rate) limit|limit reached|hit your limit|out of (extra )?usage|too many requests|"
+    r"quota|cota|resets? (at|in) ",
+    re.I,
+)
+
+
+def quota_exhausted(event: Dict[str, Any]) -> bool:
+    """A conta deste agente ficou sem cota: o claude avisa num `rate_limit_event` com status
+    `rejected`, ou o turno termina em erro falando de limite."""
     t = event.get("type")
+    if t == "rate_limit_event":
+        return (event.get("rate_limit_info") or {}).get("status") == "rejected"
+    if t == "result" and event.get("is_error"):
+        return bool(QUOTA_RE.search(str(event.get("result") or event.get("errors") or "")))
+    return False
+
+
+def derive_state(event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Estado do agente implicado por um evento do claude: (estado, mensagem curta), ou None se não muda.
+
+    `quota` = a conta ficou sem cota; o servidor migra o agente para outra conta (`msg` diz o motivo).
+    """
+    t = event.get("type")
+    if quota_exhausted(event):
+        info = event.get("rate_limit_info") or {}
+        why = (
+            str(event.get("result") or "").strip()[:120] or f"cota esgotada ({info.get('rateLimitType', '')})"
+        )
+        return "quota", why
     if t == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
         r = event["request"]
         short = _short_input(r.get("input") or {})

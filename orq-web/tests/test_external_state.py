@@ -116,6 +116,14 @@ def test_spawn_level_sends_role_on_stdin_with_parent_and_level():
     assert "--role-file" not in plain.calls[-1]
 
 
+def test_spawn_restart_flag():
+    r = FakeRunner({"orq-agent": (0, "pronto")})
+    assert External(Path("/b"), r).spawn(LAPTOP, "p@laptop", "/p", "gmail", "resume", restart=True) is None
+    assert r.calls[-1][-1] == "--restart"
+    External(Path("/b"), r).spawn("h", "p@h", "/p", "gmail", "resume", restart=True)
+    assert r.calls[-1][-1].endswith("--restart")
+
+
 def test_spawn_local_and_remote():
     r = FakeRunner({"orq-agent": (0, "pronto")})
     ext = External(Path("/b"), r)

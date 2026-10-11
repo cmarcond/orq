@@ -83,6 +83,8 @@ def test_plan_levels_resolves_neighbors_with_session_names():
     assert "`kaggle-server0`" in arq["role"] and "`kaggle-professor-server0`" in arq["role"]
     assert "`kaggle-arquiteto-server0`" in prof["role"]
     assert "{abaixo}" not in prof["role"] and "{acima}" not in arq["role"]
+    assert "{eu}" not in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
+    assert "`kaggle-arquiteto-server0`" in arq["role"]  # {eu} do arquiteto
     assert "@" not in arq["role"].split("`")[1]
     assert prof["color"] == "#2b6cb0"
 

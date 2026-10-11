@@ -84,6 +84,8 @@ test('permissão comum e AskUserQuestion', () => {
   const ask = { ...req, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'q?' }] } } };
   assert.equal(reduce(ask)[0].kind, 'ask');
   assert.equal(reduce({ ...req, replay: true })[0].state, undefined);
+  assert.equal(reduce({ ...req, replay: true })[0].replayed, true);
+  assert.equal(reduce(req)[0].replayed, undefined);
   assert.deepEqual(reduce({ type: 'control_request', request: { subtype: 'interrupt' } }), [{ kind: 'ignore' }]);
 });
 

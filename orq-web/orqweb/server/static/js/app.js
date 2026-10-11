@@ -1,6 +1,6 @@
 // Estado da página, API e DOM. A lógica pura está em format.js, classify.js e events.js.
 import { esc, left, ago, md, withAttachments, fmtBytes } from './format.js';
-import { firstLine, originLabel, permissionBody, toolName } from './classify.js';
+import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
 
 const T = new URLSearchParams(location.search).get('t') || '';
@@ -13,7 +13,76 @@ const ST = {
   error: 'erro',
   starting: 'abrindo…',
   closed: 'fechado',
+  quota: 'sem cota: trocando de conta…',
 };
+
+// ---------------------------------------------------------------- notificações
+// Título da aba com quantos agentes esperam você (permissão, pergunta, resposta pronta), e notificação
+// do navegador quando a página não está visível. O sino no topo pede a permissão uma vez.
+const attn = new Set(); // rótulos que precisam de você desde a última vez que olhou
+// Bipe curto pela própria página (o som da notificação do sistema nem sempre toca). O AudioContext nasce
+// no clique do sino: o navegador só libera áudio depois de um gesto na página.
+let audio = null;
+function beep() {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+    const t0 = audio.currentTime;
+    for (const [f, at] of [[880, 0], [1320, 0.12]]) {
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + at);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + 0.11);
+      o.connect(g).connect(audio.destination);
+      o.start(t0 + at);
+      o.stop(t0 + at + 0.12);
+    }
+  } catch (_) {
+    /* sem áudio */
+  }
+}
+function updateTitle() {
+  document.title = attn.size ? `(${attn.size}) orq` : 'orq';
+}
+function needsYou(label, why, body) {
+  if (label === cur && !document.hidden) return; // você está olhando
+  attn.add(label);
+  updateTitle();
+  if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    beep();
+    try {
+      const n = new Notification(`${label.split('@')[0]}: ${why}`, { body: (body || '').slice(0, 120), tag: label });
+      n.onclick = () => {
+        window.focus();
+        show(label, true);
+        n.close();
+      };
+    } catch (_) {
+      /* navegador sem suporte */
+    }
+  }
+}
+function sawIt(label) {
+  if (attn.delete(label)) updateTitle();
+}
+document.addEventListener('visibilitychange', () => !document.hidden && cur && sawIt(cur));
+function testNotify() {
+  beep();
+  try {
+    new Notification('orq: teste', { body: 'se você vê isto, as notificações do navegador funcionam', tag: 'orq-teste' });
+    toast('notificação de teste enviada; se nada apareceu, confira Ajustes do Sistema → Notificações → seu navegador');
+  } catch (e) {
+    toast('o navegador recusou a notificação: ' + e.message);
+  }
+}
+function askNotify() {
+  if (typeof Notification === 'undefined') return toast('este navegador não tem notificações');
+  if (Notification.permission === 'granted') return testNotify();
+  Notification.requestPermission().then((p) => (p === 'granted' ? testNotify() : toast('notificações recusadas')));
+}
 
 // ---------------------------------------------------------------- infra
 function toast(m) {
@@ -45,13 +114,16 @@ function meter(u, k) {
     <span class="pct">${Math.round(p)}%</span><span>${left(u[k + '_left'])}</span></div>`;
 }
 function renderUsage(us) {
-  $('usage').innerHTML = Object.entries(us)
+  $('usage').innerHTML =
+    `<button id="bell" class="ghost bell" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button>` +
+    Object.entries(us)
     .map(
       ([n, u]) => `<div class="ucard" style="--acc:${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
       }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}</div>`,
     )
     .join('');
+  $('bell').onclick = askNotify;
 }
 
 // ---------------------------------------------------------------- abas e níveis
@@ -90,6 +162,14 @@ const chainOf = (base) => [base, ...levelsAbove(base)]; // de baixo para cima
 const levelName = (l) => agentOf(l)?.level || (isLevel(agentOf(l)) ? l.split('@')[0].split('~').pop() : 'executor');
 const levelColor = (l) => LEVEL_COLORS[levelName(l)] || 'var(--mute)';
 const curBase = () => (cur ? baseOf(cur) : null);
+/** Destinatário de um SendMessage para mostrar: nome, ou, se for um endereço `uds:`, o nível logo acima
+ *  de quem mandou (é para quem uma resposta vai), senão "resposta". */
+function wireTo(from, to) {
+  if (!to.startsWith('uds:')) return to;
+  const chain = chainOf(baseOf(from));
+  const i = chain.indexOf(from);
+  return i >= 0 && i + 1 < chain.length ? `↑ ${levelName(chain[i + 1])}` : 'resposta';
+}
 
 function tabOrder() {
   // sdk e terminal (este só para converter); agente fechado, sumido ou nível de outro não ocupa aba
@@ -192,6 +272,7 @@ function show(l, exact = false) {
   renderLevels(base);
   status();
   scrollEnd(t);
+  sawIt(cur);
   $('input').focus();
 }
 function showTerminal(l, a) {
@@ -348,11 +429,33 @@ function renderLevelCards(base) {
     .map((l) => {
       const a = agentOf(l) || tabs[l]?.a || {};
       const st = a.state || '';
+      const pend = st === 'permission' && tabs[l]?.pend;
+      // permissão pendente num nível que não está no chat: responde aqui mesmo (pergunta abre o chat dele)
+      const ask = pend
+        ? pend.ask
+          ? `<div class="lask"><span class="small">pergunta: ${esc((pend.request.input?.questions || [])[0]?.question || '').slice(0, 80)}</span><button class="go">responder</button></div>`
+          : `<div class="lask"><code>${esc(toolName(pend.request.tool_name))} ${esc(toolSummary(pend.request.input)).slice(0, 80)}</code><span class="lbtns"><button data-ok="1">Permitir</button><button data-ok="0">Negar</button></span></div>`
+        : '';
       return `<div class="lcard ${st} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" style="--lc:${levelColor(l)}" title="${esc(l)}: ver o chat cru deste nível">
-        <span class="dot"></span><b>${esc(levelName(l))}</b><span class="small mute">${esc(ST[st] || st)}${a.msg && st !== 'working' ? ' · ' + esc(a.msg).slice(0, 40) : ''}</span></div>`;
+        <div class="lrow"><span class="dot"></span><b>${esc(levelName(l))}</b><span class="small mute">${esc(ST[st] || st)}${a.msg && st !== 'working' ? ' · ' + esc(a.msg).slice(0, 40) : ''}</span></div>${ask}</div>`;
     })
     .join('');
-  box.querySelectorAll('.lcard').forEach((el) => (el.onclick = () => show(el.dataset.l, true)));
+  box.querySelectorAll('.lcard').forEach((el) => {
+    const l = el.dataset.l;
+    el.onclick = (e) => {
+      if (e.target.closest('button')) return;
+      show(l, true);
+    };
+    el.querySelectorAll('.lbtns button').forEach((bt) => {
+      bt.onclick = () => {
+        const pend = tabs[l]?.pend;
+        if (!pend) return;
+        agentApi(l, 'permission', { request_id: pend.requestId, allow: bt.dataset.ok === '1', input: pend.request.input });
+      };
+    });
+    const go = el.querySelector('.go');
+    if (go) go.onclick = () => show(l, true);
+  });
 }
 function askDowngrade(base) {
   const t = tab(base);
@@ -381,7 +484,7 @@ function wire(t, a) {
   const from = t.a?.label || cur;
   if (a.kind === 'wireOut') {
     if (w.byId[a.id]) return;
-    const to = a.to.startsWith('uds:') ? 'resposta' : a.to;
+    const to = wireTo(from, a.to);
     const el = document.createElement('div');
     el.className = 'wire out';
     el.style.setProperty('--lc', levelColor(from));
@@ -442,6 +545,11 @@ function stream(l) {
 
 function apply(t, a) {
   if (a.state) setState(t, a.state, a.msg);
+  const lab = t.a?.label || cur;
+  if (a.kind === 'permission' && !a.replayed) needsYou(lab, 'pede permissão', toolName(a.request.tool_name) + ' ' + toolSummary(a.request.input));
+  else if (a.kind === 'ask' && !a.replayed) needsYou(lab, 'pergunta', (a.request.input?.questions || [])[0]?.question);
+  else if (a.kind === 'result' && !t.a?.replaying) needsYou(lab, a.isError ? 'erro' : 'terminou', a.text || t.lastText || '');
+  if (a.kind === 'text') t.lastText = a.text;
   switch (a.kind) {
     case 'sys':
       add(t, `<div class="sys ${esc(a.level)}">${esc(a.text)}</div>`);
@@ -453,6 +561,8 @@ function apply(t, a) {
     case 'interrupted':
       return add(t, `<div class="sys">interrompido por você</div>`);
     case 'permissionAnswered': {
+      if (t.pend?.requestId === a.requestId) t.pend = null;
+      renderLevelCards(baseOf(t.a?.label || cur));
       const p = t.perms[a.requestId];
       if (!p) return;
       p.classList.add('done');
@@ -495,7 +605,7 @@ function apply(t, a) {
         t.live.remove();
         t.live = null;
       }
-      const to = a.to.startsWith('uds:') ? 'resposta' : a.to;
+      const to = wireTo(t.a?.label || cur, a.to);
       const ch = add(
         t,
         `<div class="chip run peer"><div class="head"><b>→ ${esc(to)}</b><span class="sum">${esc(a.summary || firstLine(a.message))}</span><span class="st">…</span></div><pre></pre></div>`,
@@ -557,9 +667,13 @@ function apply(t, a) {
       t.live.textContent = t.buf;
       return scrollEnd(t);
     case 'permission':
-      return permCard(t, a);
+      if (!a.replayed) t.pend = { requestId: a.requestId, request: a.request, ask: false };
+      permCard(t, a);
+      return renderLevelCards(baseOf(t.a?.label || cur));
     case 'ask':
-      return askForm(t, a);
+      if (!a.replayed) t.pend = { requestId: a.requestId, request: a.request, ask: true };
+      askForm(t, a);
+      return renderLevelCards(baseOf(t.a?.label || cur));
     case 'result': {
       if (t.live) {
         t.live.classList.remove('live');
@@ -751,6 +865,27 @@ async function openLevelPicker(base) {
     'Sobe um nível de cima (professor etc.) na mesma máquina, pasta e conta. A aba passa a falar com ele; o agente atual vira o executor e recebe o trabalho pelo SendMessage.',
     '…',
   );
+  if (agentOf(base) && !agentOf(base).name) {
+    // aberto antes de os agentes subirem com -n: sem nome o SendMessage não o acha. Reabre na mesma conversa.
+    $('plist').innerHTML = `<div class="mute">Este agente abriu sem nome e os níveis não conseguiriam falar com ele.
+      <b>Reabrir</b> fecha e reabre a mesma conversa, já com nome (leva uns segundos).</div>
+      <div class="prow"><button class="ok">↻ Reabrir com nome</button></div>`;
+    $('plist').querySelector('.ok').onclick = async () => {
+      $('picker').hidden = true;
+      toast(`reabrindo ${base.split('@')[0]}…`);
+      const j = await agentApi(base, 'reopen');
+      if (!j.label) return;
+      if (tabs[base]) {
+        tabs[base].el?.remove();
+        delete tabs[base];
+      }
+      cur = null;
+      await refresh();
+      show(base);
+      toast(`${base.split('@')[0]} reaberto com nome; agora ⇅ subir nível`);
+    };
+    return;
+  }
   const s = await api('/api/pipelines');
   $('plist').innerHTML =
     (s.items || [])
@@ -801,6 +936,17 @@ async function refresh() {
     for (const a of agents) {
       const t = tabs[a.label];
       if (!t) continue;
+      if (t.pid && a.pid && t.pid !== a.pid && a.state !== 'closed') {
+        // o supervisor foi reaberto (troca de conta, reabrir com nome): o log de eventos recomeça do zero
+        if (t.es) t.es.close();
+        t.el?.remove();
+        const was = t.a?.account;
+        delete tabs[a.label];
+        if (was && a.account && was !== a.account) toast(`${a.label.split('@')[0]}: conta ${LAB[was] || was} sem cota; continua na ${LAB[a.account] || a.account}`);
+        if (cur === a.label || chainOf(curBase() || '').includes(a.label)) setTimeout(() => show(curBase() || a.label, true), 0);
+        continue;
+      }
+      if (a.pid) t.pid = a.pid;
       if (t.a?.state === 'closed') a.state = 'closed'; // encerrado pela página: a máquina pode atrasar
       else if (t.es && a.state !== 'closed') {
         // a aba sabe o estado pelos eventos; a consulta às máquinas atrasa até 15 s

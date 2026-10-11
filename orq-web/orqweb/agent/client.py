@@ -77,6 +77,18 @@ def attach(sock_path: Path, since: int, stdin: BinaryIO, stdout: BinaryIO) -> in
     return 0
 
 
+def stop_and_wait(sock_path: Path, timeout: float = 40.0) -> bool:
+    """Manda encerrar e espera o socket sumir (o claude tem QUIT_GRACE s para sair). False se não sumiu."""
+    if not stop(sock_path):
+        return not socket_alive(sock_path)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not sock_path.exists():
+            return True
+        time.sleep(0.3)
+    return False
+
+
 def stop(sock_path: Path) -> bool:
     try:
         c = connect(sock_path, since=10**9, timeout=3)
@@ -138,15 +150,21 @@ def spawn(
     role_file: Optional[str] = None,
     parent: Optional[str] = None,
     level: Optional[str] = None,
+    restart: bool = False,
 ) -> str:
     """Garante o supervisor rodando: numa sessão tmux `orqs-<nome>` ou, sem tmux, em segundo plano.
 
+    `restart` fecha o que estiver rodando com esse rótulo e sobe de novo (para o agente ganhar nome,
+    trocar de conta etc.; com --mode resume a conversa continua a mesma).
     Devolve uma linha descrevendo o que fez. Levanta RuntimeError se o socket não aparecer.
     """
     d = config.state_dir(label)
     sock = d / "agent.sock"
     if socket_alive(sock):
-        return "já rodando"
+        if not restart:
+            return "já rodando"
+        if not stop_and_wait(sock):
+            raise RuntimeError(f"o agente {label} não encerrou para ser reaberto")
     cmd = start_command(label, folder, account, mode, role_file, parent, level)
     env = dict(os.environ)
     env.pop("TMUX", None)

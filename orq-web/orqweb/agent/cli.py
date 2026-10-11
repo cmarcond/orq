@@ -6,6 +6,7 @@ Uso:
         garante o supervisor rodando numa sessão tmux "orqs-<nome>" desta máquina (sem tmux: nohup).
         Um nível de cima (professor etc.) sobe com o papel (--role-file; "-" lê do stdin e guarda em
         ~/.cache/orq/<nome>/role.txt), o rótulo do agente logo abaixo (--parent) e o nome do nível.
+        --restart fecha o agente que já roda com esse rótulo e sobe de novo (ex.: para ganhar nome).
   orq-agent start  --dir PASTA --account CONTA --label NOME [--mode resume|new] [--role-file ARQ] …
         roda o supervisor em primeiro plano (é o que o spawn abre dentro do tmux). Todo agente sobe
         com `claude -n <nome saneado>`, para ser endereçável pelo SendMessage de outra sessão
@@ -95,7 +96,16 @@ def cmd_spawn(a: argparse.Namespace) -> int:
         if err:
             print(err, file=sys.stderr)
             return 1
-    role_file = a.role_file
+    role_file, parent, level = a.role_file, a.parent, a.level
+    if a.restart and not (role_file or parent or level):
+        # reabrindo um nível (troca de conta): mantém papel, parent e nome do nível que ele já tinha
+        from .state import StateFile
+
+        old = StateFile(config.state_dir(a.label) / "state.json").read()
+        parent, level = old.get("parent"), old.get("level")
+        rf = config.state_dir(a.label) / "role.txt"
+        if (parent or level) and rf.exists():
+            role_file = str(rf)
     if role_file == "-":  # o papel vem pelo stdin (é como o servidor manda por ssh) e fica no estado
         text = sys.stdin.read()
         path = config.state_dir(a.label) / "role.txt"
@@ -105,7 +115,14 @@ def cmd_spawn(a: argparse.Namespace) -> int:
     try:
         print(
             client.spawn(
-                a.label, a.dir, a.account, a.mode, role_file=role_file, parent=a.parent, level=a.level
+                a.label,
+                a.dir,
+                a.account,
+                a.mode,
+                role_file=role_file,
+                parent=parent,
+                level=level,
+                restart=a.restart,
             )
         )
         print("pronto")
@@ -215,6 +232,9 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument("--parent", help="nível de cima: rótulo do agente logo abaixo")
         p.add_argument("--level", help="nome do nível na receita (professor, arquiteto…)")
+        p.add_argument(
+            "--restart", action="store_true", help="fecha o agente que estiver rodando e sobe de novo"
+        )
         p.set_defaults(fn=fn)
     p = sub.add_parser("attach")
     p.add_argument("label")

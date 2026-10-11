@@ -36,8 +36,9 @@ class FakeExt:
     def all_projects(self, hosts, limit=30):
         return [{"cwd": "/p", "host": "laptop", "mtime": 1, "account": "gmail", "title": "t"}], {}
 
-    def spawn(self, host, label, cwd, account, mode, role=None, parent=None, level=None):
+    def spawn(self, host, label, cwd, account, mode, role=None, parent=None, level=None, restart=False):
         self.spawned.append((host, label, cwd, account, mode, role, parent, level))
+        self.restarts = getattr(self, "restarts", []) + ([label] if restart else [])
         if cwd == "/falha":
             return "falhou de propósito"
         if self.real is not None:  # sobe um supervisor de verdade com o claude falso (níveis)
@@ -623,3 +624,23 @@ def test_levels_end_to_end_through_http(server, agent):
         for s in ext.real.get("sups", []):
             s.quit()
             s.wait(10)
+
+
+def test_reopen_restarts_in_same_conversation_or_other_account(server):
+    port, ext, state = server
+    assert req(port, "POST", "/api/agent/x@laptop/reopen", {})[0] == 404
+    old = base_entry("velho@laptop")
+    del old["name"]
+    state.add_provisional(old)
+    status, body, _ = req(port, "POST", "/api/agent/velho@laptop/reopen", {})
+    assert status == 200 and body == {"label": "velho@laptop", "acc": "gmail"}, body
+    assert ext.spawned[-1][:5] == ("laptop", "velho@laptop", "/p", "gmail", "resume") and ext.restarts == [
+        "velho@laptop"
+    ]
+    assert (
+        next(a for a in state.snapshot()["agents"] if a["label"] == "velho@laptop")["name"] == "velho-laptop"
+    )
+    assert req(port, "POST", "/api/agent/velho@laptop/reopen", {"account": "nao-existe"})[0] == 400
+    # com níveis em cima, recusa (os níveis apontam para o pid antigo)
+    state.add_provisional(base_entry("velho~professor@laptop", parent="velho@laptop", level="professor"))
+    assert req(port, "POST", "/api/agent/velho@laptop/reopen", {})[0] == 409

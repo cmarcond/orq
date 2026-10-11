@@ -97,7 +97,7 @@ function reducePermission(e) {
   if (!e.replay) {
     a.state = 'permission';
     a.msg = r.tool_name;
-  }
+  } else a.replayed = true;
   return [a];
 }
 

@@ -31,7 +31,7 @@ CSP = (
 )
 TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
 AGENT_RE = re.compile(
-    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade)$"
+    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade|reopen)$"
 )
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
@@ -56,6 +56,7 @@ class Context:
         self.auth: Optional[Auth] = None  # login por senha (rede); None ou desligado = só o token
         self.allowed_hosts = {"127.0.0.1", "localhost"}  # cabeçalho Host aceito
         self.local_host: Optional[str] = "laptop"  # nome desta máquina na página; None = sem agentes locais
+        self.migrator = None  # troca automática de conta (app.serve liga); /api/state mostra o histórico
 
     @property
     def login_required(self) -> bool:
@@ -139,7 +140,11 @@ def make_handler(ctx: Context):
                 return self.reply(403, {"err": "abra pelo link que o orq-web mostrou"})
             ctx.state.touch()
             if u.path == "/api/state":
-                return self.reply(200, ctx.state.snapshot())
+                snap = ctx.state.snapshot()
+                if ctx.migrator is not None:
+                    snap["migrations"] = ctx.migrator.history[-20:]
+                    snap["auto_switch"] = ctx.migrator.enabled
+                return self.reply(200, snap)
             if u.path == "/api/projects":
                 items = ctx.state.get_projects()
                 return self.reply(200, {"items": items})
@@ -211,6 +216,8 @@ def make_handler(ctx: Context):
                 return self.upgrade(label, body)
             if op == "downgrade":
                 return self.downgrade(label)
+            if op == "reopen":
+                return self.reopen(label, body)
             msg = build_message(op, body)
             if msg is None:
                 return self.reply(400, {"err": "mensagem vazia" if op == "send" else "pedido inválido"})
@@ -348,6 +355,25 @@ def make_handler(ctx: Context):
                     )
                 )
             return self.reply(200, {"pipeline": p.id, "levels": started, "top": started[-1]})
+
+        def reopen(self, label: str, body: dict) -> None:
+            """Fecha e reabre o agente na mesma conversa (ganha nome; ou noutra conta, se `account` vier)."""
+            with ctx.state.lock:
+                agents = list(ctx.state.agents)
+            a = next((x for x in agents if x.get("label") == label and x.get("state") != "closed"), None)
+            if a is None or a.get("kind") != "sdk":
+                return self.reply(404, {"err": "agente da página desconhecido"})
+            if pipelines.levels_above(agents, label):
+                return self.reply(409, {"err": "desfaça os níveis antes de reabrir"})
+            acc = body.get("account") or a.get("account") or "?"
+            if acc not in ctx.conf.accounts:
+                return self.reply(400, {"err": f"conta desconhecida: {acc}"})
+            host, cwd = a.get("host") or ctx.local_host or "?", a.get("dir") or ""
+            err = ctx.spawn(host, label, cwd, acc, "resume", restart=True)
+            if err:
+                return self.reply(500, {"err": err})
+            ctx.state.add_provisional(provisional_agent(label, host, acc, cwd, time.time()))
+            return self.reply(200, {"label": label, "acc": acc})
 
         def downgrade(self, label: str) -> None:
             """Encerra os níveis acima do agente da aba; a aba volta a falar com ele."""

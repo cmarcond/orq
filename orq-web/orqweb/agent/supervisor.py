@@ -55,6 +55,7 @@ class Supervisor:
         self.label, self.folder, self.account = label, folder, account
         self.command, self.env, self.sid = command, env, sid
         self.transcript = transcript
+        self.last_user = ""  # última mensagem da página: vai no state.json se a cota acabar, para reenvio
         self.name = name  # nome da sessão (-n): como outras sessões a endereçam no SendMessage
         self.parent = parent  # nível acima de outro agente: rótulo do agente logo abaixo
         self.level = level  # nome do nível na receita (professor, arquiteto…)
@@ -132,6 +133,11 @@ class Supervisor:
                     line = ev.encode(stamped)
             st = ev.derive_state(e)
             if st:
+                if st[0] == "quota":
+                    self.state.write(retry=self.last_user)  # o servidor reenvia na conta nova
+                    self.note(f"a conta {self.account} ficou sem cota; a página vai trocar de conta", "error")
+                elif st[0] == "waiting":
+                    self.state.write(retry="")
                 self.put_state(*st)
             self.push(line)
         code = self.proc.wait()
@@ -178,7 +184,10 @@ class Supervisor:
             self.quit()
             return
         if o.get("type") == "user":
-            self.sent.add(ev.text_of(o.get("message")))
+            txt = ev.text_of(o.get("message"))
+            self.sent.add(txt)
+            if txt:
+                self.last_user = txt
         answered = ev.permission_answered(o)
         if answered:
             self.push(answered)

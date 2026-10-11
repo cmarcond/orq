@@ -10,12 +10,14 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 from .. import config
 from .auth import Auth
 from .bridge import BridgeRegistry
 from .external import External
 from .handlers import Context, make_handler
+from .migrate import Migrator
 from .state import StateCache
 
 LOCAL_ADDRS = ("127.0.0.1", "localhost", "::1")
@@ -59,6 +61,16 @@ def url_file(port: int) -> Path:
     return config.state_root() / f"web-{port}.url"
 
 
+def saved_token(port: int) -> Optional[str]:
+    """Token do último orq-web nesta porta, para a aba aberta continuar valendo depois de reiniciar."""
+    try:
+        url = url_file(port).read_text().strip()
+    except OSError:
+        return None
+    tok = parse_qs(urlparse(url).query).get("t", [""])[0]
+    return tok or None
+
+
 def existing_server_url(port: int) -> Optional[str]:
     """Link do orq-web que já está nesta porta, se ele responde."""
     f = url_file(port)
@@ -96,7 +108,10 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
     ext = External(local_host=local, ssh_config=ssh_config)
     state = StateCache(conf, ext, usage_host=os.environ.get("ORQ_USAGE_HOST") or None)
     bridges = BridgeRegistry(local_host=local, ssh_config=ssh_config)
-    ctx = Context(conf, state, bridges, ext.spawn, token, convert=ext.convert)
+    ctx = Context(conf, state, bridges, ext.spawn, token or saved_token(port), convert=ext.convert)
+    migrator = Migrator(conf, state, ext.spawn, bridges.deliver, enabled=conf.auto_switch)
+    state.on_agents = migrator.check
+    ctx.migrator = migrator
     ctx.put_file = ext.put_file
     ctx.auth = auth
     ctx.local_host = local
@@ -137,10 +152,8 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
         pass
     finally:
         state.stop()
-        try:
-            f.unlink()
-        except OSError:
-            pass
+        # o arquivo do link fica: o próximo orq-web nesta porta reaproveita o token (a aba continua valendo);
+        # existing_server_url confere se há mesmo alguém respondendo antes de confiar nele
         srv.server_close()
         os._exit(0)  # não espera threads de ssh presas
     return 0

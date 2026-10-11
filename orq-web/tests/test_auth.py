@@ -268,3 +268,14 @@ def test_pick_host_and_label_respects_local_host():
     )
     p, err = pick_host_and_label({"host": "laptop", "cwd": "/x"}, ["server0", "laptop"], set(), local=None)
     assert err is None and p["label"] == "x@laptop"
+
+
+def test_saved_token_comes_from_url_file(tmp_path, monkeypatch):
+    from orqweb.server import app as A
+
+    monkeypatch.setenv("ORQ_STATE_DIR", str(tmp_path))
+    assert A.saved_token(8765) is None
+    A.url_file(8765).write_text("http://127.0.0.1:8765/?t=abc123")
+    assert A.saved_token(8765) == "abc123"
+    A.url_file(8765).write_text("lixo")
+    assert A.saved_token(8765) is None

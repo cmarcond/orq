@@ -88,13 +88,25 @@ class TestDeriveState:
 
     def test_result_ok_and_error(self):
         assert ev.derive_state({"type": "result", "subtype": "success"}) == ("waiting", "")
-        st, msg = ev.derive_state({"type": "result", "is_error": True, "result": "rate limit"})
-        assert st == "error" and msg == "rate limit"
+        st, msg = ev.derive_state({"type": "result", "is_error": True, "result": "deu erro"})
+        assert st == "error" and msg == "deu erro"
 
     def test_assistant_is_working_and_others_do_not_change(self):
         assert ev.derive_state({"type": "assistant"}) == ("working", "")
         assert ev.derive_state({"type": "stream_event"}) is None
         assert ev.derive_state({"type": "system", "subtype": "init"}) is None
+
+    def test_quota_exhausted(self):
+        rl = {
+            "type": "rate_limit_event",
+            "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour"},
+        }
+        assert ev.quota_exhausted(rl) and ev.derive_state(rl) == ("quota", "cota esgotada (five_hour)")
+        assert not ev.quota_exhausted({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}})
+        err = {"type": "result", "is_error": True, "result": "You've hit your usage limit · resets 3pm"}
+        assert ev.derive_state(err)[0] == "quota"
+        other = {"type": "result", "is_error": True, "result": "tool failed"}
+        assert ev.derive_state(other) == ("error", "tool failed")
 
     def test_client_side(self):
         assert ev.derive_state_from_client({"type": "user"}) == ("working", "")

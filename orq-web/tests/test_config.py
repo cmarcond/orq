@@ -27,6 +27,7 @@ def test_parse_accounts_and_options():
     assert c.accounts["gmail"].label == "Gmail"
     assert c.accounts["gmail"].config_dir == Path.home() / ".claude-gmail"
     assert c.permission_mode == "auto" and c.hosts == ["server0"]
+    assert c.auto_switch is True and config.parse({"accounts": [], "auto_switch": False}).auto_switch is False
     assert c.labels == {"work": "Work", "gmail": "Gmail"}
     assert c.colors == {"work": config.PALETTE[0], "gmail": "#123456"}, (
         "paleta por posição; color sobrescreve"

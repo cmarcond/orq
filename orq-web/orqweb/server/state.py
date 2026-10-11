@@ -6,7 +6,7 @@ AGENTS_EVERY s, e só enquanto a página está aberta (`touch()` marca que algu�
 
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..config import Config
 from .external import External
@@ -31,6 +31,7 @@ class StateCache:
         self.projects: Optional[List[dict]] = None
         self.projects_ts = 0.0
         self.closing: Dict[str, float] = {}  # rótulo -> até quando contar como fechado
+        self.on_agents: Optional[Callable[[List[dict]], Any]] = None  # chamado com a lista nova (migração)
         self.seen = clock()
         self._stop = threading.Event()
 
@@ -55,6 +56,11 @@ class StateCache:
                 if a.get("label") in self.closing:
                     a["state"] = "closed"
             self.agents, self.host_errors, self.agents_ts = ag, errs, now
+        if self.on_agents:
+            try:
+                self.on_agents(list(ag))
+            except Exception as e:  # o gancho nunca derruba a consulta
+                print(f"aviso: gancho de agentes falhou: {e}")
 
     def get_projects(self) -> List[dict]:
         with self.lock:

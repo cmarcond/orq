@@ -194,28 +194,32 @@ class External:
         role: Optional[str] = None,
         parent: Optional[str] = None,
         level: Optional[str] = None,
+        restart: bool = False,
     ) -> Optional[str]:
         """Sobe o supervisor na máquina. Devolve mensagem de erro ou None.
 
         Um nível de cima leva o papel (`role`) pelo stdin do `orq-agent spawn --role-file -`, que o
         guarda na máquina do agente; `parent` é o rótulo do agente logo abaixo e `level` o nome do nível.
+        `restart` fecha o agente que estiver rodando com esse rótulo antes (reabrir com nome, trocar conta).
         """
         args = ["spawn", "--dir", cwd, "--account", account, "--label", label, "--mode", mode]
         if parent:
             args += ["--parent", parent]
         if level:
             args += ["--level", level]
+        if restart:
+            args.append("--restart")
         extra = {}
         if role is not None:
             args += ["--role-file", "-"]
             extra["input"] = role
         try:
             if host == self.local:
-                r = self.run([str(self.bin / "orq-agent")] + args, 60, **extra)
+                r = self.run([str(self.bin / "orq-agent")] + args, 90, **extra)
             else:
                 import shlex
 
-                r = self.run(self.ssh(host, "~/.local/bin/orq-agent " + shlex.join(args), 8), 60, **extra)
+                r = self.run(self.ssh(host, "~/.local/bin/orq-agent " + shlex.join(args), 8), 90, **extra)
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
         if r.returncode:

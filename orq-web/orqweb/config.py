@@ -85,6 +85,7 @@ class Config:
     permission_mode: str = "manual"
     hosts: List[str] = field(default_factory=list)
     timezone: str = "America/Sao_Paulo"
+    auto_switch: bool = True  # trocar de conta sozinho quando a cota do agente acaba
 
     @property
     def labels(self) -> Dict[str, str]:
@@ -119,6 +120,7 @@ def parse(raw: dict) -> Config:
         permission_mode=raw.get("permission_mode") or "manual",
         hosts=list(raw.get("orq_hosts", [])),
         timezone=raw.get("timezone") or "America/Sao_Paulo",
+        auto_switch=bool(raw.get("auto_switch", True)),
     )
 
 

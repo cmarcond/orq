@@ -477,3 +477,32 @@ def test_tmux_shell_carries_pythonpath():
 
     assert tmux_shell(["python3", "-m", "x"], {}) == "python3 -m x"
     assert tmux_shell(["python3", "-m", "x"], {"PYTHONPATH": "/a b"}) == "env 'PYTHONPATH=/a b' python3 -m x"
+
+
+def test_stop_and_wait_until_socket_is_gone(sup):
+    assert client.stop_and_wait(sup.sock_path, timeout=20) is True
+    assert not sup.sock_path.exists() and sup.wait(10)
+    assert client.stop_and_wait(sup.sock_path, timeout=1) is True  # já não roda: nada a esperar
+
+
+def test_spawn_restart_flag_reaches_client(monkeypatch):
+    from orqweb.agent import cli
+
+    seen = {}
+    monkeypatch.setattr(cli.client, "spawn", lambda *a, **k: seen.update(k) or "ok")
+    monkeypatch.setattr(cli.config, "load", lambda: type("C", (), {"account": lambda self, n: n})())
+    monkeypatch.setattr(cli, "_refuse_if_terminal_live", lambda *a: None)
+    assert cli.main(["spawn", "--dir", "/p", "--account", "g", "--label", "p@l", "--restart"]) == 0
+    assert seen["restart"] is True and seen["parent"] is None
+
+
+def test_quota_exhausted_marks_state_and_keeps_last_message_for_retry(sup):
+    c = Conn(sup.sock_path)
+    c.until(lambda e: e.get("subtype") == "init")
+    c.user("esgote a cota, por favor")
+    got = c.until(lambda e: e.get("type") == "orq" and "sem cota" in e.get("text", ""))
+    assert got[-1]["level"] == "error"
+    c.until(is_result)
+    st = state_of(sup)
+    assert st["state"] == "quota" and st["retry"] == "esgote a cota, por favor" and "limit" in st["msg"]
+    c.close()

@@ -168,6 +168,19 @@ O conceito, as receitas `.toml` e o desenho da tela (palco, fios, níveis). O c�
 portões não é portado: o supervisor já entrega eventos estruturados e permissões sem raspar terminal.
 O diretório `claude-highlevel/` fica no monorepo como referência histórica.
 
+## Fase 4 — acabamentos e troca de conta  ✅ feita em 2026-10-11
+
+Da lista levantada depois da fase 3, foram feitos: fios mostram o nível de cima quando o executor
+responde ao endereço `uds:` (e o papel do professor pede resposta pelo nome `{eu}`); **↻ reabrir com
+nome** no seletor de níveis (`reopen` + `spawn --restart`); permissão pendente de um nível respondida
+no próprio cartão do painel; **troca automática de conta** quando a cota acaba (`state: quota` no
+supervisor, `Migrator` no servidor, `retry` da última mensagem, `auto_switch` no accounts.json);
+**notificações** do navegador e contagem no título da aba.
+
+Ficam para depois: histórico de rodadas e linha do tempo de marcos; modelo/esforço por nível; receitas
+editáveis pela página; um professor para vários executores; busca na lista de projetos; painel de níveis
+melhor no celular; níveis na grade do `orq` do terminal; `orq-web --no-open`.
+
 ---
 
 ## Estimativa e ordem

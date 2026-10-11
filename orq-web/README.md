@@ -46,9 +46,27 @@ ver o chat cru daquele nível) e os **fios**: cada mensagem entre níveis, marca
 outro lado. **↓ desfazer** encerra os níveis de cima e a aba volta ao executor.
 
 Para isso todo agente sobe com `claude -n <nome>`, o nome que o `SendMessage` usa: o rótulo saneado
-(`kaggle@server0` → `kaggle-server0`; o `@` é recusado). Agentes abertos antes desta versão não têm
-nome: feche-os (✕) e abra de novo antes de subir níveis. Os níveis sobem no mesmo `permission_mode`:
-modos diferentes fazem o Claude Code reter a mensagem entre eles.
+(`kaggle@server0` → `kaggle-server0`; o `@` é recusado). Agente aberto antes desta versão não tem
+nome: o seletor de níveis oferece **↻ reabrir com nome** (`POST /api/agent/<x>/reopen`, que roda
+`orq-agent spawn --mode resume --restart` e retoma a mesma conversa). Os níveis sobem no mesmo
+`permission_mode`: modos diferentes fazem o Claude Code reter a mensagem entre eles. Se um nível pede
+permissão, o cartão dele no painel mostra o pedido com Permitir/Negar; uma pergunta (`AskUserQuestion`)
+abre o chat daquele nível.
+
+## Cota acabou: troca de conta sozinha
+
+Quando o claude avisa que a conta esgotou (`rate_limit_event` com `status: rejected`, ou um turno que
+termina em erro de limite), o supervisor marca `state: quota` e guarda a última mensagem da página em
+`retry`. Na consulta seguinte às máquinas, o servidor reabre o agente na conta com mais folga
+(`orq-agent spawn --mode resume --restart`; o `claude-last --as` copia a conversa para a conta nova) e
+reenvia a mensagem. A página avisa com um toast e a aba continua na mesma conversa; `/api/state` traz
+`migrations`. Desligue com `"auto_switch": false` no `accounts.json`.
+
+## Notificações
+
+O 🔔 no topo pede permissão ao navegador uma vez. Depois, com a página fora de vista, cada agente que
+pede permissão, faz uma pergunta ou termina um turno gera uma notificação; o título da aba mostra
+quantos agentes esperam você, por exemplo `(2) orq`, até você abrir cada um.
 
 Um `claude` interativo que já está rodando num tmux (aberto por `claude-gmail` etc.) aparece na
 página como aba tracejada com o botão **⇄ converter**: a página dá `/exit` nele (ou Ctrl-C, ou
@@ -79,7 +97,8 @@ orq-agent spawn --dir ~/acervo --account gmail --label acervo~professor@node0 \
 ```
 
 Configuração (no `accounts.json` do claude-multiconta): `permission_mode` dos agentes da página
-(`auto` deixa o Claude decidir o rotineiro; `manual` pergunta tudo) e `orq_hosts`.
+(`auto` deixa o Claude decidir o rotineiro; `manual` pergunta tudo), `orq_hosts` e `auto_switch`
+(padrão `true`: trocar de conta sozinho quando a cota acaba).
 Variáveis: `CLAUDE_MULTICONTA_CONF`, `ORQ_BIN` (onde estão os utilitários), `ORQ_STATE_DIR`
 (padrão `~/.cache/orq`), `ORQ_NO_OPEN=1` (não abre o navegador), `ORQ_USAGE_HOST` (máquina que
 responde a cota, por ssh; para o servidor rodar onde não há credenciais).
@@ -118,6 +137,7 @@ navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attac
 | `orqweb/server/assign.py` | escolha da conta pela folga no 7d e rótulo `pasta@maquina` |
 | `orqweb/server/state.py` | cache de cota/agentes/projetos; laços de fundo só com a página aberta |
 | `orqweb/server/bridge.py` | uma ponte por aba; ponte passageira para entregar sem aba |
+| `orqweb/server/migrate.py` | troca de conta quando a cota acaba: escolhe a conta com folga, reabre com `--restart`, reenvia a mensagem |
 | `orqweb/server/pipelines.py` | receitas de níveis (`orqweb/pipelines/*.toml`), rótulos `base~nível@host`, papéis com os vizinhos resolvidos |
 | `orqweb/server/handlers.py` | rotas, SSE, token, CSP, estáticos, níveis (`/api/pipelines`, `upgrade`, `downgrade`) |
 | `orqweb/server/app.py` | porta, link com token, segundo servidor, encerramento |
@@ -168,5 +188,6 @@ em Node 22. O supervisor roda nas máquinas remotas, por isso o código fica com
 
 ## Por fazer
 
-- trocar de conta automaticamente quando a cota acaba (hoje só o `orq-run` do terminal faz);
-- acesso pelo celular (servidor numa máquina sempre ligada, com Tailscale e login);
+- histórico de rodadas de níveis e linha do tempo de marcos por projeto;
+- modelo e esforço por nível na receita; receitas editáveis pela página;
+- um professor para vários executores (máquinas diferentes).

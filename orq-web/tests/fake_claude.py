@@ -5,6 +5,7 @@ Fala o subconjunto do protocolo que o supervisor usa. O comportamento depende do
   "pergunte"    -> pedido de permissão AskUserQuestion; a resposta vem em updatedInput.answers
   "demore"      -> fica ocupado até receber um control_request interrupt (ou 5 s)
   "injete"      -> emite uma mensagem `user` sem marca de origem (como um cron faria)
+  "esgote"      -> rate_limit_event rejected + result de erro de limite (a conta ficou sem cota)
   "delegue: X para NOME" -> tool_use SendMessage para NOME com a mensagem X (vai pela caixa de correio)
   qualquer outro -> stream_event palavra a palavra + texto "eco: ..." + result
 Sempre ecoa a mensagem do usuário (--replay-user-messages) e responde interrupts com control_response.
@@ -231,6 +232,23 @@ def handle_user(text):
             result(ok=False)
         else:
             result()
+    elif "esgote" in text:
+        emit(
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour"},
+            }
+        )
+        emit(
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "num_turns": 1,
+                "session_id": SID,
+                "result": "You've hit your usage limit · resets 3pm",
+            }
+        )
     elif "injete" in text:
         emit({"type": "user", "message": {"role": "user", "content": "Aviso automático: cron rodou"}})
         assistant([{"type": "text", "text": "ok"}])

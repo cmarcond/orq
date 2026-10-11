@@ -2,8 +2,8 @@
 
 Uma receita é dado, não código: cada `[[niveis]]` é um nível a mais, do topo para baixo. O agente da
 aba é sempre a base (o executor) e não ganha papel novo; os níveis sobem na mesma máquina, pasta e
-conta, e conversam pelo SendMessage/ListAgents nativo do Claude Code. `{acima}`/`{abaixo}` no papel
-viram os nomes reais das sessões vizinhas (os que o SendMessage aceita, sem `@`).
+conta, e conversam pelo SendMessage/ListAgents nativo do Claude Code. `{acima}`/`{abaixo}`/`{eu}` no papel
+viram os nomes reais das sessões (os que o SendMessage aceita, sem `@`).
 
 O TOML é lido pelo `tomllib` (3.11+); em Python mais antigo um leitor mínimo cobre o subconjunto que
 as receitas usam (strings simples e de três aspas, `[[tabelas]]`, comentários).
@@ -180,6 +180,7 @@ def plan_levels(p: Pipeline, base_label: str) -> List[Dict[str, Any]]:
             str(n["papel"])
             .replace("{acima}", session_name(acima) if acima else "")
             .replace("{abaixo}", session_name(abaixo))
+            .replace("{eu}", session_name(labels[i]))
             .strip()
         )
         out.append(
