@@ -12,10 +12,35 @@ from pathlib import Path
 from typing import Optional
 
 from .. import config
+from .auth import Auth
 from .bridge import BridgeRegistry
 from .external import External
 from .handlers import Context, make_handler
 from .state import StateCache
+
+LOCAL_ADDRS = ("127.0.0.1", "localhost", "::1")
+DEFAULT_PASSWORD_FILE = Path.home() / ".config/orq-web/password"
+
+
+def env_list(name: str) -> list:
+    return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
+
+
+def local_host_from_env() -> Optional[str]:
+    """ORQ_LOCAL_HOST: nome desta máquina na página (padrão laptop); none/nenhum = sem agentes locais."""
+    v = os.environ.get("ORQ_LOCAL_HOST", "laptop").strip()
+    return None if v.lower() in ("", "none", "nenhum", "-") else v
+
+
+def check_bind(bind: str, auth_enabled: bool) -> Optional[str]:
+    """Escutar fora do 127.0.0.1 sem senha exporia os agentes a quem estiver na rede."""
+    if bind in LOCAL_ADDRS or auth_enabled:
+        return None
+    return (
+        f"recusado: ORQ_BIND={bind} exporia o orq-web na rede sem senha. Crie o arquivo de senha "
+        f"(ORQ_PASSWORD_FILE, padrão {DEFAULT_PASSWORD_FILE}) ou escute só em 127.0.0.1."
+    )
+
 
 IGNORED = (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)
 
@@ -59,12 +84,25 @@ def open_browser(url: str) -> None:
 
 def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optional[str] = None) -> int:
     conf = conf or config.load()
-    ext = External()
+    bind = os.environ.get("ORQ_BIND", "127.0.0.1").strip() or "127.0.0.1"
+    auth = Auth(Path(os.path.expanduser(os.environ.get("ORQ_PASSWORD_FILE") or str(DEFAULT_PASSWORD_FILE))))
+    err = check_bind(bind, auth.enabled)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
+    local = local_host_from_env()
+    conf.hosts = [h for h in conf.hosts + env_list("ORQ_EXTRA_HOSTS") if h != local]
+    ssh_config = os.environ.get("ORQ_SSH_CONFIG") or None
+    ext = External(local_host=local, ssh_config=ssh_config)
     state = StateCache(conf, ext, usage_host=os.environ.get("ORQ_USAGE_HOST") or None)
-    ctx = Context(conf, state, BridgeRegistry(), ext.spawn, token, convert=ext.convert)
+    bridges = BridgeRegistry(local_host=local, ssh_config=ssh_config)
+    ctx = Context(conf, state, bridges, ext.spawn, token, convert=ext.convert)
     ctx.put_file = ext.put_file
+    ctx.auth = auth
+    ctx.local_host = local
+    ctx.allowed_hosts |= {bind, *env_list("ORQ_ALLOWED_HOSTS")}
     try:
-        srv = Server(("127.0.0.1", port), make_handler(ctx))
+        srv = Server((bind, port), make_handler(ctx))
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise
@@ -79,6 +117,8 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
         )
         return 1
     url = f"http://127.0.0.1:{port}/?t={ctx.token}"
+    if bind not in LOCAL_ADDRS:
+        print(f"orq-web na rede em http://{bind}:{port}/  (login com a senha de {auth.file})")
     f = url_file(port)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(url)

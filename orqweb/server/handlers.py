@@ -1,8 +1,10 @@
 """Rotas HTTP da página: estáticos, /api/state, /api/projects, /api/agent/* (abrir, stream SSE, enviar,
 permissão, interromper, parar).
 
-Segurança: só responde a Host 127.0.0.1/localhost; tudo em /api exige o token (cabeçalho
-X-Orq-Token, ou ?t= no SSE, que não aceita cabeçalhos); CSP restringe scripts a 'self' e ao CDN.
+Segurança: só responde aos Hosts permitidos (127.0.0.1/localhost e, se configurado, o IP da rede
+privada); tudo em /api exige o token (cabeçalho X-Orq-Token, ou ?t= no SSE, que não aceita
+cabeçalhos) ou um cookie de sessão obtido em /login com a senha; CSP restringe scripts a 'self' e
+ao CDN.
 """
 
 import json
@@ -16,6 +18,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .assign import assign
+from .auth import Auth, login_page
 from .bridge import BridgeRegistry
 from .state import StateCache, pick_host_and_label, provisional_agent
 
@@ -46,6 +49,16 @@ class Context:
         self.convert = convert  # (host, label) -> {ok, label, how, msg}; None desliga /api/agent/convert
         self.put_file = None  # (host, path, data) -> erro ou None; None desliga /api/agent/<x>/upload
         self.token = token or secrets.token_urlsafe(16)
+        self.auth: Optional[Auth] = None  # login por senha (rede); None ou desligado = só o token
+        self.allowed_hosts = {"127.0.0.1", "localhost"}  # cabeçalho Host aceito
+        self.local_host: Optional[str] = "laptop"  # nome desta máquina na página; None = sem agentes locais
+
+    @property
+    def login_required(self) -> bool:
+        return bool(self.auth and self.auth.enabled)
+
+    def valid_hosts(self) -> list:
+        return ([self.local_host] if self.local_host else []) + list(self.conf.hosts)
 
 
 def make_handler(ctx: Context):
@@ -68,11 +81,29 @@ def make_handler(ctx: Context):
             self.wfile.write(b)
 
         def ok_host(self) -> bool:
-            return self.headers.get("Host", "").split(":")[0] in ("127.0.0.1", "localhost")
+            return self.headers.get("Host", "").split(":")[0] in ctx.allowed_hosts
+
+        def sid(self) -> Optional[str]:
+            return Auth.sid_from_cookie(self.headers.get("Cookie"))
 
         def authed(self, q: Optional[Dict[str, list]] = None) -> bool:
+            if not self.ok_host():
+                return False
             t = self.headers.get("X-Orq-Token", "") or ((q or {}).get("t") or [""])[0]
-            return self.ok_host() and secrets.compare_digest(t, ctx.token)
+            if t and secrets.compare_digest(t, ctx.token):
+                return True
+            return bool(ctx.auth and ctx.auth.valid(self.sid()))
+
+        def redirect(self, to: str, extra_headers: Tuple[Tuple[str, str], ...] = ()) -> None:
+            self.send_response(303)
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            for k, v in extra_headers:
+                self.send_header(k, v)
+            self.end_headers()
+
+        def client_ip(self) -> str:
+            return self.client_address[0] if self.client_address else "?"
 
         @staticmethod
         def agent_path(path: str) -> Tuple[Optional[str], Optional[str]]:
@@ -92,10 +123,14 @@ def make_handler(ctx: Context):
                 return self.reply(403, {"err": "host"})
             u = urlparse(self.path)
             q = parse_qs(u.query)
-            if u.path == "/":
-                return self.static("index.html")
+            if u.path == "/login":
+                return self.reply(200, login_page().encode(), "text/html")
             if u.path.startswith("/static/"):
                 return self.static(u.path[len("/static/") :])
+            if u.path == "/":
+                if ctx.login_required and not self.authed(q):
+                    return self.redirect("/login")
+                return self.static("index.html")
             if not self.authed(q):
                 return self.reply(403, {"err": "abra pelo link que o orq-web mostrou"})
             ctx.state.touch()
@@ -142,9 +177,16 @@ def make_handler(ctx: Context):
 
         # ---- POST
         def do_POST(self) -> None:
+            path = urlparse(self.path).path
+            if path == "/login":
+                return self.login()
+            if path == "/logout":
+                if ctx.auth:
+                    ctx.auth.logout(self.sid())
+                return self.redirect("/login", (("Set-Cookie", Auth.clear_cookie_header()),))
             if not self.authed():
                 return self.reply(403, {"err": "token"})
-            label, op = self.agent_path(urlparse(self.path).path)
+            label, op = self.agent_path(path)
             if op == "upload":
                 return self.upload(label)
             body = self.read_json()
@@ -169,11 +211,33 @@ def make_handler(ctx: Context):
                 threading.Timer(6.0, ctx.state.refresh_agents).start()
             return self.reply(200, {"msg": f"encerrando {label}"} if op == "stop" else {"ok": True})
 
+        def login(self) -> None:
+            if not self.ok_host():
+                return self.reply(403, {"err": "host"})
+            if not ctx.login_required:
+                return self.reply(
+                    404, login_page("login por senha desligado neste servidor").encode(), "text/html"
+                )
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                form = parse_qs(self.rfile.read(n).decode(errors="ignore"))
+            except (ValueError, OSError):
+                form = {}
+            ip = self.client_ip()
+            if ctx.auth.blocked(ip):
+                return self.reply(
+                    429, login_page("muitas tentativas; espere um minuto").encode(), "text/html"
+                )
+            sid = ctx.auth.login((form.get("password") or [""])[0], ip)
+            if not sid:
+                return self.reply(403, login_page("senha incorreta").encode(), "text/html")
+            return self.redirect("/", (("Set-Cookie", ctx.auth.cookie_header(sid)),))
+
         def convert_agent(self, body: dict) -> None:
             """Fecha o claude interativo daquele tmux e reabre a conversa como agente da página."""
             label = body.get("label") or ""
             host = label.rsplit("@", 1)[1] if "@" in label else ""
-            if not ctx.convert or host not in ["laptop"] + list(ctx.conf.hosts):
+            if not ctx.convert or host not in ctx.valid_hosts():
                 return self.reply(400, {"err": "agente inválido"})
             with ctx.state.lock:
                 entry = next(
@@ -218,14 +282,14 @@ def make_handler(ctx: Context):
                 return self.reply(404, {"err": "agente desconhecido"})
             data = self.rfile.read(n)
             path = f"{entry['dir'].rstrip('/')}/{INBOX}/{name}"
-            err = ctx.put_file(entry.get("host") or "laptop", path, data)
+            err = ctx.put_file(entry.get("host") or ctx.local_host or "?", path, data)
             if err:
                 return self.reply(500, {"err": f"não consegui gravar em {entry.get('host')}: {err}"})
             return self.reply(200, {"path": path, "bytes": n})
 
         def open_agent(self, body: dict) -> None:
             snap = ctx.state.snapshot()
-            p, err = pick_host_and_label(body, ctx.conf.hosts, ctx.state.live_labels())
+            p, err = pick_host_and_label(body, ctx.conf.hosts, ctx.state.live_labels(), local=ctx.local_host)
             if err:
                 return self.reply(400, {"err": err})
             assign([p], snap["usage"], list(ctx.conf.accounts), ctx.state.running_accounts())

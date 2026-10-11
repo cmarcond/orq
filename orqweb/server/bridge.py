@@ -13,12 +13,18 @@ from .external import LAPTOP, ssh_cmd
 FAR_FUTURE = 10**9  # since "no futuro": a ponte não recebe replay, só serve para entregar algo
 
 
-def attach_command(label: str, since: int, bin_dir: Optional[Path] = None) -> List[str]:
+def attach_command(
+    label: str,
+    since: int,
+    bin_dir: Optional[Path] = None,
+    local_host: Optional[str] = LAPTOP,
+    ssh_config: Optional[str] = None,
+) -> List[str]:
     host = config.host_of(label)
-    if host == LAPTOP:
+    if local_host and host == local_host:
         return [str((bin_dir or config.bin_dir()) / "orq-agent"), "attach", label, "--since", str(since)]
     remote = "~/.local/bin/orq-agent attach " + shlex.quote(label) + " --since " + str(since)
-    return ssh_cmd(host, remote, 8)
+    return ssh_cmd(host, remote, 8, ssh_config)
 
 
 def _with_keepalive(cmd: List[str]) -> List[str]:
@@ -29,11 +35,17 @@ def _with_keepalive(cmd: List[str]) -> List[str]:
 
 class Bridge:
     def __init__(
-        self, label: str, since: int, bin_dir: Optional[Path] = None, command: Optional[List[str]] = None
+        self,
+        label: str,
+        since: int,
+        bin_dir: Optional[Path] = None,
+        command: Optional[List[str]] = None,
+        local_host: Optional[str] = LAPTOP,
+        ssh_config: Optional[str] = None,
     ):
         self.label = label
         self.p = subprocess.Popen(
-            command or _with_keepalive(attach_command(label, since, bin_dir)),
+            command or _with_keepalive(attach_command(label, since, bin_dir, local_host, ssh_config)),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -64,9 +76,17 @@ class Bridge:
 class BridgeRegistry:
     """Uma ponte por rótulo (a da aba aberta). `deliver` usa a da aba ou abre uma passageira."""
 
-    def __init__(self, bin_dir: Optional[Path] = None, factory=Bridge):
+    def __init__(
+        self,
+        bin_dir: Optional[Path] = None,
+        factory=None,
+        local_host: Optional[str] = LAPTOP,
+        ssh_config: Optional[str] = None,
+    ):
         self.bin_dir = bin_dir
-        self.factory = factory
+        self.factory = factory or (
+            lambda label, since, bd: Bridge(label, since, bd, local_host=local_host, ssh_config=ssh_config)
+        )
         self._b: Dict[str, Bridge] = {}
         self._lock = threading.Lock()
 

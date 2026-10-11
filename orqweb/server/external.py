@@ -26,8 +26,12 @@ def usage_remote_cmd() -> str:
     return 'tmux run-shell "$HOME/.local/bin/usage-all --json" 2>/dev/null || ~/.local/bin/usage-all --json'
 
 
-def ssh_cmd(host: str, remote: str, connect_timeout: int = 5) -> List[str]:
-    return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}", host, remote]
+def ssh_cmd(host: str, remote: str, connect_timeout: int = 5, config: Optional[str] = None) -> List[str]:
+    """ssh sem interação; `config` (ORQ_SSH_CONFIG) é um ssh_config próprio, usado no container."""
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}"]
+    if config:
+        cmd += ["-F", config]
+    return cmd + [host, remote]
 
 
 def dedupe_labels(items: List[dict]) -> List[dict]:
@@ -53,9 +57,23 @@ def dedupe_labels(items: List[dict]) -> List[dict]:
 
 
 class External:
-    def __init__(self, bin_dir: Optional[Path] = None, runner: Runner = run):
+    def __init__(
+        self,
+        bin_dir: Optional[Path] = None,
+        runner: Runner = run,
+        local_host: Optional[str] = LAPTOP,
+        ssh_config: Optional[str] = None,
+    ):
         self.bin = bin_dir or config.bin_dir()
         self.run = runner
+        self.local = local_host  # nome desta máquina; None = tudo por ssh (container)
+        self.ssh_config = ssh_config
+
+    def ssh(self, host: str, remote: str, connect_timeout: int = 5) -> List[str]:
+        return ssh_cmd(host, remote, connect_timeout, self.ssh_config)
+
+    def all_hosts(self, hosts: List[str]) -> List[str]:
+        return ([self.local] if self.local else []) + list(hosts)
 
     # ---- cota
     def usage(self, host: Optional[str] = None) -> Dict[str, Any]:
@@ -66,17 +84,17 @@ class External:
         Sem servidor tmux (Linux, ou Mac sem o LaunchAgent) cai no comando direto.
         """
         try:
-            if host in (None, LAPTOP):
+            if host is None or host == self.local:
                 r = self.run([str(self.bin / "usage-all"), "--json"], 60)
             else:
-                r = self.run(ssh_cmd(host, usage_remote_cmd()), 90)
+                r = self.run(self.ssh(host, usage_remote_cmd()), 90)
             return json.loads(r.stdout)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return {}
 
     # ---- por máquina
     def _local_or_ssh(self, host: str, local: List[str], remote: str, timeout: float):
-        return self.run(local, timeout) if host == LAPTOP else self.run(ssh_cmd(host, remote), timeout)
+        return self.run(local, timeout) if host == self.local else self.run(self.ssh(host, remote), timeout)
 
     def projects(self, host: str) -> Tuple[str, List[dict], Optional[str]]:
         """Conversa mais recente de cada pasta da máquina (claude-last --projects)."""
@@ -108,7 +126,7 @@ class External:
 
     def all_projects(self, hosts: List[str], limit: int = 30) -> Tuple[List[dict], Dict[str, str]]:
         with ThreadPoolExecutor(max_workers=12) as ex:
-            res = list(ex.map(self.projects, [LAPTOP] + list(hosts)))
+            res = list(ex.map(self.projects, self.all_hosts(hosts)))
         items, errs = [], {}
         for host, lst, err in res:
             if err and not lst:
@@ -119,7 +137,7 @@ class External:
 
     def all_agents(self, hosts: List[str]) -> Tuple[List[dict], Dict[str, str]]:
         with ThreadPoolExecutor(max_workers=12) as ex:
-            res = list(ex.map(self.agents, [LAPTOP] + list(hosts)))
+            res = list(ex.map(self.agents, self.all_hosts(hosts)))
         return [a for _, lst, _ in res for a in lst], {h: e for h, _, e in res if e}
 
     # ---- enviar arquivo para a pasta do agente
@@ -130,13 +148,13 @@ class External:
         import shlex
 
         try:
-            if host == LAPTOP:
+            if host == self.local:
                 p = Path(os.path.expanduser(path))
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_bytes(data)
                 return None
             remote = f"mkdir -p {shlex.quote(os.path.dirname(path))} && cat > {shlex.quote(path)}"
-            r = subprocess.run(ssh_cmd(host, remote, 8), input=data, capture_output=True, timeout=timeout)
+            r = subprocess.run(self.ssh(host, remote, 8), input=data, capture_output=True, timeout=timeout)
             if r.returncode:
                 return (r.stderr.decode(errors="ignore").strip() or "falhou")[-200:]
             return None
@@ -147,12 +165,12 @@ class External:
     def convert(self, host: str, label: str) -> dict:
         """`orq-agent convert` na máquina do tmux. Devolve o JSON dele ou {ok: False, msg}."""
         try:
-            if host == LAPTOP:
+            if host == self.local:
                 r = self.run([str(self.bin / "orq-agent"), "convert", label], 90)
             else:
                 import shlex
 
-                r = self.run(ssh_cmd(host, "~/.local/bin/orq-agent convert " + shlex.quote(label), 8), 90)
+                r = self.run(self.ssh(host, "~/.local/bin/orq-agent convert " + shlex.quote(label), 8), 90)
         except (OSError, subprocess.TimeoutExpired) as e:
             return {"ok": False, "label": label, "how": "", "msg": str(e)}
         try:
@@ -170,12 +188,12 @@ class External:
         """Sobe o supervisor na máquina. Devolve mensagem de erro ou None."""
         args = ["spawn", "--dir", cwd, "--account", account, "--label", label, "--mode", mode]
         try:
-            if host == LAPTOP:
+            if host == self.local:
                 r = self.run([str(self.bin / "orq-agent")] + args, 60)
             else:
                 import shlex
 
-                r = self.run(ssh_cmd(host, "~/.local/bin/orq-agent " + shlex.join(args), 8), 60)
+                r = self.run(self.ssh(host, "~/.local/bin/orq-agent " + shlex.join(args), 8), 60)
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
         if r.returncode:

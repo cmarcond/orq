@@ -120,13 +120,18 @@ def provisional_agent(label: str, host: str, account: str, cwd: str, now: float)
     }
 
 
-def pick_host_and_label(body: dict, hosts: List[str], taken: set) -> Tuple[Optional[dict], Optional[str]]:
-    """Valida o pedido de abrir projeto e monta p = {host, cwd, account, mode, label}."""
+def pick_host_and_label(
+    body: dict, hosts: List[str], taken: set, local: Optional[str] = "laptop"
+) -> Tuple[Optional[dict], Optional[str]]:
+    """Valida o pedido de abrir projeto e monta p = {host, cwd, account, mode, label}.
+
+    `local` é o nome desta máquina (None quando o servidor não roda agentes locais, como no container).
+    """
     from .assign import label_for
-    from .external import LAPTOP
 
     host, cwd = body.get("host"), body.get("cwd")
-    if host not in [LAPTOP] + list(hosts) or not cwd:
+    valid = ([local] if local else []) + list(hosts)
+    if host not in valid or not cwd:
         return None, "projeto inválido"
     p = {"host": host, "cwd": cwd, "account": body.get("account"), "mode": body.get("mode") or "resume"}
     p["label"] = label_for(cwd, host, taken)
