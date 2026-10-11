@@ -51,7 +51,8 @@ if a.tmux:
     env = dict(os.environ); env.pop("TMUX", None)
     if subprocess.run([tmux, "has-session", "-t", "=" + sess], env=env, capture_output=True).returncode != 0:
         folder.mkdir(parents=True, exist_ok=True)
-        subprocess.run([tmux, "new-session", "-d", "-s", sess, "-c", str(folder), shlex.join(me)], env=env, check=True)
+        subprocess.run([tmux, "new-session", "-d", "-s", sess, "-c", str(folder), shlex.join(me)], env=env, check=True,
+                       cwd=os.path.expanduser("~"))  # o servidor herda a pasta de quem o cria; a pessoal nunca some
         for opt in (["status", "off"], ["prefix", "C-a"], ["mouse", "on"],
                     ["set-titles", "on"], ["set-titles-string", "#{pane_title}"]):
             subprocess.run([tmux, "set-option", "-t", sess] + opt, env=env, capture_output=True)

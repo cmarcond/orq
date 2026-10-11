@@ -21,6 +21,7 @@ cat > "$PLIST" <<PL
     <string>/bin/sh</string><string>-c</string>
     <string>while :; do $TMUX has-session -t keep 2>/dev/null || $TMUX new-session -d -s keep; sleep 60; done</string>
   </array>
+  <key>WorkingDirectory</key><string>$HOME</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>

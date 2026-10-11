@@ -177,6 +177,7 @@ def spawn(
             [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser(folder), tmux_shell(cmd, env)],
             env=env,
             check=True,
+            cwd=os.path.expanduser("~"),  # o servidor tmux herda a pasta de quem o cria; a pessoal nunca some
         )
         how = f"aberto na sessão tmux {sess}"
     else:

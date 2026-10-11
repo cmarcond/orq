@@ -248,6 +248,7 @@ def label_for(p, taken):
 # ---------------------------------------------------------------- grade tmux
 def tm(*a, **kw):
     env = dict(os.environ); env.pop("TMUX", None)
+    kw.setdefault("cwd", os.path.expanduser("~"))  # o servidor herda a pasta de quem o cria; a pessoal nunca some
     return subprocess.run([TMUX, "-L", SOCK] + list(a), env=env, **kw)
 
 def grid_exists():
