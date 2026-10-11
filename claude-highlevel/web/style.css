@@ -1,0 +1,154 @@
+/* Identidade por nível: professor em turquesa, executor em âmbar, você em índigo.
+   A mesma cor identifica o nível no rail, no palco e nos fios — é o que deixa a tela
+   legível sem virar arco-íris. */
+:root{
+  --ground:#EDEFF2; --surface:#FFFFFF; --sunk:#E4E8EC;
+  --ink:#0F1620; --muted:#5C6A78; --rule:#D2D8DE;
+  --l0:#41528A; --l1:#0C7E80; --l2:#A8520E; --l3:#6B4C9A;
+  --l1-wash:#0C7E8014; --l2-wash:#A8520E14; --l0-wash:#41528A14; --l3-wash:#6B4C9A14;
+  --ok:#1F7A45; --alerta:#B3261E; --alerta-wash:#B3261E14;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1418; --surface:#161E24; --sunk:#111A1F;
+    --ink:#DEE7EE; --muted:#8B9AA7; --rule:#27333B;
+    --l0:#8FA0DE; --l1:#3CCBCE; --l2:#EE9B44; --l3:#B79BE0;
+    --l1-wash:#3CCBCE1A; --l2-wash:#EE9B441A; --l0-wash:#8FA0DE1A; --l3-wash:#B79BE01A;
+    --ok:#4CC47C; --alerta:#F2837B; --alerta-wash:#F2837B1A;
+  }
+}
+*{box-sizing:border-box}
+/* display:grid/flex nas seções vence o atributo `hidden`, que só define display:none
+   na folha padrão do navegador. Sem isto, a tela escondida aparece por baixo. */
+[hidden]{display:none !important}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.55;display:flex;flex-direction:column}
+
+/* ---------------------------------------------------------------- topo */
+.topo{display:flex;align-items:center;gap:16px;padding:10px 18px;
+  background:var(--surface);border-bottom:1px solid var(--rule);flex:none}
+.marca{font-weight:600;letter-spacing:-.01em}
+.resumo{font-family:var(--mono);font-size:12px;color:var(--muted);flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acoes{display:flex;align-items:center;gap:12px}
+.toggle{font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  display:flex;align-items:center;gap:5px;cursor:pointer}
+.btn{font:inherit;font-size:13px;padding:5px 12px;border-radius:3px;cursor:pointer;
+  border:1px solid var(--rule);background:var(--surface);color:var(--ink)}
+.btn:hover{border-color:var(--muted)}
+.btn-principal{background:var(--l1);border-color:var(--l1);color:#fff;font-weight:500}
+.btn-perigo{color:var(--alerta);border-color:var(--alerta)}
+.btn:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{
+  outline:2px solid var(--l1);outline-offset:1px}
+
+/* ---------------------------------------------------------- tela inicial */
+.nova{flex:1;display:grid;place-items:center;padding:32px 18px}
+.cartao-form{background:var(--surface);border:1px solid var(--rule);border-radius:4px;
+  padding:26px;width:min(560px,100%);display:flex;flex-direction:column;gap:16px}
+.cartao-form h1{font-size:24px;margin:0;letter-spacing:-.015em}
+.cartao-form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)}
+.cartao-form input,.cartao-form textarea,.cartao-form select{
+  font:inherit;font-size:14px;color:var(--ink);background:var(--ground);
+  border:1px solid var(--rule);border-radius:3px;padding:8px 10px;resize:vertical}
+.ajuda{font-size:12.5px;color:var(--muted);margin:0}
+.erro{color:var(--alerta);font-size:13px}
+
+/* -------------------------------------------------------------- o palco */
+.palco-grid{flex:1;display:grid;grid-template-columns:210px minmax(0,1fr) 330px;
+  gap:1px;background:var(--rule);min-height:0}
+.rail,.palco,.fios{background:var(--ground);min-height:0;display:flex;flex-direction:column}
+.rail,.fios{overflow-y:auto;padding:14px}
+.rail-h{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin:4px 0 10px}
+.conta{color:var(--muted);letter-spacing:0}
+.tarefa{font-size:12.5px;color:var(--muted);background:var(--surface);
+  border:1px solid var(--rule);border-radius:3px;padding:9px 10px}
+
+/* nível */
+.nivel{border-left:2px solid var(--cor);background:var(--wash);padding:8px 10px;
+  margin-bottom:8px;display:flex;flex-direction:column;gap:2px}
+.nivel b{color:var(--cor);font-size:13px;font-weight:600}
+.nivel .estado{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.nivel.bloqueado{border-left-color:var(--alerta);background:var(--alerta-wash)}
+.nivel.bloqueado .estado{color:var(--alerta)}
+.nivel .opcoes{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.nivel .opcoes button{font:inherit;font-size:11px;padding:3px 7px;border-radius:2px;
+  border:1px solid var(--alerta);background:transparent;color:var(--alerta);cursor:pointer}
+
+/* fluxo de mensagens */
+.fluxo{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:18px}
+.fios .fluxo{padding:0;gap:10px}
+.fala{max-width:70ch}
+.fala .quem{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--cor);margin-bottom:5px}
+.fala .corpo{font-size:15.5px;line-height:1.62}
+.fala .corpo p{margin:0 0 .7em}
+.fala .corpo p:last-child{margin-bottom:0}
+.fala .corpo code{font-family:var(--mono);font-size:.86em;background:var(--sunk);
+  padding:1px 4px;border-radius:2px}
+.fala .corpo pre{font-family:var(--mono);font-size:12.5px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:3px;padding:10px;overflow-x:auto}
+.fala .corpo ul{margin:.4em 0;padding-left:18px}
+
+.voce{align-self:flex-end;background:var(--l0-wash);border-left:2px solid var(--l0);
+  padding:8px 12px;max-width:60ch}
+.voce .quem{color:var(--l0)}
+
+.bastidor{font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  border-left:2px solid var(--rule);padding-left:9px}
+
+/* fios */
+.fio{border-left:2px solid var(--cor);background:var(--surface);padding:8px 10px;
+  border-radius:0 3px 3px 0}
+.fio .quem{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--cor);display:block;margin-bottom:4px}
+.fio .corpo{font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--muted);
+  white-space:pre-wrap;max-height:12em;overflow:hidden}
+.fio.aberto .corpo{max-height:none}
+.fio .mais{font-family:var(--mono);font-size:10.5px;color:var(--muted);cursor:pointer;
+  background:none;border:0;padding:4px 0 0}
+.fio.eco{opacity:.6}
+.fio.eco .corpo{display:none}
+
+/* compositor */
+.compositor{display:flex;gap:8px;padding:12px 18px;background:var(--surface);
+  border-top:1px solid var(--rule);flex:none}
+.compositor input{flex:1;font:inherit;font-size:14px;padding:8px 10px;border-radius:3px;
+  border:1px solid var(--rule);background:var(--ground);color:var(--ink)}
+.compositor select{font:inherit;font-size:12.5px;border:1px solid var(--rule);border-radius:3px;
+  background:var(--ground);color:var(--ink);padding:0 6px}
+
+@media (max-width:900px){
+  .palco-grid{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr) auto}
+  .fios{max-height:34vh}
+}
+
+/* ------------------------------------------------------- runs anteriores */
+.painel{position:absolute;top:46px;right:14px;z-index:10;width:min(460px,90vw);
+  max-height:60vh;overflow-y:auto;background:var(--surface);border:1px solid var(--rule);
+  border-radius:4px;padding:12px;box-shadow:0 8px 28px #0004}
+.painel-h{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:10px}
+.run-linha{display:flex;flex-direction:column;gap:2px;padding:8px 9px;border-radius:3px;
+  cursor:pointer;border:1px solid transparent}
+.run-linha:hover{border-color:var(--rule);background:var(--ground)}
+.run-linha .cab{display:flex;gap:8px;align-items:baseline;font-family:var(--mono);font-size:11px}
+.run-linha .cab b{color:var(--ink);font-weight:500}
+.run-linha .cab .st{color:var(--muted)}
+.run-linha .cab .st.vivo{color:var(--ok)}
+.run-linha .desc{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+
+/* ------------------------------------------------------------ terminal cru */
+.gaveta{flex:none;max-height:40vh;display:flex;flex-direction:column;background:var(--surface);
+  border-top:1px solid var(--rule)}
+.gaveta-h{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:8px 14px;font-family:var(--mono);font-size:11px;color:var(--muted);
+  border-bottom:1px solid var(--rule)}
+.gaveta pre{margin:0;overflow:auto;padding:10px 14px;font-family:var(--mono);font-size:11.5px;
+  line-height:1.45;color:var(--muted);white-space:pre-wrap}
+.nivel{cursor:pointer}
+.nivel:hover{outline:1px solid var(--rule)}
