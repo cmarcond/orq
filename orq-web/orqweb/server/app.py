@@ -119,6 +119,8 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
     state.on_agents = migrator.check
     ctx.migrator = migrator
     ctx.put_file = ext.put_file
+    ctx.list_files = ext.list_files
+    ctx.open_file = ext.open_file
     ctx.auth = auth
     ctx.local_host = local
     ctx.allowed_hosts |= {bind, *env_list("ORQ_ALLOWED_HOSTS")}

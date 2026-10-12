@@ -1,5 +1,5 @@
 // Estado da página, API e DOM. A lógica pura está em format.js, classify.js e events.js.
-import { esc, left, ago, md, withAttachments, fmtBytes } from './format.js';
+import { esc, left, ago, md, withAttachments, fmtBytes, fileKind } from './format.js';
 import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
 
@@ -299,6 +299,7 @@ function show(l, exact = false) {
   scrollEnd(t);
   sawIt(cur);
   $('input').focus();
+  loadFiles(base);
 }
 function showTerminal(l, a) {
   cur = l;
@@ -382,6 +383,8 @@ function status() {
   const base = curBase();
   const has = base && levelsAbove(base).length;
   $('lvl').hidden = !base || !(agentOf(base)?.kind === 'sdk');
+  $('out').hidden = $('lvl').hidden;
+  outBadge(base);
   $('lvl').textContent = has ? '⇅ níveis' : '⇅ subir nível';
   $('lvl').title = has ? 'mostrar/esconder o painel dos níveis' : 'subir um professor (ou mais níveis) acima deste agente';
 }
@@ -428,21 +431,175 @@ function wiresOf(base) {
   return t.wires;
 }
 function renderLevels(base) {
-  const main = $('chats');
   const panel = $('levels');
   const lv = base ? levelsAbove(base) : [];
-  if (!base || !lv.length) {
-    panel.hidden = true;
-    main.classList.remove('withlevels');
+  if (lv.length) {
+    panel.innerHTML = `<div class="lhead"><b>níveis</b><button id="down" class="ghost" title="encerra os níveis de cima; a aba volta a falar com o executor">↓ desfazer</button></div>
+    <div class="lcards"></div><div class="lhead"><b>fios</b><span class="small mute">mensagens entre os níveis</span></div>`;
+    panel.appendChild(wiresOf(base).el);
+    panel.querySelector('#down').onclick = () => askDowngrade(base);
+    renderLevelCards(base);
+  } else panel.innerHTML = '';
+  renderSide(base);
+}
+
+// ---------------------------------------------------------------- painel lateral: níveis ou arquivos
+// O painel à direita da aba base mostra os níveis (sempre que existem) ou a lista de arquivos que o agente
+// compartilhou (📂 abre). Só uma vista por vez; as abinhas no topo trocam.
+const SIDE = { view: 'levels', files: false }; // vista pedida e se a lista de arquivos está aberta
+function renderSide(base) {
+  const main = $('chats');
+  const side = $('side');
+  const hasLv = Boolean(base && levelsAbove(base).length);
+  const view = base && SIDE.files && SIDE.view === 'files' ? 'files' : hasLv ? 'levels' : null;
+  $('levels').hidden = view !== 'levels';
+  $('outbox').hidden = view !== 'files';
+  if (!view) {
+    side.hidden = true;
+    main.classList.remove('withside');
     return;
   }
-  panel.hidden = false;
-  main.classList.add('withlevels');
-  panel.innerHTML = `<div class="lhead"><b>níveis</b><button id="down" class="ghost" title="encerra os níveis de cima; a aba volta a falar com o executor">↓ desfazer</button></div>
-    <div class="lcards"></div><div class="lhead"><b>fios</b><span class="small mute">mensagens entre os níveis</span></div>`;
-  panel.appendChild(wiresOf(base).el);
-  panel.querySelector('#down').onclick = () => askDowngrade(base);
-  renderLevelCards(base);
+  side.hidden = false;
+  main.classList.add('withside');
+  const n = tabs[base]?.files?.items.length || 0;
+  side.querySelector('.stabs').innerHTML =
+    (hasLv ? `<button data-v="levels" class="${view === 'levels' ? 'on' : ''}">⇅ níveis</button>` : '') +
+    `<button data-v="files" class="${view === 'files' ? 'on' : ''}">📂 arquivos${n ? ` <span class="n">${n}</span>` : ''}</button>` +
+    (view === 'files' ? '<button class="ghost sx" title="fechar a lista de arquivos">✕</button>' : '');
+  side.querySelectorAll('.stabs [data-v]').forEach((b) => {
+    b.onclick = () => {
+      SIDE.view = b.dataset.v;
+      if (SIDE.view === 'files') SIDE.files = true;
+      renderSide(base);
+    };
+  });
+  const sx = side.querySelector('.sx');
+  if (sx)
+    sx.onclick = () => {
+      SIDE.files = false;
+      SIDE.view = 'levels';
+      main.classList.remove('showside');
+      renderSide(base);
+    };
+  if (view === 'files') renderOutbox(base);
+}
+const fileUrl = (base, name, dl = false) =>
+  `/api/agent/${encodeURIComponent(base)}/file?name=${encodeURIComponent(name)}${dl ? '&dl=1' : ''}${T ? `&t=${encodeURIComponent(T)}` : ''}`;
+function filesOf(base) {
+  const t = tab(base);
+  if (!t.files) t.files = { items: [], loaded: false, known: null, fresh: new Set(), dir: '', err: null, busy: false };
+  return t.files;
+}
+/** Lê a _outbox/ do agente base. Arquivo que não estava na leitura anterior vira aviso e destaque. */
+async function loadFiles(base) {
+  if (!base || agentOf(base)?.kind !== 'sdk') return;
+  const fl = filesOf(base);
+  if (fl.busy) return;
+  fl.busy = true;
+  try {
+    const r = await fetch(`/api/agent/${encodeURIComponent(base)}/files`, { headers: H });
+    const j = await r.json().catch(() => ({ err: 'resposta inválida' }));
+    fl.err = j.err || null;
+    fl.dir = j.dir || fl.dir;
+    if (j.items) {
+      fl.items = j.items;
+      const key = (f) => `${f.name}@${f.mtime}@${f.size}`;
+      const now = new Set(fl.items.map(key));
+      if (fl.known) {
+        const novo = fl.items.filter((f) => !fl.known.has(key(f)));
+        if (novo.length) {
+          novo.forEach((f) => fl.fresh.add(f.name));
+          toast(`📂 ${base.split('@')[0]}: ${novo.length === 1 ? `novo arquivo ${novo[0].name}` : `${novo.length} arquivos novos`}`);
+        }
+      }
+      fl.known = now;
+    }
+    fl.loaded = true;
+  } catch (_) {
+    /* servidor fora; fica a lista anterior */
+  }
+  fl.busy = false;
+  if (base === curBase()) {
+    outBadge(base);
+    renderSide(base);
+  }
+}
+function outBadge(base) {
+  const fl = base && tabs[base]?.files;
+  const n = fl?.items.length || 0;
+  $('out').innerHTML = `📂${n ? ` <span class="n">${n}</span>` : ''}`;
+  $('out').classList.toggle('new', Boolean(fl?.fresh.size));
+}
+function renderOutbox(base) {
+  const box = $('outbox');
+  const fl = filesOf(base);
+  const dir = fl.dir || `${agentOf(base)?.dir || ''}/_outbox`;
+  const head = `<div class="lhead"><b>arquivos</b><span class="small mute"><code title="${esc(dir)}">_outbox/</code> <button class="ghost rf" title="atualizar a lista">↻</button></span></div>`;
+  let body;
+  if (!fl.loaded) body = '<div class="small mute">carregando…</div>';
+  else if (fl.err && !fl.items.length) body = `<div class="small bad">${esc(fl.err)}</div>`;
+  else if (!fl.items.length)
+    body = `<div class="fempty"><div>📂</div><p>Nada compartilhado ainda.</p><p class="small">Peça ao agente para copiar o arquivo para <code>_outbox/</code> na pasta do projeto; ele aparece aqui para ver ou baixar.</p></div>`;
+  else
+    body = `<div class="flist">${fl.items
+      .map((f) => {
+        const k = fileKind(f.name);
+        return `<div class="frow ${fl.fresh.has(f.name) ? 'fresh' : ''}" data-n="${esc(f.name)}" title="${k.view ? 'ver' : 'baixar'} ${esc(f.name)}"><span class="fico">${k.icon}</span><div class="fmeta"><b>${esc(f.name)}</b><span class="small mute">${fmtBytes(f.size)} · ${ago(f.mtime)}</span></div><a class="fdl" href="${fileUrl(base, f.name, true)}" download="${esc(f.name)}" title="baixar">⬇</a></div>`;
+      })
+      .join('')}</div>`;
+  box.innerHTML = head + body;
+  box.querySelector('.rf').onclick = () => loadFiles(base);
+  box.querySelectorAll('.frow').forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.closest('a')) return;
+      const f = fl.items.find((x) => x.name === el.dataset.n);
+      if (f) openView(base, f);
+    };
+  });
+  fl.fresh.clear(); // visto: o destaque fica até a próxima leitura
+  outBadge(base);
+}
+/** Prévia de um arquivo: imagem, PDF (visualizador do navegador), vídeo, áudio, texto/markdown; o resto baixa. */
+function openView(base, f) {
+  const k = fileKind(f.name);
+  if (!k.view) {
+    const a = document.createElement('a');
+    a.href = fileUrl(base, f.name, true);
+    a.download = f.name;
+    a.click();
+    return;
+  }
+  const v = $('view');
+  const url = fileUrl(base, f.name);
+  v.hidden = false;
+  v.querySelector('.vname').textContent = f.name;
+  v.querySelector('.vsize').textContent = fmtBytes(f.size);
+  v.querySelector('.vdl').href = fileUrl(base, f.name, true);
+  const body = v.querySelector('.vbody');
+  if (k.view === 'image') body.innerHTML = `<img src="${url}" alt="${esc(f.name)}">`;
+  else if (k.view === 'pdf') body.innerHTML = `<iframe src="${url}" title="${esc(f.name)}"></iframe>`;
+  else if (k.view === 'video') body.innerHTML = `<video src="${url}" controls autoplay></video>`;
+  else if (k.view === 'audio') body.innerHTML = `<audio src="${url}" controls autoplay></audio>`;
+  else if (f.size > 2 * 1024 * 1024) body.innerHTML = '<p class="small mute">texto grande demais para mostrar aqui; baixe.</p>';
+  else {
+    body.innerHTML = '<div class="small mute">carregando…</div>';
+    fetch(url, { headers: H })
+      .then((r) => r.text())
+      .then((txt) => {
+        if (v.hidden || v.querySelector('.vname').textContent !== f.name) return;
+        if (k.md) body.innerHTML = `<div class="vmd">${md(txt)}</div>`;
+        else {
+          body.innerHTML = '<pre></pre>';
+          body.querySelector('pre').textContent = txt;
+        }
+      })
+      .catch(() => (body.innerHTML = '<p class="small bad">não consegui ler o arquivo</p>'));
+  }
+}
+function closeView() {
+  const v = $('view');
+  v.hidden = true;
+  v.querySelector('.vbody').innerHTML = ''; // para o vídeo e solta a conexão
 }
 function renderLevelCards(base) {
   const box = $('levels').querySelector('.lcards');
@@ -575,6 +732,7 @@ function apply(t, a) {
   else if (a.kind === 'ask' && !a.replayed) needsYou(lab, 'pergunta', (a.request.input?.questions || [])[0]?.question);
   else if (a.kind === 'result' && !t.a?.replaying) needsYou(lab, a.isError ? 'erro' : 'terminou', a.text || t.lastText || '');
   if (a.kind === 'text') t.lastText = a.text;
+  if (a.kind === 'result' && !t.a?.replaying) setTimeout(() => loadFiles(baseOf(lab)), 800); // a rodada pode ter deixado arquivo na _outbox
   switch (a.kind) {
     case 'sys':
       add(t, `<div class="sys ${esc(a.level)}">${esc(a.text)}</div>`);
@@ -846,12 +1004,30 @@ $('lvl').onclick = () => {
   const base = curBase();
   if (!base) return;
   if (levelsAbove(base).length) {
-    $('chats').classList.toggle('showlevels');
+    if (SIDE.view !== 'levels') {
+      SIDE.view = 'levels';
+      renderSide(base);
+      $('chats').classList.add('showside');
+    } else $('chats').classList.toggle('showside');
     return;
   }
   openLevelPicker(base);
 };
+$('out').onclick = () => {
+  const base = curBase();
+  if (!base) return;
+  const open = SIDE.files && SIDE.view === 'files';
+  SIDE.files = !open;
+  SIDE.view = open ? 'levels' : 'files';
+  $('chats').classList.toggle('showside', !open);
+  renderSide(base);
+  if (!open) loadFiles(base);
+};
+$('view').querySelector('.vx').onclick = closeView;
+$('view').onclick = (e) => e.target === $('view') && closeView();
+setInterval(() => loadFiles(curBase()), 30000);
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('view').hidden) return closeView();
   if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '9') {
     const el = [...document.querySelectorAll('.tab[data-l]')][+e.key - 1];
     if (el) {

@@ -8,16 +8,19 @@ ao CDN.
 """
 
 import json
+import mimetypes
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from ..agent.files import OUTBOX
 from . import pipelines
 from .assign import assign
 from .auth import Auth, login_page
@@ -31,10 +34,14 @@ CSP = (
 )
 TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
 AGENT_RE = re.compile(
-    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade|reopen)$"
+    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade|reopen|files|file)$"
 )
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
+# arquivo da _outbox servido ao navegador: nada nele roda nem enxerga a página (um .html do agente não
+# vira script na nossa origem), e o tipo declarado é o que vale
+FILE_CSP = "default-src 'none'; sandbox; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'"
+INLINE_OK = ("image/", "video/", "audio/", "text/plain", "text/markdown", "application/pdf", "text/csv")
 
 
 class Context:
@@ -52,6 +59,8 @@ class Context:
         self.conf, self.state, self.bridges, self.spawn = conf, state, bridges, spawn
         self.convert = convert  # (host, label) -> {ok, label, how, msg}; None desliga /api/agent/convert
         self.put_file = None  # (host, path, data) -> erro ou None; None desliga /api/agent/<x>/upload
+        self.list_files = None  # (host, pasta) -> ([{name,size,mtime}], erro); None desliga /files e /file
+        self.open_file = None  # (host, path, start, end) -> FileStream
         self.token = token or secrets.token_urlsafe(16)
         self.auth: Optional[Auth] = None  # login por senha (rede); None ou desligado = só o token
         self.allowed_hosts = {"127.0.0.1", "localhost"}  # cabeçalho Host aceito
@@ -154,6 +163,10 @@ def make_handler(ctx: Context):
             label, op = self.agent_path(u.path)
             if op == "stream":
                 return self.stream(label, int((q.get("since") or ["0"])[0]))
+            if op == "files":
+                return self.files(label)
+            if op == "file":
+                return self.file(label, (q.get("name") or [""])[0], bool(q.get("dl")))
             return self.reply(404, {"err": "?"})
 
         def static(self, name: str) -> None:
@@ -186,6 +199,75 @@ def make_handler(ctx: Context):
                 pass
             finally:
                 ctx.bridges.release(label, b)
+
+        def agent_dir(self, label: str) -> Optional[dict]:
+            with ctx.state.lock:
+                entry = next(
+                    (a for a in ctx.state.agents if a.get("label") == label and a.get("state") != "closed"),
+                    None,
+                )
+            return entry if entry and entry.get("dir") else None
+
+        def files(self, label: str) -> None:
+            """Arquivos que o agente pôs em <pasta do projeto>/_outbox/, na máquina dele."""
+            if not ctx.list_files:
+                return self.reply(400, {"err": "arquivos do agente desligados"})
+            entry = self.agent_dir(label)
+            if entry is None:
+                return self.reply(404, {"err": "agente desconhecido"})
+            folder = f"{entry['dir'].rstrip('/')}/{OUTBOX}"
+            items, err = ctx.list_files(entry.get("host") or ctx.local_host or "?", folder)
+            body = {"dir": folder, "items": items}
+            if err:
+                body["err"] = err
+            return self.reply(200, body)
+
+        def file(self, label: str, name: str, download: bool) -> None:
+            """Um arquivo da _outbox: inline (prévia) ou anexo (?dl=1); aceita Range de uma faixa."""
+            if not ctx.open_file:
+                return self.reply(400, {"err": "arquivos do agente desligados"})
+            if not name or name != safe_filename(name):
+                return self.reply(400, {"err": "nome de arquivo inválido"})
+            entry = self.agent_dir(label)
+            if entry is None:
+                return self.reply(404, {"err": "agente desconhecido"})
+            start, end = 0, None
+            m = re.match(r"^bytes=(\d*)-(\d*)$", self.headers.get("Range", ""))
+            if m and (m.group(1) or m.group(2)):
+                start, end = int(m.group(1) or 0), (int(m.group(2)) if m.group(2) else None)
+            path = f"{entry['dir'].rstrip('/')}/{OUTBOX}/{name}"
+            host = entry.get("host") or ctx.local_host or "?"
+            try:
+                fs = ctx.open_file(host, path, start, end)
+            except ValueError:
+                self.send_response(416)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            except (OSError, subprocess.SubprocessError) as e:
+                return self.reply(404, {"err": f"não achei {name} em {host}: {str(e)[:120]}"})
+            ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            inline = not download and ctype.startswith(INLINE_OK)
+            try:
+                self.send_response(206 if m else 200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(fs.length))
+                self.send_header("Accept-Ranges", "bytes")
+                if m:
+                    self.send_header("Content-Range", f"bytes {start}-{start + fs.length - 1}/{fs.size}")
+                disp = "inline" if inline else "attachment"
+                self.send_header("Content-Disposition", f"{disp}; filename*=UTF-8''{quote(name)}")
+                self.send_header("Content-Security-Policy", FILE_CSP)
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "private, max-age=60")
+                self.end_headers()
+                for chunk in fs.chunks():
+                    self.wfile.write(chunk)
+                self.wfile.flush()
+            except OSError:
+                pass  # o navegador desistiu (fechou a prévia); o close abaixo derruba o ssh
+            finally:
+                fs.close()
 
         # ---- POST
         def do_POST(self) -> None:

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { esc, left, ago, md, withAttachments, fmtBytes } from '../../orqweb/server/static/js/format.js';
+import { esc, left, ago, md, withAttachments, fmtBytes, fileKind } from '../../orqweb/server/static/js/format.js';
 
 test('esc escapa tudo que vira HTML', () => {
   assert.equal(esc(`<a href="x">'&'</a>`), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
@@ -45,4 +45,14 @@ test('fmtBytes', () => {
   assert.equal(fmtBytes(812), '812 B');
   assert.equal(fmtBytes(3500), '3,4 KB');
   assert.equal(fmtBytes(12 * 1024 * 1024), '12 MB');
+});
+
+test('fileKind decide ícone e prévia pela extensão', () => {
+  assert.deepEqual(fileKind('Relatório Final.PDF'), { icon: '📕', view: 'pdf', md: false });
+  assert.deepEqual(fileKind('foto.jpeg'), { icon: '🖼', view: 'image', md: false });
+  assert.deepEqual(fileKind('notas.md'), { icon: '📝', view: 'text', md: true });
+  assert.deepEqual(fileKind('dados.csv'), { icon: '📄', view: 'text', md: false });
+  assert.deepEqual(fileKind('aula.mp4'), { icon: '🎬', view: 'video', md: false });
+  assert.deepEqual(fileKind('tudo.tar.gz'), { icon: '📦', view: null, md: false });
+  assert.deepEqual(fileKind('sem-extensao'), { icon: '📄', view: null, md: false });
 });

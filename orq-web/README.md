@@ -34,6 +34,18 @@ encerra o agente (a conversa fica salva). **📎** ou arrastar arquivos para o c
 `_inbox/` dentro da pasta do projeto, na máquina do agente (por ssh quando remota), e a mensagem
 sai com os caminhos, para o Claude ler o PDF, a planilha etc. direto de lá.
 
+## Arquivos que o agente compartilha (`_outbox/`)
+
+O caminho inverso do 📎: todo agente da página sobe com uma nota no system prompt dizendo que, para
+compartilhar um arquivo com você (PDF, imagem, vídeo, planilha…), basta copiá-lo para `_outbox/` na
+raiz do projeto. **📂** na barra do chat abre a lista no painel lateral (mesmo painel dos níveis, com
+abinhas no topo): nome, tamanho, idade; clique mostra a prévia (imagem, PDF no visualizador do
+navegador, vídeo, áudio, texto e Markdown) e ⬇ baixa. A lista é relida ao fim de cada rodada e a cada
+30 s; arquivo novo vira toast e destaque. A pasta fica na máquina do agente: o servidor lista com
+`orq-agent ls` e serve com `orq-agent cat` (por ssh quando remota; faixas `Range` para o vídeo pular no
+tempo). `GET /api/agent/<x>/files` e `GET /api/agent/<x>/file?name=…[&dl=1]`. Quem escreve na pasta
+é o agente; a página nunca apaga nada dela.
+
 ## Níveis (professor → executor)
 
 Qualquer agente da página pode ganhar um **nível de cima**: **⇅ subir nível** na barra do chat escolhe uma
@@ -133,6 +145,7 @@ navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attac
 | `orqweb/agent/events.py` | log numerado com replay, carimbo de origem (`page`/`injected`), estado derivado, histórico antigo |
 | `orqweb/agent/supervisor.py` | processo + socket + clientes; encerramento limpo |
 | `orqweb/agent/client.py` | `attach` (ponte stdin/stdout), `stop`, `spawn` em tmux `orqs-<nome>` |
+| `orqweb/agent/files.py` | `_outbox/`: lista a pasta e manda bytes com tamanho na frente (`orq-agent ls`/`cat`) |
 | `orqweb/agent/state.py` | `state.json` atômico, lido pelo `orq --status-json` |
 | `orqweb/agent/convert.py` | fecha um `claude` interativo de tmux em escalada e reabre a conversa como agente |
 | `orqweb/convert.py` | CLI `converte-web`: lista e converte em qualquer máquina |
@@ -169,7 +182,9 @@ stream-json do `claude -p`, mais:
 Servidor só em `127.0.0.1`, com `Host` conferido; `/api` exige o token do link (`X-Orq-Token`,
 ou `?t=` no SSE, que não aceita cabeçalhos); Content-Security-Policy restringe scripts a `'self'`
 e ao cdnjs; o Markdown do modelo passa pelo DOMPurify; `/static` não aceita travessia; o socket
-do agente é `0600`.
+do agente é `0600`. Arquivo da `_outbox/` sai com `Content-Security-Policy: sandbox` e `nosniff`, e
+HTML nunca é servido inline (um `.html` escrito pelo agente não roda na origem da página); só nomes
+sem caminho, dentro da `_outbox/` do agente.
 
 ## Desenvolvimento
 

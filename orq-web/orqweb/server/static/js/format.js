@@ -49,3 +49,21 @@ export function fmtBytes(n) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1).replace('.', ',')} KB`;
   return `${Math.round(n / 1024 / 1024)} MB`;
 }
+
+const KINDS = [
+  [['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'], '🖼', 'image'],
+  [['pdf'], '📕', 'pdf'],
+  [['mp4', 'webm', 'mov', 'm4v', 'ogv'], '🎬', 'video'],
+  [['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'], '🎵', 'audio'],
+  [['md', 'markdown'], '📝', 'text', true],
+  [['txt', 'log', 'csv', 'tsv', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'css', 'py', 'js', 'ts', 'sh', 'sql', 'r', 'tex'], '📄', 'text'],
+  [['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar'], '📦', null],
+  [['xlsx', 'xls', 'ods', 'numbers'], '📊', null],
+  [['docx', 'doc', 'odt', 'pages', 'pptx', 'ppt', 'key'], '📑', null],
+];
+/** Ícone e como mostrar um arquivo pelo nome: view = image|pdf|video|audio|text|null (null = só baixar). */
+export function fileKind(name) {
+  const ext = (String(name).toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  const row = KINDS.find(([exts]) => exts.includes(ext));
+  return row ? { icon: row[1], view: row[2], md: Boolean(row[3]) } : { icon: '📄', view: null, md: false };
+}

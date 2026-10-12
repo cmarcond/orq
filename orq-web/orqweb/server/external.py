@@ -5,12 +5,14 @@ Tudo passa por `Runner`, que os testes substituem por respostas prontas.
 
 import json
 import os
+import shlex
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple
 
 from .. import config
+from ..agent import files as F
 
 LAPTOP = "laptop"
 
@@ -63,9 +65,11 @@ class External:
         runner: Runner = run,
         local_host: Optional[str] = LAPTOP,
         ssh_config: Optional[str] = None,
+        popen: Callable[..., Any] = subprocess.Popen,
     ):
         self.bin = bin_dir or config.bin_dir()
         self.run = runner
+        self.popen = popen  # para os downloads, que são longos demais para esperar o fim (run)
         self.local = local_host  # nome desta máquina; None = tudo por ssh (container)
         self.ssh_config = ssh_config
 
@@ -161,6 +165,43 @@ class External:
         except (OSError, subprocess.TimeoutExpired) as e:
             return str(e)
 
+    # ---- arquivos que o agente compartilha (a _outbox/ do projeto)
+    def list_files(self, host: str, folder: str) -> Tuple[List[dict], Optional[str]]:
+        """Arquivos da pasta na máquina (`orq-agent ls`): ([{name, size, mtime}], erro ou None)."""
+        if host == self.local:
+            return F.list_dir(Path(os.path.expanduser(folder))), None
+        try:
+            r = self.run(self.ssh(host, "~/.local/bin/orq-agent ls " + shlex.quote(folder), 8), 30)
+            if r.returncode:
+                err = (r.stderr.strip() or r.stdout.strip() or "falhou")[-200:]
+                if "invalid choice" in err or "argument cmd" in err:
+                    err = f"o orq-agent de {host} é antigo (sem `ls`): rode orq-web/deploy.sh {host}"
+                return [], err
+            return json.loads(r.stdout), None
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            return [], (str(e)[:120] or "sem resposta")
+
+    def open_file(self, host: str, path: str, start: int = 0, end: Optional[int] = None) -> "FileStream":
+        """Bytes de `path` (ou da faixa, fim inclusivo) na máquina, com o tamanho total na frente.
+
+        Local: o arquivo aberto. Remoto: `orq-agent cat` por ssh, lendo a linha JSON que ele manda
+        antes dos bytes. Levanta FileNotFoundError/ValueError (faixa) ou OSError (ssh)."""
+        if host == self.local:
+            size, length, f = F.open_range(Path(os.path.expanduser(path)), start, end)
+            return FileStream(size, length, f)
+        spec = f"{start}-{'' if end is None else end}"
+        cmd = self.ssh(host, "~/.local/bin/orq-agent cat " + shlex.quote(path) + " --range " + spec, 8)
+        proc = self.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        head = F.read_header(proc.stdout)
+        if "err" in head:
+            proc.stdout.close()
+            proc.wait()
+            msg = str(head["err"])
+            if "fora do arquivo" in msg:
+                raise ValueError(msg)
+            raise FileNotFoundError(msg)
+        return FileStream(int(head["size"]), int(head["length"]), proc.stdout, proc)
+
     # ---- converter claude de terminal em agente da página
     def convert(self, host: str, label: str) -> dict:
         """`orq-agent convert` na máquina do tmux. Devolve o JSON dele ou {ok: False, msg}."""
@@ -225,3 +266,31 @@ class External:
         if r.returncode:
             return (r.stderr.strip() or r.stdout.strip() or "falhou")[-200:]
         return None
+
+
+class FileStream:
+    """Um arquivo (ou faixa) vindo de uma máquina: tamanho total, bytes a ler e de onde lê-los."""
+
+    def __init__(self, size: int, length: int, stream: BinaryIO, proc: Any = None):
+        self.size, self.length, self.stream, self.proc = size, length, stream, proc
+
+    def chunks(self, chunk: int = F.CHUNK):
+        left = self.length
+        while left > 0:
+            b = self.stream.read(min(chunk, left))
+            if not b:
+                break
+            left -= len(b)
+            yield b
+
+    def close(self) -> None:
+        try:
+            self.stream.close()
+        except OSError:
+            pass
+        if self.proc is not None:
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
+            self.proc.wait()

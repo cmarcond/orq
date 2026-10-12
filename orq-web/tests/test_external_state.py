@@ -298,3 +298,69 @@ def test_mark_closing_keeps_agent_closed_while_host_still_sees_it():
     cache.add_provisional(S.provisional_agent("p@h", "h", "g", "/p", now[0]))
     cache.refresh_agents()
     assert cache.agents[0]["state"] == "waiting"
+
+
+# ---------------------------------------------------------------- arquivos da _outbox
+def test_list_files_local_and_remote(tmp_path):
+    (tmp_path / "a.pdf").write_bytes(b"x")
+    ext = External(Path("/b"), FakeRunner({}))
+    items, err = ext.list_files(LAPTOP, str(tmp_path))
+    assert err is None and [i["name"] for i in items] == ["a.pdf"]
+    r = FakeRunner({"orq-agent ls": (0, '[{"name": "r.md", "size": 3, "mtime": 1}]')})
+    items, err = External(Path("/b"), r).list_files("server0", "~/p/_outbox")
+    assert err is None and items[0]["name"] == "r.md"
+    assert r.calls[-1][0] == "ssh" and r.calls[-1][-1] == "~/.local/bin/orq-agent ls '~/p/_outbox'"
+    # orq-agent antigo na máquina: erro explica o que fazer
+    r = FakeRunner({"orq-agent ls": (2, "")})
+    r.table = {"orq-agent ls": (2, "")}
+    ext = External(Path("/b"), r)
+    ext.run = lambda cmd, timeout: subprocess.CompletedProcess(
+        cmd, 2, "", "argument cmd: invalid choice: 'ls'"
+    )
+    items, err = ext.list_files("server0", "~/p/_outbox")
+    assert items == [] and "antigo" in err and "deploy.sh server0" in err
+    assert External(Path("/b"), FakeRunner({})).list_files("server0", "~/p")[1] == "sem resposta"
+
+
+class FakePopen:
+    def __init__(self, cmd, stdout=None, stderr=None):
+        self.cmd, self.killed = cmd, False
+        import io
+
+        spec = cmd[-1].split("--range ")[-1]
+        FakePopen.last = self
+        if "nada" in cmd[-1]:
+            self.stdout = io.BytesIO(b'{"err": "[Errno 2] No such file"}\n')
+        elif spec == "99-":
+            self.stdout = io.BytesIO(b'{"err": "faixa 99- fora do arquivo de 10 bytes"}\n')
+        else:
+            self.stdout = io.BytesIO(b'{"size": 10, "start": 2, "length": 4}\n2345')
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self):
+        return 0
+
+
+def test_open_file_local_and_remote(tmp_path):
+    import pytest
+
+    (tmp_path / "a.bin").write_bytes(b"0123456789")
+    ext = External(Path("/b"), FakeRunner({}), popen=FakePopen)
+    fs = ext.open_file(LAPTOP, str(tmp_path / "a.bin"), 2, 5)
+    assert (fs.size, fs.length, b"".join(fs.chunks())) == (10, 4, b"2345")
+    fs.close()
+    fs = ext.open_file("server0", "~/p/_outbox/a.bin", 2, 5)
+    assert (fs.size, fs.length, b"".join(fs.chunks())) == (10, 4, b"2345")
+    assert FakePopen.last.cmd[0] == "ssh" and FakePopen.last.cmd[-1].endswith(
+        "orq-agent cat '~/p/_outbox/a.bin' --range 2-5"
+    )
+    fs.close()
+    assert FakePopen.last.killed
+    with pytest.raises(FileNotFoundError):
+        ext.open_file("server0", "~/p/_outbox/nada", 0, None)
+    with pytest.raises(ValueError):
+        ext.open_file("server0", "~/p/_outbox/a.bin", 99, None)
+    with pytest.raises(FileNotFoundError):
+        ext.open_file(LAPTOP, str(tmp_path / "nada"))

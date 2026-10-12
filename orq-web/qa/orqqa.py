@@ -506,6 +506,59 @@ class Orq:
     def migrations(self) -> List[dict]:
         return self.state().get("migrations", [])
 
+    # ---- arquivos que o agente compartilhou (_outbox/)
+    def open_files(self) -> None:
+        """📂 na barra do chat: abre a lista de arquivos no painel lateral."""
+        if self.page.is_hidden("#outbox"):
+            self.page.click("#out")
+        self.page.wait_for_selector("#outbox:not([hidden]) .lhead")
+
+    def files(self) -> List[str]:
+        """Nomes na lista (painel aberto), do mais novo ao mais antigo."""
+        return self.page.evaluate(
+            "[...document.querySelectorAll('#outbox .frow b')].map((e) => e.textContent)"
+        )
+
+    def wait_file(self, name: str, timeout: float = 120) -> None:
+        """Espera `name` aparecer na lista (a página relê a _outbox/ ao fim de cada rodada e a cada 30 s)."""
+        self.open_files()
+        self.page.wait_for_function(
+            "(n) => [...document.querySelectorAll('#outbox .frow b')].some((e) => e.textContent === n)",
+            arg=name,
+            timeout=timeout * 1000,
+        )
+
+    def preview(self, name: str) -> str:
+        """Clica no arquivo e devolve a tag do que a prévia mostra (IMG, IFRAME, VIDEO, PRE, DIV)."""
+        self.page.click(f'#outbox .frow[data-n="{name}"] .fmeta')
+        self.page.wait_for_selector("#view:not([hidden]) .vbody > *")
+        self.page.wait_for_function(
+            "() => !document.querySelector('#view .vbody').textContent.includes('carregando')", timeout=30000
+        )
+        return self.page.evaluate("document.querySelector('#view .vbody > *').tagName")
+
+    def close_preview(self) -> None:
+        self.page.press("body", "Escape")
+        self.page.wait_for_selector("#view", state="hidden")
+
+    def download(self, name: str) -> bytes:
+        """Baixa pela API, como o ⬇ da lista faz (mesmo link)."""
+        label = self.current()
+        headers = {"X-Orq-Token": self.token} if self.token else {}
+        r = self.page.request.get(self.url(f"/api/agent/{label}/file?name={name}&dl=1"), headers=headers)
+        assert r.status == 200, f"download de {name}: http {r.status}"
+        return r.body()
+
+    def answer_permissions(self, timeout: float = 240) -> str:
+        """Espera o turno acabar, permitindo tudo que o claude pedir no caminho. Devolve o estado final."""
+        end = time.time() + timeout
+        while True:
+            st = self.wait_idle(max(5.0, end - time.time()))
+            if "permiss" not in st:
+                return st
+            self.permission(True)
+            self.page.wait_for_timeout(500)
+
     # ---- evidências
     def shot(self, name: str) -> Path:
         OUT.mkdir(exist_ok=True)

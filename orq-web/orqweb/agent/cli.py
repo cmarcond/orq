@@ -15,12 +15,19 @@ Uso:
         cada linha JSON do stdin vai para o claude. É o que o orq-web usa, local ou por ssh.
   orq-agent stop NOME          encerra o claude e o supervisor (a conversa fica salva)
   orq-agent list               agentes desta máquina com estado
+  orq-agent ls PASTA           arquivos da pasta em JSON [{name, size, mtime}], do mais novo ao mais antigo
+  orq-agent cat ARQ [--range INI-FIM]
+        manda uma linha JSON {size, start, length} e os bytes do arquivo (ou da faixa, fim inclusivo).
+        ls e cat são como o orq-web lista e baixa a `_outbox/` do projeto, por ssh quando remota.
   (spawn/start com --mode resume recusam pasta onde um claude interativo está aberto; --force ignora)
   orq-agent convert NOME [--account CONTA]
         fecha um claude interativo que roda num tmux desta máquina (/exit, Ctrl-C, SIGTERM) e
         reabre a mesma conversa como agente da página; imprime JSON {ok, label, how, msg}
 
 Estado em ~/.cache/orq/<nome>/: agent.sock, events.jsonl, state.json.
+
+Todo agente da página sobe com uma nota no system prompt (OUTBOX_NOTE) dizendo que arquivos para o
+usuário vão em `_outbox/` do projeto e que os enviados por ele chegam em `_inbox/`.
 """
 
 import argparse
@@ -30,9 +37,16 @@ from pathlib import Path
 from typing import Optional
 
 from .. import config
-from . import claude, client, convert, events
+from . import claude, client, convert, events, files
 from .state import list_agents
 from .supervisor import Supervisor
+
+OUTBOX_NOTE = (
+    "Esta sessão roda pela página do orq, sem terminal. Para compartilhar um arquivo com o usuário "
+    "(PDF, imagem, vídeo, planilha, relatório…), copie-o para a pasta _outbox/ na raiz do projeto: a "
+    "página lista o que está lá e oferece para baixar ou ver. Arquivos que o usuário envia pela página "
+    "chegam em _inbox/ na raiz do projeto."
+)
 
 
 def cmd_start(a: argparse.Namespace) -> int:
@@ -66,7 +80,7 @@ def cmd_start(a: argparse.Namespace) -> int:
             conf.permission_mode,
             sid,
             name=config.session_name(a.label),
-            system_prompt=role,
+            system_prompt=OUTBOX_NOTE + ("\n\n" + role if role else ""),
         ),
         env=acc.env(),
         state_dir=config.state_dir(a.label),
@@ -213,6 +227,26 @@ def cmd_list(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ls(a: argparse.Namespace) -> int:
+    import json
+
+    print(json.dumps(files.list_dir(Path(os.path.expanduser(a.dir))), ensure_ascii=False))
+    return 0
+
+
+def cmd_cat(a: argparse.Namespace) -> int:
+    try:
+        start, end = files.parse_range(a.range)
+    except ValueError:
+        print(f"faixa inválida: {a.range}", file=sys.stderr)
+        return 2
+    out = os.fdopen(sys.stdout.fileno(), "wb", closefd=False)
+    try:
+        return files.send(Path(os.path.expanduser(a.path)), out, start, end)
+    except BrokenPipeError:  # quem pedia desistiu (a página fechou o download)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="orq-agent", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -249,6 +283,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("label")
     p.add_argument("--account")
     p.set_defaults(fn=cmd_convert)
+    p = sub.add_parser("ls")
+    p.add_argument("dir")
+    p.set_defaults(fn=cmd_ls)
+    p = sub.add_parser("cat")
+    p.add_argument("path")
+    p.add_argument("--range", help="INI-FIM (fim inclusivo) ou INI-")
+    p.set_defaults(fn=cmd_cat)
     return ap
 
 

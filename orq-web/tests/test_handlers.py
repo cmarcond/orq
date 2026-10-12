@@ -644,3 +644,96 @@ def test_reopen_restarts_in_same_conversation_or_other_account(server):
     # com níveis em cima, recusa (os níveis apontam para o pid antigo)
     state.add_provisional(base_entry("velho~professor@laptop", parent="velho@laptop", level="professor"))
     assert req(port, "POST", "/api/agent/velho@laptop/reopen", {})[0] == 409
+
+
+# ---------------------------------------------------------------- arquivos da _outbox
+def test_files_and_file_routes(server, short_tmp):
+    from orqweb.server.external import External
+
+    port, ext, state = server
+    srv_ctx = server_ctx(port)
+    out = short_tmp / "k" / "_outbox"
+    out.mkdir(parents=True)
+    (out / "rel.pdf").write_bytes(b"%PDF-1.4 0123456789")
+    (out / "pag.html").write_bytes(b"<script>alert(1)</script>")
+    real = External(short_tmp, local_host="laptop")
+    srv_ctx.list_files = lambda host, folder: (
+        real.list_files("laptop", folder) if host == "laptop" else ([], f"sem {host}")
+    )
+    srv_ctx.open_file = lambda host, path, start, end: real.open_file("laptop", path, start, end)
+    state.add_provisional(
+        {
+            "label": "k@laptop",
+            "host": "laptop",
+            "account": "gmail",
+            "dir": str(short_tmp / "k"),
+            "state": "waiting",
+            "kind": "sdk",
+        }
+    )
+    status, body, _ = req(port, "GET", "/api/agent/k%40laptop/files")
+    assert status == 200 and body["dir"] == str(out)
+    assert {f["name"] for f in body["items"]} == {"rel.pdf", "pag.html"} and "err" not in body
+    assert req(port, "GET", "/api/agent/nada%40laptop/files")[0] == 404
+    # erro da máquina vai junto da lista vazia (a página mostra o texto)
+    state.add_provisional(
+        {
+            "label": "r@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/h/r",
+            "state": "waiting",
+            "kind": "sdk",
+        }
+    )
+    status, body, _ = req(port, "GET", "/api/agent/r%40server0/files")
+    assert status == 200 and body["items"] == [] and body["err"] == "sem server0"
+
+    def get(path, **headers):
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        c.request("GET", path, headers={"X-Orq-Token": TOKEN, **headers})
+        r = c.getresponse()
+        data = r.read()
+        c.close()
+        return r, data
+
+    # inteiro, inline, com o tipo certo e CSP que não deixa nada rodar
+    r, data = get("/api/agent/k%40laptop/file?name=rel.pdf")
+    assert (
+        r.status == 200
+        and data == b"%PDF-1.4 0123456789"
+        and r.getheader("Content-Type") == "application/pdf"
+    )
+    assert r.getheader("Content-Length") == "19" and r.getheader("Accept-Ranges") == "bytes"
+    assert r.getheader("Content-Disposition") == "inline; filename*=UTF-8''rel.pdf"
+    assert (
+        "sandbox" in r.getheader("Content-Security-Policy")
+        and r.getheader("X-Content-Type-Options") == "nosniff"
+    )
+    # ?dl=1 vira anexo; html nunca é inline (iria rodar na nossa origem)
+    r, _ = get("/api/agent/k%40laptop/file?name=rel.pdf&dl=1")
+    assert r.getheader("Content-Disposition").startswith("attachment;")
+    r, data = get("/api/agent/k%40laptop/file?name=pag.html")
+    assert (
+        r.status == 200
+        and r.getheader("Content-Disposition").startswith("attachment;")
+        and data.startswith(b"<script>")
+    )
+    # faixa (o player de vídeo pede assim)
+    r, data = get("/api/agent/k%40laptop/file?name=rel.pdf", Range="bytes=9-12")
+    assert r.status == 206 and data == b"0123" and r.getheader("Content-Range") == "bytes 9-12/19"
+    r, data = get("/api/agent/k%40laptop/file?name=rel.pdf", Range="bytes=15-")
+    assert r.status == 206 and data == b"6789" and r.getheader("Content-Range") == "bytes 15-18/19"
+    r, _ = get("/api/agent/k%40laptop/file?name=rel.pdf", Range="bytes=99-")
+    assert r.status == 416
+    # nome com caminho, arquivo que não existe, agente desconhecido, desligado
+    assert get("/api/agent/k%40laptop/file?name=..%2Frel.pdf")[0].status == 400
+    assert get("/api/agent/k%40laptop/file?name=")[0].status == 400
+    r, data = get("/api/agent/k%40laptop/file?name=nada.pdf")
+    assert r.status == 404 and "laptop" in json.loads(data)["err"]
+    assert get("/api/agent/x%40laptop/file?name=rel.pdf")[0].status == 404
+    srv_ctx.open_file = None
+    assert get("/api/agent/k%40laptop/file?name=rel.pdf")[0].status == 400
+    assert get("/api/agent/k%40laptop/files")[0].status == 200
+    srv_ctx.list_files = None
+    assert get("/api/agent/k%40laptop/files")[0].status == 400

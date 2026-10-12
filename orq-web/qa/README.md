@@ -10,7 +10,12 @@ o executor cria `hello.py` na pasta do QA e reporta, o professor explica; ↓ de
 automática de conta continua a conversa (`test_troca_conta.py`: não dá para esgotar a cota sob demanda,
 então o QA grava `state: quota` no state.json do agente, como o supervisor faria; daí o servidor reabre
 o agente noutra conta, reenvia a pergunta pendente e o claude novo responde a palavra-chave guardada
-pelo antigo).
+pelo antigo). Os arquivos compartilhados (`test_arquivos.py`): o primeiro teste grava direto na
+`_outbox/` da pasta do QA e confere lista, toast, prévia de Markdown e imagem e download, sem gastar
+cota; o segundo pede ao claude real que crie `resumo.md` e "compartilhe pela página", sem citar a
+pasta, e espera o arquivo aparecer na lista (prova que a nota do system prompt basta). Esse segundo
+teste usa o `orq-agent` instalado em `~/.local` (é o que o servidor do QA sobe): rode `./install.sh`
+antes se mudou o agente.
 
 ```sh
 cd orq-web
