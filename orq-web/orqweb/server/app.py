@@ -109,7 +109,13 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
     state = StateCache(conf, ext, usage_host=os.environ.get("ORQ_USAGE_HOST") or None)
     bridges = BridgeRegistry(local_host=local, ssh_config=ssh_config)
     ctx = Context(conf, state, bridges, ext.spawn, token or saved_token(port), convert=ext.convert)
-    migrator = Migrator(conf, state, ext.spawn, bridges.deliver, enabled=conf.auto_switch)
+    migrator = Migrator(
+        conf,
+        state,
+        ext.spawn,
+        lambda lab, obj: bridges.deliver(lab, obj, fresh=True),
+        enabled=conf.auto_switch,
+    )
     state.on_agents = migrator.check
     ctx.migrator = migrator
     ctx.put_file = ext.put_file

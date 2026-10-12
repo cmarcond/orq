@@ -85,6 +85,30 @@ def test_spawn_failure_keeps_agent_and_reports():
     state, m, calls, sent, done = make([dict(QUOTA, dir="/falha")])
     assert m.migrate(dict(QUOTA, dir="/falha")) is None
     assert sent == [] and m.history == []
+    # a entrada provisória não fica: a próxima consulta às máquinas diz o que sobrou
+    assert "p@server0" not in state.provisional
+    assert all(a["label"] != "p@server0" for a in state.snapshot()["agents"])
+
+
+def test_tab_survives_while_reopening_the_agent():
+    """O reabrir leva segundos; nesse meio-tempo a página precisa continuar vendo o agente (na conta
+    nova, 'abrindo…'), senão a aba some e a página pula para outra."""
+    state, m, calls, sent, done = make([QUOTA])
+    seen = {}
+
+    def spawn(host, label, cwd, account, mode, **kw):
+        a = next(x for x in state.snapshot()["agents"] if x["label"] == label)
+        seen.update(account=a["account"], state=a["state"], migrated_from=a.get("migrated_from"))
+        # uma consulta às máquinas durante o reabrir devolve o agente antigo como encerrado
+        state.ext._agents = [dict(QUOTA, state="closed")]
+        state.refresh_agents()
+        return None
+
+    m.spawn = spawn
+    assert m.migrate(dict(QUOTA)) == "work"
+    assert seen == {"account": "work", "state": "starting", "migrated_from": "gmail"}
+    a = next(x for x in state.snapshot()["agents"] if x["label"] == "p@server0")
+    assert a["account"] == "work" and a["state"] == "starting"
 
 
 def test_disabled_and_ignores_other_states():

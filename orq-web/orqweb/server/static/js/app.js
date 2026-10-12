@@ -123,10 +123,25 @@ function meter(u, k) {
     <i style="width:${Math.min(100, p)}%"></i><b style="left:${Math.min(99, m)}%"></b></div>
     <span class="pct">${Math.round(p)}%</span><span>${left(u[k + '_left'])}</span></div>`;
 }
+function totalCard(t) {
+  // consolidado da semana da frota (`_total` do usage-all), no formato das contas: barra do usado médio com
+  // o ritmo médio; à direita, quando zera (∞ = com os resets, não zera nesta semana); queima 1,0× = no ritmo
+  if (!t) return '';
+  const d = t['7d'] - t['7d_pace'];
+  const burn = t['7d_burn'] ?? 0;
+  const bcls = burn < 0.9 ? 'ok' : burn <= 1.15 ? 'warn' : 'bad';
+  const runs = t['7d_runs_out'] != null ? left(t['7d_runs_out']) : '∞';
+  return `<div class="ucard total" title="semana da frota: barra = usado médio, ┃ = ritmo médio; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo das janelas"><div class="name"><span>TOTAL · semana</span><span class="burn ${bcls}">queima ${burn.toFixed(1).replace('.', ',')}×</span></div>
+    <div class="urow"><span>7d</span><div class="meter ${d >= 15 ? 'far' : d > 0 ? 'over' : ''}"><i style="width:${Math.min(100, t['7d'])}%"></i><b style="left:${Math.min(99, t['7d_pace'])}%"></b></div>
+    <span class="pct">${Math.round(t['7d'])}%</span><span>${runs}</span></div>
+    <div class="small mute">${Math.round(t['7d_free'])}% livre na média das ${t.accounts} contas</div></div>`;
+}
 function renderUsage(us) {
   $('usage').innerHTML =
     `<button id="bell" class="ghost bell" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button>` +
+    totalCard(us._total) +
     Object.entries(us)
+    .filter(([n]) => !n.startsWith('_'))
     .map(
       ([n, u]) => `<div class="ucard" style="--acc:${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
@@ -950,10 +965,18 @@ async function refresh() {
         // o supervisor foi reaberto (troca de conta, reabrir com nome): o log de eventos recomeça do zero
         if (t.es) t.es.close();
         t.el?.remove();
-        const was = t.a?.account;
+        const was = t.was || t.a?.account;
         delete tabs[a.label];
         if (was && a.account && was !== a.account) toast(`${a.label.split('@')[0]}: conta ${LAB[was] || was} sem cota; continua na ${LAB[a.account] || a.account}`);
         if (cur === a.label || chainOf(curBase() || '').includes(a.label)) setTimeout(() => show(curBase() || a.label, true), 0);
+        continue;
+      }
+      if (t.a?.state === 'closed' && a.state !== 'closed' && (!a.pid || a.pid !== t.pid)) {
+        // o stream disse "agente encerrado", mas a lista o tem vivo sem pid (ou com outro): está sendo
+        // reaberto (troca de conta, reabrir com nome). A aba fica, 'abrindo…', até o pid novo chegar e
+        // o ramo acima recriá-la do zero; sem isto ela sumia e a página pulava para outra aba
+        t.was = t.was || t.a.account; // conta de antes, para o aviso de troca
+        t.a = a;
         continue;
       }
       if (a.pid) t.pid = a.pid;
@@ -964,6 +987,9 @@ async function refresh() {
         a.state = t.a.state;
         a.msg = t.a.msg ?? a.msg;
       }
+      // a lista pode trazer a conta nova (entrada provisória da troca) antes de o pid novo existir;
+      // guarda a de antes para o aviso de troca quando o ramo do pid recriar a aba
+      if (t.a?.account && a.account && a.account !== t.a.account) t.was = t.was || t.a.account;
       t.a = a;
     }
     dropClosed();

@@ -70,13 +70,17 @@ class Migrator:
             return None
         host, cwd = a.get("host") or "laptop", a.get("dir") or ""
         self.log(f"{lab}: conta {a.get('account')} sem cota; reabrindo na conta {acc}")
-        err = self.spawn(host, lab, cwd, acc, "resume", restart=True)
-        if err:
-            self.log(f"{lab}: não consegui reabrir na conta {acc}: {err}")
-            return None
+        # A entrada provisória entra antes do spawn: o reabrir leva segundos (encerra o antigo, copia a
+        # conversa, sobe o novo) e uma consulta às máquinas nesse meio-tempo devolveria o agente como
+        # encerrado, a aba sumiria e a página pularia para outra.
         self.state.add_provisional(
             provisional_agent(lab, host, acc, cwd, time.time(), migrated_from=a.get("account"))
         )
+        err = self.spawn(host, lab, cwd, acc, "resume", restart=True)
+        if err:
+            self.log(f"{lab}: não consegui reabrir na conta {acc}: {err}")
+            self.state.drop_provisional(lab)
+            return None
         retry = (a.get("retry") or "").strip()
         if retry:
             err = self.deliver(lab, {"type": "user", "message": {"role": "user", "content": retry}})

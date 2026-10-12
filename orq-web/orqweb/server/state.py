@@ -114,6 +114,12 @@ class StateCache:
             self.provisional[agent["label"]] = agent
             self.agents = [a for a in self.agents if a.get("label") != agent["label"]] + [agent]
 
+    def drop_provisional(self, label: str) -> None:
+        """Desfaz `add_provisional` (o reabrir falhou): a próxima consulta às máquinas diz o que sobrou."""
+        with self.lock:
+            self.provisional.pop(label, None)
+            self.agents = [a for a in self.agents if a.get("label") != label]
+
     def mark_closing(self, label: str) -> None:
         """Agente mandado encerrar: fica `closed` já, e por CLOSING_TTL s mesmo que a máquina, consultada
         enquanto o claude ainda está saindo (até 15 s de graça), o devolva vivo."""

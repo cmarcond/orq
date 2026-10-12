@@ -104,10 +104,13 @@ class BridgeRegistry:
                 del self._b[label]
         b.close()
 
-    def deliver(self, label: str, obj: dict, linger: float = 1.5) -> Optional[str]:
-        """Entrega `obj` ao agente. Erro em texto, ou None."""
+    def deliver(self, label: str, obj: dict, linger: float = 1.5, fresh: bool = False) -> Optional[str]:
+        """Entrega `obj` ao agente. Erro em texto, ou None.
+
+        `fresh` ignora a ponte da aba e abre uma passageira: depois de o agente ser reaberto (outra conta,
+        outro pid), a ponte da aba pode ainda estar presa ao supervisor anterior."""
         with self._lock:
-            b = self._b.get(label)
+            b = None if fresh else self._b.get(label)
         temp = b is None or not b.alive()
         if temp:
             b = self.factory(label, FAR_FUTURE, self.bin_dir)

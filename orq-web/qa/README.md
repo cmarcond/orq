@@ -4,9 +4,13 @@ Testa a **aplicação de verdade**, com o **claude real**, pelo navegador: um or
 porta 8790 (ou aponta-se para a página da rede), um Chromium sem janela abre a página, e cada teste
 deixa em `qa/out/` a captura de tela final, o console e um **vídeo da sessão inteira**
 (`<teste>.mp4`, ou `.webm` sem ffmpeg; `-FALHOU` no nome quando falha). Testes simples: a página abre,
-o seletor lista projetos, um agente responde, uma interrupção funciona (`test_chat.py`), e os níveis
+o seletor lista projetos, um agente responde, uma interrupção funciona (`test_chat.py`), os níveis
 professor → executor entregam o hello world do HighLevel (`test_niveis.py`: o professor delega pelo fio,
-o executor cria `hello.py` na pasta do QA e reporta, o professor explica; ↓ desfazer no fim).
+o executor cria `hello.py` na pasta do QA e reporta, o professor explica; ↓ desfazer no fim), e a troca
+automática de conta continua a conversa (`test_troca_conta.py`: não dá para esgotar a cota sob demanda,
+então o QA grava `state: quota` no state.json do agente, como o supervisor faria; daí o servidor reabre
+o agente noutra conta, reenvia a pergunta pendente e o claude novo responde a palavra-chave guardada
+pelo antigo).
 
 ```sh
 cd orq-web
@@ -45,6 +49,7 @@ $P qa/orqqa.py watch 20                         # fica 20 s ouvindo console/erro
 $P qa/orqqa.py levels                           # ⇅ subir nível (professor-executor) na aba atual
 $P qa/orqqa.py wires                            # fios entre os níveis (→ delegou, ✓✓ entregue)
 $P qa/orqqa.py undo                             # ↓ desfazer: encerra os níveis de cima
+$P qa/orqqa.py quota "continue"                 # força "sem cota" na aba atual e espera a troca de conta
 $P qa/orqqa.py stop orq-qa@laptop               # ✕ duas vezes
 $P qa/orqqa.py down                             # derruba o orq-web do QA (agentes continuam)
 ```

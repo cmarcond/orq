@@ -16,6 +16,7 @@ e ver o resultado em captura de tela, console e estado:
   python qa/orqqa.py levels [receita]     ⇅ subir nível na aba atual (padrão professor-executor)
   python qa/orqqa.py wires                fios entre os níveis e os níveis do painel
   python qa/orqqa.py undo                 ↓ desfazer: encerra os níveis de cima
+  python qa/orqqa.py quota ["texto"]       força "sem cota" na aba atual e espera a troca de conta
   python qa/orqqa.py click "seletor" | text "seletor" | eval "js"
   python qa/orqqa.py watch [segundos]     fica ouvindo console, erros e requisições que falham
 
@@ -86,6 +87,7 @@ def server_up(port: int = PORT, wait: float = 30) -> Tuple[str, bool]:
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},  # senão o log só sai no fim (e some no SIGTERM)
     )
     pid_file(port).write_text(str(p.pid))
     deadline = time.time() + wait
@@ -462,7 +464,8 @@ class Orq:
         `orq-agent spawn` responder "já rodando" para um agente que está morrendo.
         """
         sock = STATE_ROOT / re.sub(r"[^a-zA-Z0-9_-]", "-", label) / "agent.sock"  # = config.state_dir
-        if any(a.get("label") == label for a in self.agents()):
+        # um servidor recém-aberto ainda não listou os agentes; o socket diz se há o que encerrar
+        if sock.exists() or any(a.get("label") == label for a in self.agents()):
             self.api(f"/api/agent/{quote(label, safe='')}/stop", {})
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -470,6 +473,38 @@ class Orq:
                 return
             time.sleep(1)
         raise RuntimeError(f"{label} não encerrou em {timeout:.0f} s")
+
+    # ---- troca automática de conta
+    def account_of(self, label: str) -> Optional[str]:
+        return next((a.get("account") for a in self.agents() if a.get("label") == label), None)
+
+    def force_quota(self, label: str, retry: str, msg: str = "You've hit your usage limit (forçado pelo QA)"):
+        """Força "sem cota" por baixo: grava `state: quota` no state.json do agente (desta máquina), com a
+        mensagem a reenviar em `retry`, exatamente como o supervisor faz ao ver o `rate_limit_event`.
+
+        Na próxima consulta às máquinas (≤ 15 s) o servidor reabre o agente noutra conta, na mesma
+        conversa, e reenvia `retry`. Só a detecção é pulada; a troca em si é a de verdade."""
+        p = STATE_ROOT / re.sub(r"[^a-zA-Z0-9_-]", "-", label) / "state.json"
+        st = json.loads(p.read_text())
+        st.update(state="quota", msg=msg, retry=retry, ts=time.time())
+        p.write_text(json.dumps(st))
+        return p
+
+    def wait_account_change(self, label: str, old: Optional[str], timeout: float = 150) -> str:
+        """Espera o agente reaparecer noutra conta, confirmado pela máquina (não só a entrada provisória
+        'abrindo…'); devolve a conta nova."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            a = next((x for x in self.agents() if x.get("label") == label), None)
+            if a and a.get("account") != old and a.get("state") not in ("starting", "closed"):
+                return a["account"]
+            self.page.wait_for_timeout(2000)
+        raise RuntimeError(
+            f"{label} continuou na conta {old} por {timeout:.0f} s; migrações: {self.migrations()}"
+        )
+
+    def migrations(self) -> List[dict]:
+        return self.state().get("migrations", [])
 
     # ---- evidências
     def shot(self, name: str) -> Path:
@@ -487,7 +522,10 @@ class Orq:
     def problems(self) -> List[str]:
         """Erros de página, requisições falhas e respostas >= 400 vistas até agora."""
         return [
-            c for c in self.console if c.startswith(("[pageerror]", "[requestfailed]", "[http ", "[error]"))
+            c
+            for c in self.console
+            if c.startswith(("[pageerror]", "[requestfailed]", "[http ", "[error]"))
+            and not ("/stream?" in c and "ERR_ABORTED" in c)  # stream fechado de propósito (aba recriada)
         ]
 
 
@@ -525,7 +563,7 @@ def main(argv: List[str]) -> int:
     with sync_playwright() as pw:
         o = Orq.launch(pw, headed=bool(os.environ.get("ORQ_QA_HEADED")), video=video)
         label = os.environ.get("ORQ_QA_LABEL")
-        if label and cmd in ("say", "esc", "allow", "deny", "stop", "shot", "text", "eval"):
+        if label and cmd in ("say", "esc", "allow", "deny", "stop", "shot", "text", "eval", "quota"):
             o.show(label)
         try:
             if cmd == "state":
@@ -568,6 +606,13 @@ def main(argv: List[str]) -> int:
             elif cmd == "undo":
                 o.downgrade()
                 print("níveis encerrados ·", o.cstate())
+            elif cmd == "quota":
+                lab = o.current()
+                old = o.account_of(lab)
+                o.force_quota(lab, " ".join(args) or "Continue de onde parou.")
+                print(f"{lab}: conta {old} marcada sem cota; esperando a troca…")
+                new = o.wait_account_change(lab, old)
+                print(f"reaberto na conta {new} · {o.cstate()} · toast: {o.toast()}")
             elif cmd == "click":
                 o.page.click(args[0])
                 o.page.wait_for_timeout(800)

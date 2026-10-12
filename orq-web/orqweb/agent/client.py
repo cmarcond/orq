@@ -173,8 +173,12 @@ def spawn(
     if tmux:
         sess = "orqs-" + config.safe_label(label.split("@")[0])
         subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
+        d.mkdir(parents=True, exist_ok=True)
+        # o que o supervisor escreve no stderr (ex.: "já existe um agente rodando") some com a sessão
+        # tmux quando ele sai na hora; fica também em supervisor.log para diagnóstico
+        shell = tmux_shell(cmd, env) + " 2>>" + shlex.quote(str(d / "supervisor.log"))
         subprocess.run(
-            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser(folder), tmux_shell(cmd, env)],
+            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser(folder), shell],
             env=env,
             check=True,
             cwd=os.path.expanduser("~"),  # o servidor tmux herda a pasta de quem o cria; a pessoal nunca some
