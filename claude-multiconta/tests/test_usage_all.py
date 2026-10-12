@@ -90,7 +90,7 @@ def test_brief_orders_by_weekly_slack_and_errors_last(monkeypatch):
         ok = U.show_brief([acc("a", "A (x)"), acc("b", "B (x)"), acc("c", "C (x)")])
     lines = out.getvalue().splitlines()
     assert not ok
-    body = [ln for ln in lines if ln[:1] in "ABC"]
+    body = [ln for ln in lines if ln[:1] and ln[:1] in "ABC"]
     assert [ln[0] for ln in body] == ["B", "A", "C"], body
     assert "✗ sem credencial" in body[-1]
     assert any("sessão 5h" in ln and "semana 7d" in ln for ln in lines), "cabeçalho das janelas"
@@ -105,6 +105,60 @@ def test_usage_json_shape(monkeypatch):
     assert U.usage_json(acc()) == {"err": "token expirado"}
 
 
+# ---------------------------------------------------------------- total da semana
+def test_total_json_consolidates_the_week():
+    per = {
+        "a": {"7d": 80, "7d_pace": 50, "7d_left": 3 * 86400},  # gastou 80 em metade da semana
+        "b": {"7d": 20, "7d_pace": 50, "7d_left": 4 * 86400},
+        "c": {"err": "sem credencial"},  # fica de fora
+        "_total": {"7d": 999},  # nunca entra na conta
+    }
+    t = U.total_json(per)
+    assert t["accounts"] == 2 and t["7d"] == 50 and t["7d_pace"] == 50
+    assert t["7d_free"] == 50 and t["7d_free_accounts"] == 1.0
+    assert t["7d_burn"] == 1.0, "100 pontos gastos em 2 meias-semanas = exatamente no ritmo"
+    # sem resets, os 100 que sobram acabariam em 3,5 dias; mas 'a' recarrega em 3 dias e 'b' em 4: não zera
+    assert t["7d_runs_out"] is None
+    assert t["7d_next_reset"] == 3 * 86400 and t["7d_next_reset_account"] == "a"
+    assert U.total_json({"a": {"err": "x"}}) is None
+    assert U.total_json({"a": {"7d": 0, "7d_pace": 0, "7d_left": None}})["7d_runs_out"] is None, "nada gasto"
+
+
+def test_runs_out_before_the_reset_saves_it():
+    # 90 gastos em 3,5 dias; sobram 10, que no mesmo ritmo acabam em ~0,39 dia, antes do reset em 3,5 dias
+    t = U.total_json({"a": {"7d": 90, "7d_pace": 50, "7d_left": 3.5 * 86400}})
+    assert t["7d_burn"] == 1.8 and abs(t["7d_runs_out"] - 10 / 90 * 3.5 * 86400) < 60
+    # o reset chega antes de zerar e devolve a conta inteira; a 1,8× do ritmo, a conta cheia dura 3,9 dias
+    t = U.total_json({"a": {"7d": 90, "7d_pace": 50, "7d_left": 0.2 * 86400}})
+    assert abs(t["7d_runs_out"] - (0.2 + 100 / 90 * 3.5) * 86400) < 60
+
+
+def test_fmt_total_line():
+    U.COLOR = False
+    t = U.total_json({"a": {"7d": 80, "7d_pace": 50, "7d_left": 3 * 86400}, "b": {"7d": 20, "7d_pace": 50, "7d_left": 4 * 86400}})
+    s = U.fmt_total(t)
+    assert s.startswith("TOTAL  ") and " 50% █████┃░░░░   ∞  " in s and s.endswith("queima 1,0× · 50% livre"), s
+    wide = U.fmt_total(t, width=len(s) + 20)
+    assert wide == " " * 10 + s, "centralizada na largura pedida"
+    assert U.fmt_total(None).startswith("TOTAL ") and "sem dados" in U.fmt_total(None)
+    t = U.total_json({"a": {"7d": 90, "7d_pace": 50, "7d_left": 3.5 * 86400}})
+    assert "09h20  queima 1,8×" in U.fmt_total(t), U.fmt_total(t)
+
+
+def test_brief_and_json_carry_the_total(monkeypatch, capsys):
+    U.COLOR = False
+    monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(40))
+    assert U.show_brief([acc("a", "A (x)"), acc("b", "B (x)")])
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1].strip().startswith("TOTAL ") and out[-1].endswith("queima 0,8× · 60% livre"), out[-1]
+    assert out[-2] == "", "uma linha em branco antes do TOTAL"
+    conf = {"accounts": [{"name": "a", "label": "A (x)", "config_dir": "~/.claude-a"}]}
+    monkeypatch.setattr(U, "load_conf", lambda: conf)
+    assert U.main(["--json"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    assert d["a"]["7d"] == 40 and d["_total"]["7d_free"] == 60 and d["_total"]["accounts"] == 1 and "7d_burn" in d["_total"]
+
+
 def test_main_json_and_unknown_account(monkeypatch, tmp_path, capsys):
     conf = tmp_path / "accounts.json"
     conf.write_text(json.dumps({"accounts": [{"name": "gmail", "label": "Gmail (g@x)", "config_dir": "~/.claude-gmail"}]}))
@@ -112,7 +166,7 @@ def test_main_json_and_unknown_account(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(5))
     assert U.main(["--json"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert list(out) == ["gmail"] and out["gmail"]["7d"] == 5
+    assert list(out) == ["gmail", "_total"] and out["gmail"]["7d"] == 5
     try:
         U.main(["nada"])
     except SystemExit as e:

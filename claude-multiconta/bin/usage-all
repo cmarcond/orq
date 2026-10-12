@@ -20,6 +20,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import re
 import os
 import pathlib
 import shutil
@@ -269,28 +270,33 @@ LABEL_W, CELL_BAR, SEP = 10, 10, "  "
 LEGEND = [
     "█ usado  ┃ ritmo (quanto da janela já passou)  à direita: falta até o reset",
     "verde = abaixo do ritmo · amarelo = acima · vermelho = 15+ pontos acima",
+    "TOTAL: semana da frota; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo",
 ]
 
 
 def cell(w: Window) -> str:
     """Uma janela em 21 colunas: ' 32% ███████┃░░ 2d02h'. ┃ dentro da barra vira um entalhe na cor dela."""
-    pace, col = w.pace, color_for(w.percent, w.pace)
-    n = int(round(max(0.0, min(100.0, w.percent)) / 100 * CELL_BAR))
+    return cell_of(w.percent, w.pace, fmt_left(w.left, w.size))
+
+
+def cell_of(percent: float, pace: Optional[float], right: str) -> str:
+    col = color_for(percent, pace)
+    n = int(round(max(0.0, min(100.0, percent)) / 100 * CELL_BAR))
     cells = [c(col, "█")] * n + [c("2", "░")] * (CELL_BAR - n)
     if pace is not None:
         i = min(CELL_BAR - 1, int(pace / 100 * CELL_BAR))
         cells[i] = c(f"1;{col}", "┃") if i < n else c("1", "┃")
-    return f"{c(col, f'{int(round(w.percent)):3d}%')} {''.join(cells)} {fmt_left(w.left, w.size)}"
+    return f"{c(col, f'{int(round(percent)):3d}%')} {''.join(cells)} {right}"
 
 
-def brief_row(acc: Account) -> Tuple[float, str, List[str]]:
-    """(chave de ordenação, linha, títulos). Chave = folga no semanal de todos os modelos; erro vai para o fim."""
+def brief_row(acc: Account) -> Tuple[float, str, List[str], dict]:
+    """(chave de ordenação, linha, títulos, json). Chave = folga no semanal de todos os modelos; erro vai para o fim."""
     windows, err = get_windows(acc)
     lab = f"{acc.label:<{LABEL_W}}"
     if err:
-        return float("inf"), f"{lab} ✗ {err}", []
+        return float("inf"), f"{lab} ✗ {err}", [], {"err": err}
     weekly = next((w.slack for w in windows if w.kind == "weekly_all"), 999.0)
-    return weekly, f"{lab} " + SEP.join(cell(w) for w in windows), [w.title for w in windows]
+    return weekly, f"{lab} " + SEP.join(cell(w) for w in windows), [w.title for w in windows], json_of(windows, None)
 
 
 def show_brief(accounts: List[Account]) -> bool:
@@ -301,8 +307,12 @@ def show_brief(accounts: List[Account]) -> bool:
     titles = max((r[2] for r in rows), key=len, default=[])
     if titles:
         print(c("2", (" " * (LABEL_W + 1) + SEP.join(f"{t:^{CELL_BAR + 11}}" for t in titles)).rstrip()))
-    for _, line, _ in sorted(rows, key=lambda r: r[0]):
+    for _, line, _, _ in sorted(rows, key=lambda r: r[0]):
         print(line)
+    labels = {a.name: a.label for a in accounts}
+    width = max((visible_len(r[1]) for r in rows), default=0)
+    print()
+    print(fmt_total(total_json({a.name: r[3] for a, r in zip(accounts, rows)}), labels, width))
     return all(r[0] != float("inf") for r in rows)
 
 
@@ -339,11 +349,11 @@ def fmt_reset(iso: Optional[str], tz) -> str:
     return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(tz).strftime("%d/%m %H:%M")
 
 
-def show_verbose(acc: Account, tz) -> bool:
+def show_verbose(acc: Account, tz) -> Tuple[bool, dict]:
     windows, err = get_windows(acc)
     if err:
         print(f"\n📊 {acc.full_label}\n   ✗ {err}\n")
-        return False
+        return False, {"err": err}
     now = datetime.datetime.now(tz).strftime("%d/%m %H:%M")
     print(f"\n📊 {acc.full_label} — {now}   (┃ = onde a barra deveria estar para ficar no ritmo)")
     real = logged_email(acc)
@@ -354,14 +364,17 @@ def show_verbose(acc: Account, tz) -> bool:
         flag = "" if w.severity == "normal" else f"  ⚠️ {w.severity}"
         print(f"{w.long_title:<22} {w.percent:>3.0f}% [{bar(w)}]  reseta {fmt_reset(w.resets_at, tz)}{pace_info(w)}{flag}")
     print()
-    return True
+    return True, json_of(windows, None)
 
 
 # ---- json (orq, orq-web)
 def usage_json(acc: Account) -> dict:
     """{'5h': %, '5h_pace': %, '5h_left': s, '7d': ..., '7d_pace': ..., '7d_left': ...} ou {'err': texto}.
     Ritmo 0 e left None = janela não iniciada."""
-    windows, err = get_windows(acc)
+    return json_of(*get_windows(acc))
+
+
+def json_of(windows: List[Window], err: Optional[str]) -> dict:
     if err:
         return {"err": err}
     out: Dict[str, object] = {}
@@ -373,6 +386,85 @@ def usage_json(acc: Account) -> dict:
         out[k + "_pace"] = round(w.pace or 0.0, 1)
         out[k + "_left"] = None if w.left is None else max(0, int(w.left))
     return out
+
+
+# ---- total das contas (semana)
+WEEK = WINDOW["weekly_all"]
+
+
+def total_json(per: Dict[str, dict]) -> Optional[dict]:
+    """Consolidado da semana entre as contas (as com erro ficam de fora); None se nenhuma tem 7d.
+
+    Matemática de "error budget" (SLO): a taxa de queima da frota é o consumido dividido pela parte da
+    janela já decorrida, somando as contas (1,0 = no ritmo exato das janelas; 2,0 = acaba na metade).
+    7d / 7d_pace: usado e ritmo médios; 7d_free: média do que sobra; 7d_free_accounts: o mesmo em contas
+    inteiras; 7d_burn: a taxa de queima; 7d_runs_out: segundos até a frota zerar, simulando semana adiante
+    com cada conta recarregando no seu reset (None = com os resets, não acaba nos próximos 7 dias);
+    7d_next_reset: segundos até o reset semanal mais próximo (e de que conta)."""
+    ok = {n: u for n, u in per.items() if not n.startswith("_") and "err" not in u and u.get("7d") is not None}
+    if not ok:
+        return None
+    used = {n: float(u["7d"]) for n, u in ok.items()}
+    elapsed = {n: (float(u.get("7d_pace") or 0.0) / 100.0) * WEEK for n, u in ok.items()}  # s decorridos
+    rate = {n: (used[n] / elapsed[n] if elapsed[n] > 0 else 0.0) for n in ok}  # pontos/s por conta
+    free = sum(100.0 - p for p in used.values())
+    burn = (sum(used.values()) / 100.0) / (sum(elapsed.values()) / WEEK) if sum(elapsed.values()) > 0 else 0.0
+    resets = sorted((u["7d_left"], n) for n, u in ok.items() if u.get("7d_left"))
+    return {
+        "accounts": len(ok),
+        "7d": round(sum(used.values()) / len(used), 1),
+        "7d_pace": round(sum(float(u.get("7d_pace") or 0.0) for u in ok.values()) / len(ok), 1),
+        "7d_free": round(free / len(used), 1),
+        "7d_free_accounts": round(free / 100.0, 2),
+        "7d_burn": round(burn, 2),
+        "7d_runs_out": runs_out(used, rate, resets),
+        "7d_next_reset": int(resets[0][0]) if resets else None,
+        "7d_next_reset_account": resets[0][1] if resets else None,
+    }
+
+
+def runs_out(used: Dict[str, float], rate: Dict[str, float], resets: List[Tuple[float, str]], horizon: float = None) -> Optional[int]:
+    """Quando a frota zera, simulando os próximos 7 dias: o consumo total segue na taxa somada (a troca
+    automática passa o gasto de uma conta esgotada para as outras) e, no reset de cada conta, o que ela
+    tinha gasto volta a ficar disponível. None se não zera dentro do horizonte."""
+    horizon = WEEK if horizon is None else horizon
+    total_rate = sum(rate.values())
+    if total_rate <= 0:
+        return None
+    free = sum(100.0 - u for u in used.values())
+    t = 0.0
+    for when, name in [(w, n) for w, n in resets if w <= horizon] + [(horizon, None)]:
+        if free - total_rate * (when - t) <= 0:
+            return int(t + free / total_rate)
+        free -= total_rate * (when - t)
+        t = when
+        if name is not None:  # a conta recarrega: volta o que gastou até aqui
+            free += min(100.0, used[name] + rate[name] * when)
+    return None
+
+
+def visible_len(s: str) -> int:
+    return len(re.sub(r"\x1b\[[0-9;]*m", "", s))
+
+
+def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None, width: int = 0) -> str:
+    """Linha TOTAL só do semanal, centralizada em `width` colunas: barra do usado médio com o ritmo médio;
+    à direita, em quanto tempo a frota zera (∞ = com os resets, não zera nesta semana); depois a taxa de
+    queima e a média do que sobra nas contas."""
+    line = _total_line(t)
+    pad = max(0, (width - visible_len(line)) // 2)
+    return " " * pad + line
+
+
+def _total_line(t: Optional[dict]) -> str:
+    lab = c("1", "TOTAL")
+    if not t:
+        return f"{lab} {c('2', 'sem dados')}"
+    runs = fmt_left(t["7d_runs_out"]) if t["7d_runs_out"] is not None else c("32", "  ∞  ")
+    burn = f"{t['7d_burn']:.1f}".replace(".", ",")
+    bcol = "32" if t["7d_burn"] < 0.9 else "33" if t["7d_burn"] <= 1.15 else "31"
+    tail = f"queima {c(bcol, burn + '×')} · {t['7d_free']:.0f}% livre"
+    return f"{lab}  {cell_of(t['7d'], t['7d_pace'] or None, runs)}  {tail}"
 
 
 # ======================================================================== cli
@@ -395,11 +487,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if a.json:
         with ThreadPoolExecutor(max_workers=8) as ex:
-            print(json.dumps(dict(zip((x.name for x in chosen), ex.map(usage_json, chosen)))))
+            per = dict(zip((x.name for x in chosen), ex.map(usage_json, chosen)))
+        per["_total"] = total_json(per)  # consolidado da semana (orq-web mostra; quem lê por conta ignora)
+        print(json.dumps(per))
         return 0
     if a.verbose:
         tz = timezone(conf)
-        return 0 if all([show_verbose(x, tz) for x in chosen]) else 2
+        results = [show_verbose(x, tz) for x in chosen]
+        print(fmt_total(total_json({x.name: r[1] for x, r in zip(chosen, results)}), {x.name: x.label for x in chosen}))
+        return 0 if all(r[0] for r in results) else 2
     return 0 if show_brief(chosen) else 2
 
 

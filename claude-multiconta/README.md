@@ -18,6 +18,7 @@ com um marcador de ritmo. Feito para levar de máquina em máquina: Mac (zsh) e 
 | `usage-all` | uso de todas as contas do Claude, **resumido**: uma linha por conta e, por janela, % usado, mini-barra com marcador de ritmo e tempo até o reset |
 | `usage-all -v` | o mesmo, **completo**: barra por janela, marcador de ritmo e horário do reset |
 | `usage-all gmail` | só as contas citadas (nomes do `accounts.json`); combina com `-v` |
+| `TOTAL` (última linha) | consolidado da semana entre as contas: % livre, o equivalente em contas inteiras, ritmo, em quanto tempo acaba tudo no ritmo atual e o próximo reset semanal; no `--json` vem na chave `_total` |
 | `orq` | **orquestrador**: escolhe até 4 projetos de qualquer máquina e abre uma janela com 4 painéis, cada um no ssh, no tmux e na conta certa |
 | `orq web` | atalho para o `orq-web` (projeto `orq-web`): página local com cota, abas e chat com os agentes |
 | `claude-last` | lista, para a pasta atual, a conversa mais recente de cada conta, da mais nova para a mais velha |

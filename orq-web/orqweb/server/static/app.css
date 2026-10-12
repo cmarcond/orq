@@ -15,6 +15,7 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .usage{flex:2;max-width:40%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:8px 12px 8px 8px;border-left:1px solid var(--line);align-content:start}
 .ucard{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
 .usage .bell{grid-column:1/-1;justify-self:end;padding:0 6px;font-size:14px;margin-bottom:-6px}
+.ucard.total{grid-column:1/-1;border-style:dashed}.ucard.total .burn{font-weight:700}.burn.ok{color:var(--ok)}.burn.warn{color:var(--warn)}.burn.bad{color:var(--bad)}.ucard.total .small{margin-top:3px}
 @media (max-width:900px){.top{flex-direction:column}.usage{max-width:none;border-left:none;border-top:1px solid var(--line);grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
 .ucard .name{font-weight:600;font-size:12px;display:flex;justify-content:space-between}
 .urow{display:grid;grid-template-columns:18px 1fr 34px 44px;gap:5px;align-items:center;font-size:11px;color:var(--mute);margin-top:3px}
