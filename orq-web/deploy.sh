@@ -6,8 +6,12 @@ CONF=${CLAUDE_MULTICONTA_CONF:-$HOME/.config/claude-multiconta/accounts.json}
 if [ $# -gt 0 ]; then HOSTS="$*"; else HOSTS="laptop $(python3 -c "import json; print(' '.join(json.load(open('$CONF')).get('orq_hosts', [])))")"; fi
 TB=$(mktemp -t orq-web.XXXXXX).tar.gz
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$TB" -C "$HERE" --exclude __pycache__ orqweb install.sh
+# "laptop" é o Mac (ORQ_LOCAL_HOST da página); rodando de outra máquina, ele é alcançado por ssh como as demais,
+# e a máquina atual é a que instala localmente
+ME=$(hostname -s)
+[ "$(uname -s)" = Darwin ] && ME=laptop
 for h in $HOSTS; do
-  if [ "$h" = laptop ]; then sh "$HERE/install.sh" | sed 's/^/laptop: /'; continue; fi
+  if [ "$h" = "$ME" ]; then sh "$HERE/install.sh" | sed "s/^/$h: /"; continue; fi
   ( scp -q -o BatchMode=yes -o ConnectTimeout=12 "$TB" "$h:/tmp/orq-web.tgz" \
     && ssh -o BatchMode=yes -o ConnectTimeout=12 "$h" 'd=$(mktemp -d) && tar xzf /tmp/orq-web.tgz -C "$d" && sh "$d/install.sh" && rm -rf "$d" /tmp/orq-web.tgz' ) 2>&1 | sed "s/^/$h: /" || echo "$h: ✗ falhou"
 done
