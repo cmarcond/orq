@@ -76,9 +76,10 @@ def sessions_dirs(conf: config.Config) -> List[Path]:
 
 
 def find_entry(
-    name: str, dirs: List[Path], alive: Callable[[Optional[int]], bool] = pid_alive
+    name: str, dirs: List[Path], alive: Optional[Callable[[Optional[int]], bool]] = None
 ) -> Optional[Entry]:
     """Cartão da sessão viva com esse nome (`claude -n`), nas pastas dadas. None se não há."""
+    alive = alive or pid_alive  # resolvido na chamada, não na definição (os testes trocam pid_alive)
     for d in dirs:
         for f in sorted(d.glob("*.json")):
             try:

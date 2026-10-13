@@ -413,13 +413,14 @@ def test_local_link_mirrors_between_accounts(world, monkeypatch, tmp_path):
     monkeypatch.setattr(client, "socket_alive", lambda p: p.exists())
     with pytest.raises(RuntimeError, match="b@laptop não está rodando com nome b-laptop"):
         client.spawn_link("a@laptop", "b@laptop")
-    entry(tmp_path / "cfg2" / "sessions", os.getpid() + 1, "b-laptop", str(world["socks"] / "x.sock"))
-    monkeypatch.setattr(link, "pid_alive", lambda pid: True)
+    entry(
+        tmp_path / "cfg2" / "sessions", os.getppid(), "b-laptop", str(world["socks"] / "x.sock")
+    )  # pid vivo de verdade
     assert "4 arquivos espelhados" in client.spawn_link("a@laptop", "b@laptop")
     (lk,) = link.list_links()
     assert lk["kind"] == "local" and lk["up"] and lk["remote_name"] == "b-laptop" and lk["pid"] is None
     # cada conta ganhou o cartão e a chave do outro, com o MESMO socket (mesma máquina)
-    me, other = os.getpid(), os.getpid() + 1
+    me, other = os.getpid(), os.getppid()
     d = json.loads((tmp_path / "cfg" / "sessions" / f"{other}.json").read_text())
     assert d["messagingSocketPath"] == str(world["socks"] / "x.sock") and d["_orq_mirror"] == "b@laptop"
     assert (tmp_path / "cfg2" / "sessions" / f"{me}.json").exists() and (
