@@ -11,10 +11,67 @@ from pathlib import Path
 from conftest import PROJECT
 
 OUTBOX = Path(os.path.expanduser(PROJECT.partition(":")[2])) / "_outbox"
-PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc00000"
-    "0301010018dd8db00000000049454e44ae426082"
-)  # 1×1 px
+
+
+def png_bars(w: int = 320, h: int = 200) -> bytes:
+    """PNG com barras coloridas e uma diagonal: dá para ver no vídeo que a prévia de imagem funcionou."""
+    import struct
+    import zlib
+
+    cols = [(220, 60, 50), (240, 170, 40), (60, 160, 90), (50, 110, 200), (130, 70, 180), (40, 40, 40)]
+    rows = []
+    for y in range(h):
+        row = bytearray([0])
+        for x in range(w):
+            r, g, b = cols[x * len(cols) // w]
+            if abs(y - x * h // w) < 4:
+                r, g, b = 255, 255, 255
+            row += bytes((r, g, b))
+        rows.append(bytes(row))
+
+    def chunk(kind, data):
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+        + chunk(b"IEND", b"")
+    )
+
+
+def pdf_one_page(text: str = "QA do orq") -> bytes:
+    """PDF mínimo de uma página com um texto grande."""
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        None,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    stream = f"BT /F1 36 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs[3] = b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream"
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + o + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+PNG = png_bars()
+PDF = pdf_one_page()
 
 
 def clear_outbox():
@@ -33,22 +90,34 @@ def test_lista_previa_download_e_aviso(orq, agent):
     OUTBOX.mkdir(exist_ok=True)
     (OUTBOX / "relatório.md").write_text("# Relatório\n\nTudo **certo**.\n")
     time.sleep(1.1)
+    (OUTBOX / "relatorio.pdf").write_bytes(PDF)
+    time.sleep(1.1)
     (OUTBOX / "grafico.png").write_bytes(PNG)
     orq.page.click("#outbox .rf")  # ↻: relê agora (senão, no fim da rodada ou em 30 s)
-    orq.page.wait_for_function("() => document.querySelectorAll('#outbox .frow').length === 2")
-    assert orq.files() == ["grafico.png", "relatório.md"], orq.files()
-    assert "novo arquivo grafico.png" in orq.toast() or "arquivos novos" in orq.toast(), orq.toast()
-    assert orq.page.inner_text("#out").strip().endswith("2"), "contagem no 📂"
+    orq.page.wait_for_function("() => document.querySelectorAll('#outbox .frow').length === 3")
+    assert orq.files() == ["grafico.png", "relatorio.pdf", "relatório.md"], orq.files()
+    assert "arquivos novos" in orq.toast() or "novo arquivo" in orq.toast(), orq.toast()
+    assert orq.page.inner_text("#out").strip().endswith("3"), "contagem no 📂"
+    orq.page.wait_for_timeout(1500)  # pausas: o vídeo é para uma pessoa conferir
     assert orq.preview("relatório.md") == "DIV"
     assert "Tudo" in orq.page.inner_text("#view .vbody")
     assert orq.page.locator("#view .vbody strong").count() == 1, "markdown renderizado"
     orq.shot("arquivos-previa-md")
+    orq.page.wait_for_timeout(2500)
     orq.close_preview()
     assert orq.preview("grafico.png") == "IMG"
-    orq.page.wait_for_function("() => document.querySelector('#view img').naturalWidth === 1")
+    orq.page.wait_for_function("() => document.querySelector('#view img').naturalWidth === 320")
     orq.shot("arquivos-previa-png")
+    orq.page.wait_for_timeout(2500)
+    orq.close_preview()
+    assert (
+        orq.preview("relatorio.pdf") == "IFRAME"
+    )  # o visualizador é do navegador (no headless pode não desenhar)
+    orq.page.wait_for_timeout(3000)
+    orq.shot("arquivos-previa-pdf")
     orq.close_preview()
     assert orq.download("grafico.png") == PNG
+    assert orq.download("relatorio.pdf") == PDF
     assert orq.download("relat%C3%B3rio.md").startswith(b"# Relat")
     assert not orq.problems(), orq.problems()
 

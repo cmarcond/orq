@@ -498,6 +498,10 @@ async function loadFiles(base) {
   fl.busy = true;
   try {
     const r = await fetch(`/api/agent/${encodeURIComponent(base)}/files`, { headers: H });
+    if (r.status === 404) {
+      fl.busy = false; // o servidor ainda não conhece o agente (acabou de abrir): fica para a próxima
+      return;
+    }
     const j = await r.json().catch(() => ({ err: 'resposta inválida' }));
     fl.err = j.err || null;
     fl.dir = j.dir || fl.dir;

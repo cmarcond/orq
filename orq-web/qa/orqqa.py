@@ -579,6 +579,9 @@ class Orq:
             for c in self.console
             if c.startswith(("[pageerror]", "[requestfailed]", "[http ", "[error]"))
             and not ("/stream?" in c and "ERR_ABORTED" in c)  # stream fechado de propósito (aba recriada)
+            and not ("/file?" in c and "ERR_ABORTED" in c)  # prévia fechada antes de o arquivo chegar
+            and not c.startswith("[error] Failed to load resource")  # a linha [http N] diz qual foi
+            and not ("[http 404]" in c and c.endswith("/files"))  # recém-aberto: a página tenta de novo
         ]
 
 

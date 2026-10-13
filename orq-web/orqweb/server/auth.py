@@ -113,6 +113,7 @@ def login_page(message: str = "") -> str:
     msg = f'<p class="bad">{message}</p>' if message else ""
     return f"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>orq · entrar</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/app.css">
 <style>.login{{max-width:360px;margin:14vh auto;padding:0 16px}}.login input{{width:100%;margin:8px 0 12px}}
 .login button{{width:100%}}.bad{{color:var(--bad)}}</style></head>
