@@ -919,3 +919,58 @@ def test_upgrade_multi_reports_link_failure_without_dropping_levels(server):
     )
     assert status == 200 and body["levels"] == ["proj~professor@laptop"] and body["links"] == []
     assert body["link_errors"] == {"dados@server0": "o túnel ssh saiu"}
+
+
+def test_unlink_runs_on_the_machine_of_the_local_side_even_for_host_records(server):
+    """O registro que a máquina devolve (orq-agent links) tem host = onde o vínculo roda (lado local);
+    desfazer pela página, por qualquer dos dois lados, roda lá."""
+    port, ext, state = server
+    srv_ctx = server_ctx(port)
+    calls = []
+    srv_ctx.unlink = lambda host, a, b: calls.append((host, a, b)) or None
+    state.add_provisional(base_entry())
+    r = H.provisional_agent("r@server0", "server0", "gmail", "/h/r", time.time())
+    r["state"] = "waiting"
+    state.add_provisional(r)
+    ext.links = [
+        {
+            "local": "proj@laptop",
+            "remote": "r@server0",
+            "host": "laptop",
+            "remote_host": "server0",
+            "kind": "ssh",
+            "up": True,
+        }
+    ]
+    state.refresh_agents()
+    status, body, _ = req(port, "POST", "/api/agent/r%40server0/unlink", {"to": "proj@laptop"})
+    assert status == 200 and body["ok"] and calls == [("laptop", "proj@laptop", "r@server0")]
+    assert sorted(body["told"]) == ["proj@laptop", "r@server0"]  # entrega é de melhor esforço
+    assert req(port, "GET", "/api/state")[1]["links"] == []
+
+
+def test_downgrade_reports_unlink_failure_and_keeps_the_level_stop(server):
+    port, ext, state = server
+    srv_ctx = server_ctx(port)
+    srv_ctx.link = lambda host, a, b: None
+    srv_ctx.unlink = lambda host, a, b: "ssh caiu"
+    state.add_provisional(base_entry())
+    state.add_provisional(
+        {
+            "label": "dados@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/h/d",
+            "state": "waiting",
+            "kind": "sdk",
+        }
+    )
+    state.add_link(
+        {"local": "proj@laptop", "remote": "dados@server0", "host": "laptop", "kind": "ssh", "up": True}
+    )
+    assert req(port, "POST", "/api/agent/proj@laptop/upgrade", {"pipeline": "professor-executores"})[0] == 200
+    status, body, _ = req(port, "POST", "/api/agent/proj@laptop/downgrade", {})
+    assert status == 200 and body["stopped"] == ["proj~professor@laptop"] and body["unlinked"] == []
+    assert body["errors"] == {"vínculo proj~professor@laptop ⇄ dados@server0": "ssh caiu"}
+    links = req(port, "GET", "/api/state")[1]["links"]
+    assert any(lk["local"] == "proj~professor@laptop" for lk in links), "não desfeito: continua no estado"

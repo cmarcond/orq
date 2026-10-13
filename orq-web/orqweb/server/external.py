@@ -143,6 +143,7 @@ class External:
                 except ValueError:
                     links = []
         except (OSError, ValueError, subprocess.TimeoutExpired):
+            self.links_by_host.pop(host, None)  # sem a máquina, os vínculos dela não contam
             return host, [], "sem resposta"
         self.links_by_host[host] = [lk for lk in links if isinstance(lk, dict)]
         for a in items:
@@ -159,7 +160,7 @@ class External:
     # ---- vínculo entre agentes (orq-agent link/unlink na máquina do agente local)
     def link(self, host: str, local_label: str, remote_label: str) -> Optional[str]:
         """Devolve texto de erro ou None."""
-        return self._link_cmd(host, "link", local_label, remote_label, 90)
+        return self._link_cmd(host, "link", local_label, remote_label, 150)  # o link espera cartões e túnel
 
     def unlink(self, host: str, local_label: str, remote_label: str) -> Optional[str]:
         return self._link_cmd(host, "unlink", local_label, remote_label, 45)

@@ -63,8 +63,12 @@ o socket Unix em que recebe mensagens) e um `<pid>.<hash>.key` ao lado. `orq-age
 estica isso por ssh: sobe um `ssh -N` com o socket de cada agente encaminhado até a outra máquina
 (`-L`/`-R` com caminhos Unix) e espelha o cartão e a chave de cada um na pasta `sessions/` do outro,
 apontando para o socket encaminhado. Daí `A` e `B` se listam e se falam como se fossem locais. O
-vínculo fica numa sessão tmux `orql-<a>--<b>`; `orq-agent unlink` (ou o agente fechar, ou o túnel cair)
-apaga os espelhos nas duas máquinas e fecha o túnel. `orq-agent links` lista; `orq-agent peer` é o lado
+vínculo fica numa sessão tmux `orql-<a>--<b>`; `orq-agent unlink` (ou um dos agentes fechar, ou o túnel
+cair) fecha o túnel e apaga os espelhos nas duas máquinas, menos os que outro vínculo vivo ainda usa: o
+agente da aba e o professor acima dele, ligados ao mesmo executor remoto, dividem o mesmo cartão e o
+mesmo socket encaminhado (`orq-<pid>.sock`, nome que nenhuma sessão de verdade usa), e quem sobra assume
+o encaminhamento. Na mesma máquina, o espelho entre contas segue a mesma regra, recolhido quando um dos
+agentes fecha. `orq-agent links` lista; `orq-agent peer` é o lado
 remoto (imprime o cartão, grava ou apaga um espelho). Testado em 2026-10-12 entre laptop (OpenSSH 10) e
 server0 (OpenSSH 8.2), sem mexer no sshd. É a base dos vínculos entre chats na página (a fazer).
 

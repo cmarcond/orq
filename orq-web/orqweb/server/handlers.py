@@ -17,7 +17,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ..agent.files import OUTBOX
@@ -26,7 +26,7 @@ from . import pipelines
 from .assign import assign
 from .auth import Auth, login_page
 from .bridge import BridgeRegistry
-from .state import StateCache, pick_host_and_label, provisional_agent
+from .state import StateCache, link_pair, pick_host_and_label, provisional_agent
 
 STATIC = Path(__file__).with_name("static")
 CSP = (
@@ -421,22 +421,11 @@ def make_handler(ctx: Context):
                 )
             if label == to:
                 return self.reply(400, {"err": "um agente não se vincula a si mesmo"})
-            if any(same_pair(lk, label, to) and lk.get("up") for lk in ctx.state.links):
+            if any(link_pair(lk) == frozenset((label, to)) and lk.get("up") for lk in ctx.state.links):
                 return self.reply(400, {"err": "já estão vinculados"})
-            host = a.get("host") or ctx.local_host or "?"
-            err = ctx.link(host, label, to)
+            record, err = self.make_link(a, b)
             if err:
                 return self.reply(500, {"err": f"vínculo falhou: {err}"})
-            record = {
-                "local": label,
-                "remote": to,
-                "host": host,
-                "kind": "local" if (b.get("host") or ctx.local_host) == host else "ssh",
-                "local_name": a.get("name") or session_name(label),
-                "remote_name": b.get("name") or session_name(to),
-                "up": True,
-            }
-            ctx.state.add_link(record)
             errs = [
                 e
                 for e in (ctx.bridges.deliver(x["label"], link_note(x, y)) for x, y in ((a, b), (b, a)))
@@ -444,25 +433,53 @@ def make_handler(ctx: Context):
             ]
             return self.reply(200, {"ok": True, "link": record, "note_errors": errs})
 
+        def make_link(self, a: dict, b: dict) -> Tuple[Optional[dict], Optional[str]]:
+            """`orq-agent link` na máquina de `a` e o registro do vínculo no estado (até a máquina o
+            listar). `host` do registro é sempre a máquina onde o vínculo roda: a de `a`."""
+            host = link_host(a, ctx.local_host)
+            err = ctx.link(host, a["label"], b["label"])
+            if err:
+                return None, err
+            record = {
+                "local": a["label"],
+                "remote": b["label"],
+                "host": host,
+                "remote_host": link_host(b, ctx.local_host),
+                "kind": "local" if link_host(b, ctx.local_host) == host else "ssh",
+                "local_name": a.get("name") or session_name(a["label"]),
+                "remote_name": b.get("name") or session_name(b["label"]),
+                "up": True,
+            }
+            ctx.state.add_link(record)
+            return record, None
+
+        def break_link(self, rec: dict, closing: Optional[str] = None) -> Tuple[Optional[str], List[str]]:
+            """`orq-agent unlink` na máquina do vínculo, tira-o do estado e avisa quem sobrou (com
+            `closing`, esse lado está sendo encerrado e não recebe aviso). Devolve (erro, avisados)."""
+            err = ctx.unlink(rec.get("host") or ctx.local_host or "?", rec["local"], rec["remote"])
+            if err:
+                return err, []
+            ctx.state.drop_link(rec["local"], rec["remote"])
+            told = []
+            for me, other in ((rec["local"], rec["remote"]), (rec["remote"], rec["local"])):
+                x = self.live_sdk(me) if me != closing else None
+                if x is not None and not ctx.bridges.deliver(
+                    x["label"], unlink_note(x, self.live_sdk(other), rec)
+                ):
+                    told.append(me)
+            return None, told
+
         def unlink_agents(self, label: str, body: dict) -> None:
             if not ctx.unlink:
                 return self.reply(400, {"err": "vínculos desligados"})
             to = (body.get("to") or "").strip()
-            rec = next((lk for lk in ctx.state.links if same_pair(lk, label, to)), None)
+            rec = next((lk for lk in ctx.state.links if link_pair(lk) == frozenset((label, to))), None)
             if rec is None:
                 return self.reply(404, {"err": "não há vínculo entre esses agentes"})
-            err = ctx.unlink(rec.get("host") or ctx.local_host or "?", rec["local"], rec["remote"])
+            err, told = self.break_link(rec)
             if err:
                 return self.reply(500, {"err": f"desfazer falhou: {err}"})
-            ctx.state.drop_link(rec["local"], rec["remote"])
-            a, b = self.live_sdk(rec["local"]), self.live_sdk(rec["remote"])
-            errs = []
-            for x, y in ((a, b), (b, a)):
-                if x is not None:
-                    e = ctx.bridges.deliver(x["label"], unlink_note(x, y, rec))
-                    if e:
-                        errs.append(e)
-            return self.reply(200, {"ok": True, "note_errors": errs})
+            return self.reply(200, {"ok": True, "told": told})
 
         def upgrade(self, label: str, body: dict) -> None:
             """Sobe os níveis de uma receita acima do agente da aba (mesma máquina, pasta e conta)."""
@@ -492,7 +509,7 @@ def make_handler(ctx: Context):
             others = []
             if p.multi:
                 for lk in ctx.state.links:
-                    if not lk.get("up") or not same_pair_has(lk, label):
+                    if not lk.get("up") or label not in link_pair(lk):
                         continue
                     other = lk["remote"] if lk.get("local") == label else lk["local"]
                     a = next(
@@ -527,22 +544,12 @@ def make_handler(ctx: Context):
             # recebem a nota de vínculo; falha aqui não derruba os níveis, só é reportada
             links, link_errors = [], {}
             bottom = started[0]
-            me = {"label": bottom, "name": session_name(bottom)}
+            me = {"label": bottom, "name": session_name(bottom), "host": host, "dir": cwd}
             for a in others:
-                err = ctx.link(host, bottom, a["label"]) if ctx.link else "vínculos desligados"
+                rec, err = self.make_link(me, a) if ctx.link else (None, "vínculos desligados")
                 if err:
                     link_errors[a["label"]] = err
                     continue
-                rec = {
-                    "local": bottom,
-                    "remote": a["label"],
-                    "host": host,
-                    "kind": "local" if (a.get("host") or ctx.local_host) == host else "ssh",
-                    "local_name": session_name(bottom),
-                    "remote_name": a.get("name") or session_name(a["label"]),
-                    "up": True,
-                }
-                ctx.state.add_link(rec)
                 links.append(rec)
                 ctx.bridges.deliver(a["label"], link_note(a, me))
             return self.reply(
@@ -585,17 +592,13 @@ def make_handler(ctx: Context):
             errors = {}
             unlinked = []
             for lv in reversed(above):  # do topo para baixo
-                for rec in [lk for lk in ctx.state.links if lv in (lk.get("local"), lk.get("remote"))]:
+                for rec in [lk for lk in ctx.state.links if lv in link_pair(lk)]:
                     # vínculos do nível (receita multi): desfaz antes de fechar, para limpar os espelhos
-                    if ctx.unlink and not ctx.unlink(
-                        rec.get("host") or ctx.local_host or "?", rec["local"], rec["remote"]
-                    ):
-                        other = rec["remote"] if rec["local"] == lv else rec["local"]
-                        o = self.live_sdk(other)
-                        if o is not None:
-                            ctx.bridges.deliver(other, unlink_note(o, {"name": session_name(lv)}, rec))
-                        unlinked.append(other)
-                    ctx.state.drop_link(rec["local"], rec["remote"])
+                    err, _ = self.break_link(rec, closing=lv) if ctx.unlink else ("vínculos desligados", [])
+                    if err:
+                        errors[f"vínculo {rec['local']} ⇄ {rec['remote']}"] = err
+                    else:
+                        unlinked.append(rec["remote"] if rec["local"] == lv else rec["local"])
                 err = ctx.bridges.deliver(lv, {"orq": "quit"})
                 if err:
                     errors[lv] = err
@@ -636,12 +639,9 @@ def make_handler(ctx: Context):
     return Handler
 
 
-def same_pair(lk: dict, a: str, b: str) -> bool:
-    return {lk.get("local"), lk.get("remote")} == {a, b}
-
-
-def same_pair_has(lk: dict, a: str) -> bool:
-    return a in (lk.get("local"), lk.get("remote"))
+def link_host(agent: dict, local_host: Optional[str]) -> str:
+    """Máquina de um agente, como o `orq-agent link` precisa (a local é `local_host`, não `laptop`)."""
+    return agent.get("host") or local_host or "?"
 
 
 def _user_msg(text: str) -> dict:
@@ -661,9 +661,8 @@ def link_note(me: dict, other: dict) -> dict:
 
 
 def unlink_note(me: dict, other: Optional[dict], rec: dict) -> dict:
-    name = (other or {}).get("name") or rec.get(
-        "remote_name" if rec.get("local") == me.get("label") else "local_name"
-    )
+    mine_is_local = rec.get("local") == me.get("label")
+    name = (other or {}).get("name") or rec.get("remote_name" if mine_is_local else "local_name")
     return _user_msg(f"[orq] Vínculo com o agente `{name}` desfeito: ele não está mais ao seu alcance.")
 
 

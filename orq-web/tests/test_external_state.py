@@ -438,3 +438,13 @@ def test_new_link_outlives_a_listing_that_started_before_it():
     assert lk["sessions"] == {"a@laptop": 1} and "page_ts" not in lk
     st.drop_link("b@laptop", "a@laptop")
     assert st.snapshot()["links"] == []
+
+
+def test_links_of_an_unreachable_host_are_dropped():
+    links_json = '[{"local": "k@server0", "remote": "p@laptop", "up": true}]'
+    r = FakeRunner({"--status-json": (0, "[]\n" + External.LINKS_MARK + "\n" + links_json + "\n")})
+    ext = External(Path("/b"), r)
+    ext.agents("server0")
+    assert len(ext.links) == 1
+    ext.run = lambda cmd, timeout: (_ for _ in ()).throw(OSError("sem rede"))
+    assert ext.agents("server0")[2] == "sem resposta" and ext.links == []

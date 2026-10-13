@@ -21,9 +21,10 @@ Uso:
   orq-agent unlink LOCAL REMOTO@MÁQUINA   desfaz (apaga os espelhos nas duas máquinas, fecha o túnel)
   orq-agent links              vínculos desta máquina em JSON
   orq-agent link-run LOCAL REMOTO         o processo do vínculo em primeiro plano (é o que o link abre)
-  orq-agent peer NOME [--mirror --sock S --from L | --unmirror PID]
-        lado remoto do vínculo: imprime o cartão de sessão do agente NOME (ou grava/apaga o espelho de
-        um agente de outra máquina na pasta sessions/ dele)
+  orq-agent peer NOME [--probe PID | --mirror --sock S --from L | --unmirror PID --sock S]
+        lado remoto do vínculo: imprime o cartão de sessão do agente NOME (com --probe, diz também se o
+        socket encaminhado do pid dado já está de pé aqui), ou grava/apaga o espelho de um agente de
+        outra máquina na pasta sessions/ dele. Erro vem como JSON {"err": …} (código 0: é resposta)
   orq-agent ls PASTA           arquivos da pasta em JSON [{name, size, mtime}], do mais novo ao mais antigo
   orq-agent cat ARQ [--range INI-FIM]
         manda uma linha JSON {size, start, length} e os bytes do arquivo (ou da faixa, fim inclusivo).
@@ -265,34 +266,37 @@ def _agent_sessions_dir(label: str):
 
 
 def cmd_peer(a: argparse.Namespace) -> int:
+    """Lado remoto do vínculo. Sempre responde JSON numa linha; erro é {"err": …} com código 0, porque
+    quem chama (o link-run, por ssh) lê a resposta, não o código."""
     import json
+
+    def out(obj: dict) -> int:
+        print(json.dumps(obj, ensure_ascii=False))
+        return 0
 
     sessions, name = _agent_sessions_dir(a.label)
     if sessions is None:
-        print(json.dumps({"err": name}))
-        return 1
-    entry = (
-        link.find_entry(name, [sessions]) if (a.unmirror or a.mirror) else link.wait_entry(name, [sessions])
-    )
+        return out({"err": name})
     if a.unmirror:
-        sock = os.path.join(entry.sock_dir, f"{a.unmirror}.sock") if entry else None
-        link.remove_mirror(sessions, a.unmirror, sock)
-        print(json.dumps({"ok": True}))
-        return 0
+        link.remove_mirror(sessions, a.unmirror, a.sock)
+        return out({"ok": True})
     if a.mirror:
         try:
             record = json.loads(sys.stdin.read())
             paths = link.write_mirror(sessions, record, a.sock, a.origin or "?")
-        except (ValueError, KeyError, OSError) as e:
-            print(json.dumps({"err": f"espelho inválido: {e}"}))
-            return 1
-        print(json.dumps({"ok": True, "paths": [str(p) for p in paths]}))
-        return 0
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
+            return out({"err": f"espelho inválido: {e}"})
+        return out({"ok": True, "paths": [str(p) for p in paths]})
+    entry = link.wait_entry(name, [sessions])
     if entry is None:
-        print(json.dumps({"err": f"{a.label} não está rodando com nome {name}"}))
-        return 1
-    print(json.dumps(entry.record(), ensure_ascii=False))
-    return 0
+        return out({"err": f"{a.label} não está rodando com nome {name}"})
+    rec = entry.record()
+    if a.probe:
+        sock = Path(link.mirror_sock(entry.sock_dir, a.probe))
+        rec["probe_alive"] = link.socket_alive(sock)
+        if not rec["probe_alive"] and sock.exists():
+            sock.unlink()  # sobra de um túnel que caiu: o -R do próximo recusa caminho que já existe
+    return out(rec)
 
 
 def cmd_link(a: argparse.Namespace) -> int:
@@ -372,7 +376,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mirror", action="store_true", help="grava o espelho lido do stdin")
     p.add_argument("--sock", help="caminho do socket encaminhado (com --mirror)")
     p.add_argument("--from", dest="origin", help="rótulo do agente de origem (com --mirror)")
-    p.add_argument("--unmirror", type=int, metavar="PID", help="apaga o espelho desse pid")
+    p.add_argument("--unmirror", type=int, metavar="PID", help="apaga o espelho desse pid (e --sock)")
+    p.add_argument("--probe", type=int, metavar="PID", help="diz se o socket encaminhado desse pid vive")
     p.set_defaults(fn=cmd_peer)
     p = sub.add_parser("cat")
     p.add_argument("path")

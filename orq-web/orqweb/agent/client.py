@@ -132,6 +132,31 @@ def start_command(
     return cmd
 
 
+def spawn_detached(cmd: List[str], sess: str, log: Path, cwd: str) -> str:
+    """Roda `cmd` solto: numa sessão tmux `sess` (matando uma homônima) ou, sem tmux, em segundo plano.
+
+    O stderr vai para `log`: o que o processo diz ao sair some com a sessão tmux, e fica lá para
+    diagnóstico. Devolve uma linha dizendo como abriu."""
+    env = dict(os.environ)
+    env.pop("TMUX", None)
+    tmux = shutil.which("tmux")
+    if not tmux:
+        with open(log, "ab") as fh:
+            subprocess.Popen(
+                cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True, env=env
+            )
+        return f"em segundo plano (sem tmux); log em {log}"
+    subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
+    shell = tmux_shell(cmd, env) + " 2>>" + shlex.quote(str(log))
+    subprocess.run(
+        [tmux, "new-session", "-d", "-s", sess, "-c", cwd, shell],
+        env=env,
+        check=True,
+        cwd=os.path.expanduser("~"),  # o servidor tmux herda a pasta de quem o cria; a pessoal nunca some
+    )
+    return f"na sessão tmux {sess}"
+
+
 def tmux_shell(cmd: List[str], env: dict) -> str:
     """Linha de shell para o tmux: leva o PYTHONPATH junto.
 
@@ -167,31 +192,14 @@ def spawn(
         if not stop_and_wait(sock):
             raise RuntimeError(f"o agente {label} não encerrou para ser reaberto")
     cmd = start_command(label, folder, account, mode, role_file, parent, level)
-    env = dict(os.environ)
-    env.pop("TMUX", None)
     Path(os.path.expanduser(folder)).mkdir(parents=True, exist_ok=True)
-    tmux = shutil.which("tmux")
-    if tmux:
-        sess = "orqs-" + config.safe_label(label.split("@")[0])
-        subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
-        d.mkdir(parents=True, exist_ok=True)
-        # o que o supervisor escreve no stderr (ex.: "já existe um agente rodando") some com a sessão
-        # tmux quando ele sai na hora; fica também em supervisor.log para diagnóstico
-        shell = tmux_shell(cmd, env) + " 2>>" + shlex.quote(str(d / "supervisor.log"))
-        subprocess.run(
-            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser(folder), shell],
-            env=env,
-            check=True,
-            cwd=os.path.expanduser("~"),  # o servidor tmux herda a pasta de quem o cria; a pessoal nunca some
-        )
-        how = f"aberto na sessão tmux {sess}"
-    else:
-        d.mkdir(parents=True, exist_ok=True)
-        log = open(d / "supervisor.log", "ab")
-        subprocess.Popen(
-            cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, env=env
-        )
-        how = f"aberto em segundo plano (sem tmux); log em {d / 'supervisor.log'}"
+    d.mkdir(parents=True, exist_ok=True)
+    how = spawn_detached(
+        cmd,
+        "orqs-" + config.safe_label(label.split("@")[0]),
+        d / "supervisor.log",
+        os.path.expanduser(folder),
+    )
     deadline = time.time() + wait
     while time.time() < deadline:
         if sock.exists():
@@ -201,9 +209,10 @@ def spawn(
 
 
 # ---------------------------------------------------------------- vínculos (orq-agent link)
-def spawn_link(local_label: str, remote_label: str, wait: float = 45.0) -> str:
+def spawn_link(local_label: str, remote_label: str, wait: float = 100.0) -> str:
     """Sobe `orq-agent link-run` numa sessão tmux `orql-<a>--<b>` (sem tmux: em segundo plano) e espera o
-    vínculo ficar de pé. Devolve uma linha; RuntimeError se não subiu (com o motivo gravado pelo link)."""
+    vínculo ficar de pé. Na mesma máquina não há processo: só os espelhos entre contas e o registro.
+    Devolve uma linha; RuntimeError se não subiu (com o motivo gravado pelo link)."""
     from . import link as L
 
     st = L.StateFile(L.link_file(local_label, remote_label))
@@ -212,42 +221,30 @@ def spawn_link(local_label: str, remote_label: str, wait: float = 45.0) -> str:
         for lab in (local_label, remote_label):
             if not socket_alive(config.state_dir(lab) / "agent.sock"):
                 raise RuntimeError(f"{lab} não está rodando")
-        if cur.get("kind") == "local":
-            L.local_unlink(cur)  # sobras de um vínculo anterior entre os mesmos dois
+        if cur.get("resources"):  # sobras de um vínculo anterior entre os mesmos dois
+            st.write(up=False)
+            L.release(cur["resources"], L.config.state_root(), st.path)
         state = L.local_link(local_label, remote_label)
         st.write(**state)
-        n = len(state["mirrors"])
+        n = len(state["resources"])
         return "vínculo local (mesma máquina): " + (
-            "os dois já se enxergavam" if not n else f"{n} arquivos espelhados entre as contas"
+            "os dois já se enxergavam" if not n else f"{n} cartões espelhados entre as contas"
         )
-    if cur.get("up") and L.pid_alive(cur.get("pid")):
-        return "já de pé"
+    if L.pid_alive(cur.get("pid")):  # de pé, ou ainda subindo: não derruba no meio
+        return "já de pé" if cur.get("up") else "ainda subindo"
     try:
         st.path.unlink()
     except OSError:
         pass
     cmd = [sys.executable, "-m", "orqweb.agent.cli", "link-run", local_label, remote_label]
-    env = dict(os.environ)
-    env.pop("TMUX", None)
     d = L.links_dir(local_label)
     d.mkdir(parents=True, exist_ok=True)
-    log = d / (config.safe_label(remote_label) + ".log")
-    tmux = shutil.which("tmux")
-    sess = link_session(local_label, remote_label)
-    if tmux:
-        subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
-        shell = tmux_shell(cmd, env) + " 2>>" + shlex.quote(str(log))
-        subprocess.run(
-            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser("~"), shell],
-            env=env,
-            check=True,
-            cwd=os.path.expanduser("~"),
-        )
-        how = f"vínculo na sessão tmux {sess}"
-    else:
-        fh = open(log, "ab")
-        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True, env=env)
-        how = f"vínculo em segundo plano; log em {log}"
+    how = "vínculo " + spawn_detached(
+        cmd,
+        link_session(local_label, remote_label),
+        d / (config.safe_label(remote_label) + ".log"),
+        os.path.expanduser("~"),
+    )
     deadline = time.time() + wait
     while time.time() < deadline:
         cur = st.read()
@@ -256,7 +253,7 @@ def spawn_link(local_label: str, remote_label: str, wait: float = 45.0) -> str:
         if cur and not cur.get("up"):
             raise RuntimeError(cur.get("why") or "o vínculo não subiu")
         time.sleep(0.3)
-    raise RuntimeError(f"o vínculo não subiu em {wait:.0f} s ({how}; veja {log})")
+    raise RuntimeError(f"o vínculo não subiu em {wait:.0f} s ({how})")
 
 
 def link_session(local_label: str, remote_label: str) -> str:
@@ -270,8 +267,9 @@ def unlink(local_label: str, remote_label: str, wait: float = 20.0) -> str:
     st = L.StateFile(L.link_file(local_label, remote_label))
     cur = st.read()
     if cur.get("kind") == "local":
-        L.local_unlink(cur)
-        st.write(up=False, why="unlink", mirrors=[])
+        st.write(up=False, why="unlink")
+        kept = L.release(cur.get("resources") or [], L.config.state_root(), st.path)
+        st.write(resources=kept)
         return "vínculo desfeito"
     pid = cur.get("pid")
     if not (cur.get("up") and L.pid_alive(pid)):

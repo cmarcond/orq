@@ -1,17 +1,24 @@
-"""Vínculo entre máquinas (orq-agent link): registro de sessões, espelho, túnel e o ciclo de vida, sem ssh."""
+"""Vínculo entre agentes (orq-agent link): registro de sessões, espelhos compartilhados, túnel e o ciclo
+de vida, sem ssh de verdade (a outra máquina e o `ssh -N` são falsos; os sockets são reais)."""
 
 import json
 import os
+import shutil
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
 
 from orqweb import config
 from orqweb.agent import cli, client, link
+from orqweb.agent.state import StateFile
 
 
 def entry(sessions: Path, pid: int, name: str, sock: str, key: bool = True, **extra) -> Path:
@@ -21,6 +28,13 @@ def entry(sessions: Path, pid: int, name: str, sock: str, key: bool = True, **ex
     if key:
         (sessions / f"{pid}.abc123.key").write_text(json.dumps({"peerToken": f"tok-{pid}"}))
     return sessions / f"{pid}.json"
+
+
+def listen(path: Path) -> socket.socket:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(str(path))
+    s.listen(64)  # ninguém aceita: a fila precisa caber todos os `socket_alive`
+    return s
 
 
 # ---------------------------------------------------------------- registro
@@ -40,25 +54,11 @@ def test_find_entry_by_name_alive_only_and_never_a_mirror(tmp_path):
     assert rec["sessions_dir"] == str(s) and rec["json"]["pid"] == 11
     assert link.find_entry("b-laptop", [s], alive).key_path is None
     assert link.find_entry("morto-laptop", [s], alive) is None, "pid morto não conta"
-    assert link.find_entry("c-server0", [s], alive) is None, "espelho de outra máquina não é sessão local"
+    assert link.find_entry("c-server0", [s], alive) is None, "espelho não é sessão local"
     assert link.find_entry("x", [s], alive) is None
 
 
-def test_sessions_dirs_dedupes_accounts_sharing_a_dir():
-    conf = config.parse(
-        {
-            "accounts": [
-                {"name": "a", "config_dir": "~/.claude-a"},
-                {"name": "b", "config_dir": "~/.claude-b"},
-                {"name": "c", "config_dir": "~/.claude-a"},
-            ]
-        }
-    )
-    assert [d.name for d in link.sessions_dirs(conf)] == ["sessions", "sessions"]
-    assert len({str(d) for d in link.sessions_dirs(conf)}) == 2
-
-
-def test_write_and_remove_mirror(tmp_path):
+def test_write_mirror_validates_and_never_covers_a_real_session(tmp_path):
     s = tmp_path / "sessions"
     rec = {
         "name": "x-server0",
@@ -69,69 +69,114 @@ def test_write_and_remove_mirror(tmp_path):
             "name": "x-server0",
             "messagingSocketPath": "/run/user/1000/cc-socks/500.sock",
         },
-        "key_name": "500.k.key",
+        "key_name": "500.1f2e.key",
         "key": "segredo",
     }
-    paths = link.write_mirror(s, rec, "/tmp/cc-socks/500.sock", "x@server0")
-    assert [p.name for p in paths] == ["500.json", "500.k.key"]
+    paths = link.write_mirror(s, rec, "/tmp/cc-socks/orq-500.sock", "x@server0")
+    assert [p.name for p in paths] == ["500.json", "500.1f2e.key"]
     d = json.loads((s / "500.json").read_text())
-    assert d["messagingSocketPath"] == "/tmp/cc-socks/500.sock" and d["_orq_mirror"] == "x@server0"
-    assert (s / "500.k.key").read_text() == "segredo" and oct(os.stat(s / "500.k.key").st_mode)[-3:] == "600"
+    assert d["messagingSocketPath"] == "/tmp/cc-socks/orq-500.sock" and d["_orq_mirror"] == "x@server0"
+    assert (s / "500.1f2e.key").read_text() == "segredo"
+    assert oct(os.stat(s / "500.1f2e.key").st_mode)[-3:] == "600"
     assert rec["json"]["messagingSocketPath"].startswith("/run"), "o registro de origem não muda"
-    sock = tmp_path / "500.sock"
+    link.write_mirror(s, rec, "/tmp/cc-socks/orq-500.sock", "x@server0")  # de novo: idempotente
+    # nome de chave que não é <pid>.<hex>.key: recusado (vem de outra máquina; não escreve fora da pasta)
+    for bad in ("../x", "501.aa.key", "500.key", "500.zz/.key"):
+        with pytest.raises(ValueError):
+            link.write_mirror(s, {**rec, "key_name": bad}, "/x", "y")
+    # uma sessão DE VERDADE com o mesmo pid (pids se repetem entre máquinas): não escreve por cima
+    entry(s, 600, "local-laptop", "/tmp/cc-socks/600.sock")
+    with pytest.raises(RuntimeError, match="sessão local com pid 600"):
+        link.write_mirror(s, {**rec, "pid": 600, "key_name": "600.ab.key"}, "/x", "y")
+    assert json.loads((s / "600.json").read_text())["name"] == "local-laptop"
+    # remover: só espelhos; a sessão de verdade fica
+    sock = tmp_path / "orq-500.sock"
     sock.write_text("")
-    link.remove_mirror(s, 500, str(sock))
-    assert not list(s.iterdir()) and not sock.exists()
-    link.remove_mirror(s, 500, str(sock))  # de novo: nada a fazer, sem erro
+    assert link.remove_mirror(s, 500, str(sock)) is True
+    assert not (s / "500.json").exists() and not (s / "500.1f2e.key").exists() and not sock.exists()
+    assert link.remove_mirror(s, 500) is True, "já apagado: nada a fazer, sem erro"
+    assert link.remove_mirror(s, 600) is False and (s / "600.json").exists()
+    assert (s / "600.abc123.key").exists()
     assert link.write_mirror(s, {**rec, "key_name": None, "key": None}, "/x", "y") == [s / "500.json"]
+    assert link.mirror_sock("/tmp/cc-socks", 7) == "/tmp/cc-socks/orq-7.sock"
 
 
 # ---------------------------------------------------------------- túnel
-def test_tunnel_command_forwards_both_sockets(tmp_path):
-    e = link.Entry(tmp_path / "24.json", None, {"pid": 24, "messagingSocketPath": "/tmp/cc-socks/24.sock"})
-    r = {"pid": 90, "sock": "/run/user/1000/cc-socks/90.sock"}
-    cmd = link.tunnel_command("server0", e, r, ["ssh", "-F", "cfg"])
+def test_tunnel_command_only_the_forwards_asked():
+    cmd = link.tunnel_command("server0", [("-L", "/a/orq-90.sock", "/b/90.sock")], ["ssh", "-F", "cfg"])
     assert cmd[:4] == ["ssh", "-F", "cfg", "-N"] and cmd[-1] == "server0"
-    assert cmd[cmd.index("-L") + 1] == "/tmp/cc-socks/90.sock:/run/user/1000/cc-socks/90.sock"
-    assert cmd[cmd.index("-R") + 1] == "/run/user/1000/cc-socks/24.sock:/tmp/cc-socks/24.sock"
+    assert cmd[cmd.index("-L") + 1] == "/a/orq-90.sock:/b/90.sock" and "-R" not in cmd
     assert "ExitOnForwardFailure=yes" in cmd and "StreamLocalBindUnlink=yes" in cmd
+    both = link.tunnel_command("h", [("-L", "l", "r"), ("-R", "rr", "ll")])
+    assert both[both.index("-R") + 1] == "rr:ll"
 
 
 # ---------------------------------------------------------------- ciclo de vida
 class FakeTunnel:
-    """O ssh -N: cria o socket encaminhado e fica vivo até terminate()."""
+    """O ssh -N: escuta de verdade nos sockets -L (para `socket_alive` ver) e vive até terminate()."""
 
     instances = []
 
     def __init__(self, cmd, **kw):
         self.cmd, self.pid, self.rc = cmd, 4242, None
-        self.stderr = None
+        self.listeners = []
         FakeTunnel.instances.append(self)
-        local_sock = cmd[cmd.index("-L") + 1].split(":")[0]
-        Path(local_sock).write_text("")
+        for i, a in enumerate(cmd):
+            if a == "-L":
+                path = cmd[i + 1].split(":")[0]
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                self.listeners.append((listen(Path(path)), path))
+
+    @property
+    def flags(self):
+        return [a for a in self.cmd if a in ("-L", "-R")]
 
     def poll(self):
         return self.rc
 
     def terminate(self):
         self.rc = 0
+        for s, path in self.listeners:
+            s.close()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self.listeners = []
 
-    def kill(self):
-        self.rc = -9
+    kill = terminate
 
     def wait(self, t=None):
         return self.rc
 
 
 @pytest.fixture
-def world(tmp_path, monkeypatch):
-    """Conta `g` com sessions/ em tmp, o agente local `a@laptop` vivo (pid = este processo), estado em tmp."""
-    monkeypatch.setenv("ORQ_STATE_DIR", str(tmp_path / "state"))
-    conf = config.parse({"accounts": [{"name": "g", "config_dir": str(tmp_path / "cfg")}]})
-    socks = tmp_path / "socks"
+def world(monkeypatch):
+    """Conta `g` com sessions/ em tmp, o agente local `a@laptop` vivo (pid = este processo), estado em tmp
+    e a outra máquina de mentira (`run_remote`): cartão de `b@server0`, sonda, espelho."""
+    tmp = Path(tempfile.mkdtemp(prefix="orql", dir="/tmp"))  # socket Unix: caminho curto
+    monkeypatch.setenv("ORQ_STATE_DIR", str(tmp / "state"))
+    conf = config.parse(
+        {
+            "accounts": [
+                {"name": "g", "config_dir": str(tmp / "cfg")},
+                {"name": "h", "config_dir": str(tmp / "cfg2")},
+            ]
+        }
+    )
+    monkeypatch.setattr(link.config, "load", lambda: conf)
+    socks = tmp / "socks"
     socks.mkdir()
-    sessions = tmp_path / "cfg" / "sessions"
-    entry(sessions, os.getpid(), "a-laptop", str(socks / f"{os.getpid()}.sock"))
+    sessions = tmp / "cfg" / "sessions"
+    me = os.getpid()
+    entry(sessions, me, "a-laptop", str(socks / f"{me}.sock"))
+    for lab, acc in (("a@laptop", "g"), ("c@laptop", "g"), ("b@laptop", "h")):
+        d = config.state_dir(lab)
+        d.mkdir(parents=True, exist_ok=True)
+        StateFile(d / "state.json").write(label=lab, account=acc, kind="sdk")
     remote = {
         "name": "b-server0",
         "pid": 777,
@@ -142,96 +187,159 @@ def world(tmp_path, monkeypatch):
             "name": "b-server0",
             "messagingSocketPath": "/run/user/1000/cc-socks/777.sock",
         },
-        "key_name": "777.zz.key",
+        "key_name": "777.ab12.key",
         "key": "segredo-remoto",
     }
-    calls = []
-
-    def run_remote(args, input=None):
-        calls.append((args, input))
-        if args[:2] == ["peer", "b@server0"] and len(args) == 2:
-            return json.dumps(remote if not calls_fail.get("peer") else {"err": calls_fail["peer"]}) + "\n"
-        return '{"ok": true}\n'
-
-    calls_fail = {}
-    FakeTunnel.instances.clear()
-    return dict(
+    w = dict(
+        tmp=tmp,
         conf=conf,
         sessions=sessions,
         socks=socks,
         remote=remote,
-        calls=calls,
-        run_remote=run_remote,
-        fail=calls_fail,
+        calls=[],
+        fail={},
+        remote_alive=False,
     )
+
+    def run_remote(args, input=None):
+        w["calls"].append((args, input))
+        if args[:3] == ["peer", "b@server0", "--probe"]:
+            if w["fail"].get("peer"):
+                return json.dumps({"err": w["fail"]["peer"]}) + "\n"
+            return json.dumps(dict(w["remote"], probe_alive=w["remote_alive"])) + "\n"
+        return '{"ok": true}\n'
+
+    w["run_remote"] = run_remote
+    FakeTunnel.instances.clear()
+    yield w
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def mk(world, local="a@laptop", **kw):
+    base = dict(conf=world["conf"], run_remote=world["run_remote"], popen=FakeTunnel, log=lambda s: None)
+    return link.Link(local, "b@server0", **{**base, **kw})
+
+
+def state_of(a, b):
+    return json.loads(link.link_file(a, b).read_text())
 
 
 def test_link_up_mirrors_both_sides_and_down_cleans(world):
-    lk = link.Link(
-        "a@laptop",
-        "b@server0",
-        conf=world["conf"],
-        run_remote=world["run_remote"],
-        popen=FakeTunnel,
-        log=lambda s: None,
-    )
+    lk = mk(world)
     lk.up()
     me = os.getpid()
-    local_mirror_sock = str(world["socks"] / "777.sock")
-    # espelho local do remoto, apontando para o socket encaminhado aqui
+    local_sock = str(world["socks"] / "orq-777.sock")
+    remote_sock = f"/run/user/1000/cc-socks/orq-{me}.sock"
+    # espelho local do remoto, apontando para o socket encaminhado (nome próprio, nunca o de uma sessão)
     d = json.loads((world["sessions"] / "777.json").read_text())
-    assert d["messagingSocketPath"] == local_mirror_sock and d["_orq_mirror"] == "b@server0"
-    assert (world["sessions"] / "777.zz.key").read_text() == "segredo-remoto"
-    # a outra máquina: pediu o cartão, limpou sobras, gravou o espelho do local com o socket encaminhado lá
+    assert d["messagingSocketPath"] == local_sock and d["_orq_mirror"] == "b@server0"
+    assert (world["sessions"] / "777.ab12.key").read_text() == "segredo-remoto"
+    # a outra máquina: cartão + sonda numa chamada só, depois o espelho meu com o socket encaminhado lá
     args = [c[0] for c in world["calls"]]
-    assert args[0] == ["peer", "b@server0"] and args[1] == ["peer", "b@server0", "--unmirror", str(me)]
-    assert args[2][:5] == ["peer", "b@server0", "--mirror", "--sock", f"/run/user/1000/cc-socks/{me}.sock"]
-    assert args[2][5:] == ["--from", "a@laptop"]
-    sent = json.loads(world["calls"][2][1])
+    assert args[0] == ["peer", "b@server0", "--probe", str(me)]
+    assert args[1] == ["peer", "b@server0", "--mirror", "--sock", remote_sock, "--from", "a@laptop"]
+    sent = json.loads(world["calls"][1][1])
     assert sent["name"] == "a-laptop" and sent["pid"] == me and "tok-" in sent["key"]
-    # túnel e estado
+    # túnel com os dois encaminhamentos (nada estava de pé) e estado com host = ONDE o vínculo roda
     t = FakeTunnel.instances[-1]
-    assert t.cmd[t.cmd.index("-R") + 1].startswith(f"/run/user/1000/cc-socks/{me}.sock:")
-    st = json.loads(link.link_file("a@laptop", "b@server0").read_text())
-    assert st["up"] and st["pid"] == me and st["tunnel_pid"] == 4242 and st["remote_name"] == "b-server0"
+    assert t.flags == ["-L", "-R"] and link.socket_alive(Path(local_sock))
+    assert t.cmd[t.cmd.index("-R") + 1] == f"{remote_sock}:{world['socks']}/{me}.sock"
+    st = state_of("a@laptop", "b@server0")
+    assert st["host"] == "laptop" and st["remote_host"] == "server0" and st["kind"] == "ssh"
+    assert st["up"] and st["pid"] == me and st["tunnel_pid"] == 4242 and st["forwards"] == ["-L", "-R"]
+    assert st["resources"] == [
+        f"card:{world['sessions']}/777",
+        f"sock:{local_sock}",
+        f"remote:server0:/home/c/.claude/sessions/{me}",
+    ]
     assert link.list_links()[0]["up"] is True
-    # o túnel cai: wait volta com o motivo; down desfaz tudo
+    # o túnel cai: wait volta com o motivo (e a última linha do log do ssh); down desfaz tudo
+    lk.tunnel_log.write_text("bind: Address already in use\n")
     t.rc = 255
-    assert lk.wait(poll=0.01) == "túnel caiu"
+    assert lk.wait(poll=0.01).startswith("túnel caiu: bind: Address")
     lk.down("túnel caiu")
-    assert not (world["sessions"] / "777.json").exists() and not (world["sessions"] / "777.zz.key").exists()
-    assert not Path(local_mirror_sock).exists()
-    assert world["calls"][-1][0] == ["peer", "b@server0", "--unmirror", str(me)]
-    st = json.loads(link.link_file("a@laptop", "b@server0").read_text())
-    assert st["up"] is False and st["why"] == "túnel caiu" and link.list_links()[0]["up"] is False
-    # stop() (SIGTERM do unlink) tira o wait
-    lk2 = link.Link(
-        "a@laptop",
-        "b@server0",
-        conf=world["conf"],
-        run_remote=world["run_remote"],
-        popen=FakeTunnel,
-        log=lambda s: None,
+    assert not (world["sessions"] / "777.json").exists() and not (world["sessions"] / "777.ab12.key").exists()
+    assert not Path(local_sock).exists()
+    assert world["calls"][-1][0] == ["peer", "b@server0", "--unmirror", str(me), "--sock", remote_sock]
+    st = state_of("a@laptop", "b@server0")
+    assert st["up"] is False and st["why"] == "túnel caiu" and st["resources"] == []
+    assert link.list_links()[0]["up"] is False
+
+
+def test_two_links_share_mirror_and_socket_and_the_survivor_takes_over(world, monkeypatch):
+    """O agente da aba e o professor acima dele (mesma conta) ligados ao mesmo executor remoto: um só
+    cartão e um só socket encaminhado; o segundo não refaz o -L; quando o primeiro sai, nada some, e o
+    que ficou passa a manter o encaminhamento."""
+    me, fake = os.getpid(), os.getpid() + 100000
+    entry(world["sessions"], fake, "c-laptop", str(world["socks"] / "c.sock"))
+    alive = link.pid_alive
+    monkeypatch.setattr(link, "pid_alive", lambda pid: pid == fake or alive(pid))
+    first = mk(world)
+    first.up()
+    second = mk(world, local="c@laptop")
+    second.up()
+    assert FakeTunnel.instances[-1].flags == ["-R"], "o socket do remoto já estava de pé: só exporta c"
+    assert (world["sessions"] / "777.json").exists()
+    # o primeiro sai: cartão, chave e socket continuam, porque o segundo os usa; só o espelho de a lá sai
+    n = len(world["calls"])
+    first.down("unlink")
+    assert (world["sessions"] / "777.json").exists() and (world["sessions"] / "777.ab12.key").exists()
+    assert [c[0][:4] for c in world["calls"][n:]] == [["peer", "b@server0", "--unmirror", str(me)]]
+    st1 = state_of("a@laptop", "b@server0")
+    assert st1["up"] is False and st1["resources"] == [
+        f"card:{world['sessions']}/777",
+        f"sock:{world['socks']}/orq-777.sock",
+    ]
+    # mas o listener do primeiro morreu com ele: no próximo ciclo o segundo refaz o túnel com -L
+    assert not link.socket_alive(world["socks"] / "orq-777.sock")
+    threading.Timer(0.3, second.stop).start()
+    assert second.wait(poll=0.05, remote_poll=999) == "unlink"
+    assert FakeTunnel.instances[-1].flags == ["-L", "-R"] and link.socket_alive(
+        world["socks"] / "orq-777.sock"
     )
-    lk2.up()
-    lk2.stop()
-    assert lk2.wait(poll=0.01) == "unlink"
-    # o agente local fecha: o cartão some
-    lk2._stop = False
-    (world["sessions"] / f"{me}.json").unlink()
-    assert lk2.wait(poll=0.01) == "a@laptop fechou"
-    lk2.down("a@laptop fechou")
+    assert state_of("c@laptop", "b@server0")["forwards"] == ["-L", "-R"]
+    second.down("unlink")
+    assert not (world["sessions"] / "777.json").exists() and not (world["socks"] / "orq-777.sock").exists()
 
 
-def test_link_failures_are_explained(world):
+def test_wait_notices_both_agents_and_remote_reopen(world):
+    lk = mk(world)
+    lk.up()
+    # o remoto fechou: a sonda devolve erro
+    world["fail"]["peer"] = "b@server0 não está rodando com nome b-server0"
+    assert lk.wait(poll=0.01, remote_poll=0).startswith("b@server0 fechou")
+    world["fail"].clear()
+    # o remoto foi reaberto: outro pid
+    world["remote"] = dict(world["remote"], pid=778)
+    assert lk.wait(poll=0.01, remote_poll=0) == "b@server0 foi reaberto"
+    world["remote"] = dict(world["remote"], pid=777)
+    # o local fechou: o cartão some
+    (world["sessions"] / f"{os.getpid()}.json").unlink()
+    assert lk.wait(poll=0.01, remote_poll=999) == "a@laptop fechou"
+    lk.down("fim")
+
+
+def test_link_failures_are_explained_and_always_cleaned(world):
     logs = []
     kw = dict(conf=world["conf"], run_remote=world["run_remote"], popen=FakeTunnel, log=logs.append)
     world["fail"]["peer"] = "b@server0 não está rodando com nome b-server0"
     assert link.run_link("a@laptop", "b@server0", **kw) == 1
-    st = json.loads(link.link_file("a@laptop", "b@server0").read_text())
+    st = state_of("a@laptop", "b@server0")
     assert st["up"] is False and "não está rodando" in st["why"] and any("falhou" in m for m in logs)
     assert not FakeTunnel.instances, "sem cartão remoto não abre túnel"
     world["fail"].clear()
+
+    # erro inesperado (ssh travou) depois de o túnel subir: ainda assim passa pelo down e fecha o túnel
+    def flaky(args, input=None):
+        if "--mirror" in args:
+            raise subprocess.TimeoutExpired("ssh", 90)
+        return world["run_remote"](args, input)
+
+    assert link.run_link("a@laptop", "b@server0", **dict(kw, run_remote=flaky)) == 1
+    assert FakeTunnel.instances[-1].rc is not None, "túnel fechado"
+    st = state_of("a@laptop", "b@server0")
+    assert st["up"] is False and "timed out" in st["why"] and st["resources"] == []
+    assert not (world["sessions"] / "777.json").exists()
     (world["sessions"] / f"{os.getpid()}.json").unlink()
     with pytest.raises(RuntimeError, match="não está rodando com nome a-laptop"):
         link.Link("a@laptop", "b@server0", **kw).up()
@@ -240,126 +348,113 @@ def test_link_failures_are_explained(world):
 def test_tunnel_that_dies_or_never_opens_fails_up(world, monkeypatch):
     class Dead(FakeTunnel):
         def __init__(self, cmd, **kw):
-            import io
-
-            self.cmd, self.pid, self.rc, self.stderr = (
-                cmd,
-                1,
-                255,
-                io.BytesIO(b"bind: Address already in use"),
-            )
+            self.cmd, self.pid, self.rc, self.listeners = cmd, 1, 255, []
             FakeTunnel.instances.append(self)
 
     kw = dict(conf=world["conf"], run_remote=world["run_remote"], log=lambda s: None)
+    lk = link.Link("a@laptop", "b@server0", popen=Dead, **kw)
+    lk.tunnel_log.parent.mkdir(parents=True, exist_ok=True)
+    lk.tunnel_log.write_text("x\nbind: Address already in use\n")
     with pytest.raises(RuntimeError, match="túnel ssh.*saiu.*Address already in use"):
-        link.Link("a@laptop", "b@server0", popen=Dead, **kw).up()
+        lk.up()
 
     class Silent(FakeTunnel):
         def __init__(self, cmd, **kw):
-            self.cmd, self.pid, self.rc, self.stderr = cmd, 1, None, None
+            self.cmd, self.pid, self.rc, self.listeners = cmd, 1, None, []
             FakeTunnel.instances.append(self)
 
     monkeypatch.setattr(link, "TUNNEL_WAIT", 0.3)
     with pytest.raises(RuntimeError, match="não abriu"):
         link.Link("a@laptop", "b@server0", popen=Silent, **kw).up()
-    assert FakeTunnel.instances[-1].rc == -9, "túnel mudo é morto"
+    assert FakeTunnel.instances[-1].rc == 0, "túnel mudo é fechado"
+
+
+def test_run_link_handles_sigterm(world, monkeypatch):
+    kw = dict(conf=world["conf"], run_remote=world["run_remote"], popen=FakeTunnel, log=lambda s: None)
+    monkeypatch.setattr(link, "POLL", 0.05)
+    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+    assert link.run_link("a@laptop", "b@server0", **kw) == 0
+    st = state_of("a@laptop", "b@server0")
+    assert st["up"] is False and st["why"] == "unlink" and FakeTunnel.instances[-1].rc == 0
 
 
 # ---------------------------------------------------------------- CLI peer (o lado remoto)
-def test_cli_peer_prints_record_mirrors_and_unmirrors(world, monkeypatch, capsys):
-    from orqweb.agent.state import StateFile
-
+def test_cli_peer_prints_record_probes_mirrors_and_unmirrors(world, monkeypatch, capsys):
     monkeypatch.setattr(cli.config, "load", lambda: world["conf"])
-    StateFile(config.state_dir("a@laptop") / "state.json").write(label="a@laptop", account="g", kind="sdk")
+    me = os.getpid()
+    out = lambda: json.loads(capsys.readouterr().out)  # noqa: E731
     assert cli.main(["peer", "a@laptop"]) == 0
-    rec = json.loads(capsys.readouterr().out)
-    assert rec["name"] == "a-laptop" and rec["pid"] == os.getpid() and rec["key_name"].endswith(".key")
+    rec = out()
+    assert rec["name"] == "a-laptop" and rec["pid"] == me and rec["key_name"].endswith(".key")
+    assert "probe_alive" not in rec
+    # sonda: o socket encaminhado do pid dado vive aqui?
+    (world["socks"] / "orq-777.sock").write_text("")  # sobra de um túnel que caiu
+    assert cli.main(["peer", "a@laptop", "--probe", "777"]) == 0 and out()["probe_alive"] is False
+    assert not (world["socks"] / "orq-777.sock").exists(), "a sonda recolhe o socket morto"
+    s = listen(world["socks"] / "orq-777.sock")
+    assert cli.main(["peer", "a@laptop", "--probe", "777"]) == 0 and out()["probe_alive"] is True
+    s.close()
+    os.unlink(world["socks"] / "orq-777.sock")
     # espelho de um agente de outra máquina chega pelo stdin
+    sock = str(world["socks"] / "orq-777.sock")
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO(json.dumps(world["remote"])))
-    assert (
-        cli.main(
-            [
-                "peer",
-                "a@laptop",
-                "--mirror",
-                "--sock",
-                str(world["socks"] / "777.sock"),
-                "--from",
-                "b@server0",
-            ]
-        )
-        == 0
-    )
-    assert json.loads(capsys.readouterr().out)["ok"]
+    assert cli.main(["peer", "a@laptop", "--mirror", "--sock", sock, "--from", "b@server0"]) == 0
+    assert out()["ok"]
     d = json.loads((world["sessions"] / "777.json").read_text())
-    assert d["messagingSocketPath"] == str(world["socks"] / "777.sock") and d["_orq_mirror"] == "b@server0"
-    assert cli.main(["peer", "a@laptop", "--unmirror", "777"]) == 0
-    capsys.readouterr()
-    assert not (world["sessions"] / "777.json").exists() and not (world["sessions"] / "777.zz.key").exists()
-    # erros: agente desconhecido, sem sessão com o nome
-    assert (
-        cli.main(["peer", "nada@laptop"]) == 1
-        and "não é um agente" in json.loads(capsys.readouterr().out)["err"]
-    )
-    StateFile(config.state_dir("c@laptop") / "state.json").write(label="c@laptop", account="g", kind="sdk")
-    assert cli.main(["peer", "c@laptop"]) == 1 and "c-laptop" in json.loads(capsys.readouterr().out)["err"]
-    assert cli.main(["links"]) == 0 and json.loads(capsys.readouterr().out) == []
+    assert d["messagingSocketPath"] == sock and d["_orq_mirror"] == "b@server0"
+    Path(sock).write_text("")
+    assert cli.main(["peer", "a@laptop", "--unmirror", "777", "--sock", sock]) == 0 and out()["ok"]
+    assert not (world["sessions"] / "777.json").exists() and not (world["sessions"] / "777.ab12.key").exists()
+    assert not Path(sock).exists()
+    # erros são resposta, não falha (código 0): agente desconhecido, sem sessão com o nome, espelho inválido
+    assert cli.main(["peer", "nada@laptop"]) == 0 and "não é um agente" in out()["err"]
+    monkeypatch.setattr(link, "ENTRY_WAIT", 0.1)
+    assert cli.main(["peer", "c@laptop"]) == 0 and "c-laptop" in out()["err"]
+    bad = json.dumps({**world["remote"], "key_name": "../x"})
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(bad))
+    assert cli.main(["peer", "a@laptop", "--mirror", "--sock", sock, "--from", "b@server0"]) == 0
+    assert "espelho inválido" in out()["err"]
+    assert cli.main(["links"]) == 0 and out() == []
 
 
 # ---------------------------------------------------------------- link / unlink (sem tmux)
 def test_spawn_link_and_unlink_without_tmux(world, monkeypatch):
     monkeypatch.setattr(client.shutil, "which", lambda n: None)
     started = []
+    stf = link.link_file("a@laptop", "b@server0")
+
+    class P:
+        pid = 1
 
     def fake_popen(cmd, **kw):
         started.append(cmd)
-        # o link-run de mentira: sobe e grava o estado como o de verdade faria
-        link.StateFile(link.link_file("a@laptop", "b@server0")).write(up=True, pid=os.getpid(), why=None)
-
-        class P:
-            pid = 1
-
+        StateFile(stf).write(up=True, pid=os.getpid(), why=None)  # o link-run de mentira sobe
         return P()
 
-    import types
+    def ns(popen):
+        return types.SimpleNamespace(
+            Popen=popen, run=subprocess.run, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE
+        )
 
-    monkeypatch.setattr(
-        client,
-        "subprocess",
-        types.SimpleNamespace(
-            Popen=fake_popen, run=subprocess.run, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE
-        ),
-    )
+    monkeypatch.setattr(client, "subprocess", ns(fake_popen))
     assert "segundo plano" in client.spawn_link("a@laptop", "b@server0", wait=5)
     assert started[0][-3:] == ["link-run", "a@laptop", "b@server0"]
     assert client.spawn_link("a@laptop", "b@server0") == "já de pé"
+    # ainda subindo (processo vivo, up ainda não): não derruba no meio
+    StateFile(stf).write(up=False, pid=os.getpid(), why=None)
+    assert client.spawn_link("a@laptop", "b@server0") == "ainda subindo"
     # falha: o link-run grava up=False com o motivo
-    link.StateFile(link.link_file("a@laptop", "b@server0")).write(
-        up=False, pid=None, why="o túnel ssh saiu"
-    )
+    StateFile(stf).write(up=False, pid=None, why="x")
 
     def fail_popen(cmd, **kw):
-        link.StateFile(link.link_file("a@laptop", "b@server0")).write(
-            up=False, pid=None, why="o túnel ssh saiu: x"
-        )
-
-        class P:
-            pid = 1
-
+        StateFile(stf).write(up=False, pid=None, why="o túnel ssh saiu: x")
         return P()
 
-    monkeypatch.setattr(
-        client,
-        "subprocess",
-        types.SimpleNamespace(
-            Popen=fail_popen, run=subprocess.run, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE
-        ),
-    )
+    monkeypatch.setattr(client, "subprocess", ns(fail_popen))
     with pytest.raises(RuntimeError, match="túnel ssh saiu"):
         client.spawn_link("a@laptop", "b@server0", wait=5)
     assert client.unlink("a@laptop", "b@server0") == "não havia vínculo de pé"
     # unlink de verdade: um processo que, ao receber SIGTERM, grava up=False e sai (como o link-run)
-    stf = link.link_file("a@laptop", "b@server0")
     code = (
         "import json,signal,sys,time\n"
         f"p={str(stf)!r}\n"
@@ -369,81 +464,51 @@ def test_spawn_link_and_unlink_without_tmux(world, monkeypatch):
         "while True: time.sleep(0.1)\n"
     )
     p = subprocess.Popen([sys.executable, "-c", code])
-    link.StateFile(stf).write(up=True, pid=p.pid, why=None)
+    StateFile(stf).write(up=True, pid=p.pid, why=None)
     time.sleep(0.5)
     assert client.unlink("a@laptop", "b@server0", wait=10) == "vínculo desfeito"
     assert p.wait(5) == 0 and json.loads(stf.read_text())["why"] == "unlink"
     assert client.link_session("a@laptop", "b@server0") == "orql-a--b-server0"
 
 
-def test_run_link_handles_sigterm(world, monkeypatch):
-    """run_link instala o SIGTERM e sai limpo quando o unlink chega."""
-    import threading
-
-    kw = dict(conf=world["conf"], run_remote=world["run_remote"], popen=FakeTunnel, log=lambda s: None)
-    monkeypatch.setattr(link, "POLL", 0.05)
-    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
-    assert link.run_link("a@laptop", "b@server0", **kw) == 0
-    st = json.loads(link.link_file("a@laptop", "b@server0").read_text())
-    assert st["up"] is False and st["why"] == "unlink"
-
-
 # ---------------------------------------------------------------- mesma máquina: sem túnel
-def test_local_link_mirrors_between_accounts(world, monkeypatch, tmp_path):
-    """Contas diferentes têm sessions/ diferentes e o ListAgents só lê a própria: o vínculo local espelha."""
-    from orqweb.agent.state import StateFile
-
+def test_local_link_mirrors_between_accounts_and_is_reaped_when_an_agent_reopens(world, monkeypatch):
+    """Contas diferentes têm sessions/ diferentes e o ListAgents só lê a própria: o vínculo local espelha.
+    O espelho é compartilhado: dois vínculos para o mesmo agente só o soltam quando o último sai."""
     assert link.same_host("a@laptop", "b@laptop") and not link.same_host("a@laptop", "b@server0")
-    conf = config.parse(
-        {
-            "accounts": [
-                {"name": "g", "config_dir": str(tmp_path / "cfg")},
-                {"name": "h", "config_dir": str(tmp_path / "cfg2")},
-            ]
-        }
-    )
-    monkeypatch.setattr(link.config, "load", lambda: conf)
-    with pytest.raises(RuntimeError, match="@laptop não está rodando"):
-        client.spawn_link("a@laptop", "b@laptop")
-    for lab, acc in (("a@laptop", "g"), ("b@laptop", "h")):
-        d = config.state_dir(lab)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "agent.sock").write_text("")
-        StateFile(d / "state.json").write(label=lab, account=acc, kind="sdk")
+    me, other, fake = os.getpid(), os.getppid(), os.getpid() + 100000
     monkeypatch.setattr(client, "socket_alive", lambda p: p.exists())
+    for lab in ("a@laptop", "b@laptop", "c@laptop"):
+        (config.state_dir(lab) / "agent.sock").write_text("")
+    monkeypatch.setattr(link, "ENTRY_WAIT", 0.1)
     with pytest.raises(RuntimeError, match="b@laptop não está rodando com nome b-laptop"):
         client.spawn_link("a@laptop", "b@laptop")
-    entry(
-        tmp_path / "cfg2" / "sessions", os.getppid(), "b-laptop", str(world["socks"] / "x.sock")
-    )  # pid vivo de verdade
-    assert "4 arquivos espelhados" in client.spawn_link("a@laptop", "b@laptop")
+    cfg, cfg2 = world["tmp"] / "cfg" / "sessions", world["tmp"] / "cfg2" / "sessions"
+    entry(cfg2, other, "b-laptop", str(world["socks"] / "x.sock"))  # pid vivo de verdade
+    assert "2 cartões espelhados" in client.spawn_link("a@laptop", "b@laptop")
     (lk,) = link.list_links()
-    assert lk["kind"] == "local" and lk["up"] and lk["remote_name"] == "b-laptop" and lk["pid"] is None
-    # cada conta ganhou o cartão e a chave do outro, com o MESMO socket (mesma máquina)
-    me, other = os.getpid(), os.getppid()
+    assert lk["kind"] == "local" and lk["up"] and lk["host"] == "laptop" and lk["pid"] is None
     assert lk["sessions"] == {"a@laptop": me, "b@laptop": other}
-    # um agente reaberto (sessão nova) derruba o vínculo, mesmo com os dois sockets de pé
-    monkeypatch.setattr(link, "pid_alive", lambda pid: pid != other)
-    assert link.list_links()[0]["up"] is False
-    monkeypatch.setattr(link, "pid_alive", lambda pid: True)
-    assert link.list_links()[0]["up"] is True
-    d = json.loads((tmp_path / "cfg" / "sessions" / f"{other}.json").read_text())
+    assert lk["resources"] == [f"card:{cfg}/{other}", f"card:{cfg2}/{me}"]
+    # cada conta ganhou o cartão e a chave do outro, com o MESMO socket (mesma máquina)
+    d = json.loads((cfg / f"{other}.json").read_text())
     assert d["messagingSocketPath"] == str(world["socks"] / "x.sock") and d["_orq_mirror"] == "b@laptop"
-    assert (tmp_path / "cfg2" / "sessions" / f"{me}.json").exists() and (
-        tmp_path / "cfg2" / "sessions" / f"{me}.abc123.key"
-    ).exists()
-    assert len(lk["mirrors"]) == 4
-    # vincular de novo troca os espelhos sem duplicar; fechar um dos dois derruba o `up`
-    assert "4 arquivos espelhados" in client.spawn_link("a@laptop", "b@laptop")
-    (config.state_dir("b@laptop") / "agent.sock").unlink()
-    assert link.list_links()[0]["up"] is False, "um dos dois fechou"
-    (config.state_dir("b@laptop") / "agent.sock").write_text("")
+    assert (cfg2 / f"{me}.json").exists() and (cfg2 / f"{me}.abc123.key").exists()
+    # c (mesma conta de a) também se vincula a b: o cartão de b em cfg é o mesmo; desfazer a⇄b o mantém
+    entry(cfg, fake, "c-laptop", str(world["socks"] / "c.sock"))
+    alive = link.pid_alive
+    monkeypatch.setattr(link, "pid_alive", lambda pid: pid == fake or alive(pid))
+    assert "2 cartões espelhados" in client.spawn_link("c@laptop", "b@laptop")
     assert client.unlink("a@laptop", "b@laptop") == "vínculo desfeito"
-    assert not (tmp_path / "cfg" / "sessions" / f"{other}.json").exists()
-    assert not (tmp_path / "cfg2" / "sessions" / f"{me}.json").exists()
-    st = link.list_links()[0]
-    assert st["up"] is False and st["why"] == "unlink" and st["mirrors"] == []
+    assert (cfg / f"{other}.json").exists(), "c ainda usa o cartão de b"
+    assert not (cfg2 / f"{me}.json").exists(), "o cartão de a lá era só do vínculo de a"
+    # c fecha e reabre (sessão nova): o vínculo c⇄b morre e `links` recolhe o que sobrou
+    monkeypatch.setattr(link, "pid_alive", alive)
+    sts = {(s["local"], s["remote"]): s for s in link.list_links()}
+    assert sts[("c@laptop", "b@laptop")]["up"] is False and sts[("c@laptop", "b@laptop")]["resources"] == []
+    assert not (cfg / f"{other}.json").exists() and not (cfg2 / f"{fake}.json").exists()
     # mesma conta: nada a espelhar
     StateFile(config.state_dir("b@laptop") / "state.json").write(account="g")
-    entry(tmp_path / "cfg" / "sessions", other, "b-laptop", str(world["socks"] / "x.sock"))
+    entry(cfg, other, "b-laptop", str(world["socks"] / "x.sock"))
     assert "já se enxergavam" in client.spawn_link("a@laptop", "b@laptop")
+    assert state_of("a@laptop", "b@laptop")["resources"] == []

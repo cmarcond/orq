@@ -158,6 +158,8 @@ const tabs = {}; // label -> {a, el, seq, es, pending, chips, perms, live, buf, 
 let cur = null;
 let agents = [];
 let links = []; // vínculos entre agentes (orq-agent links), de todas as máquinas
+const samePair = (lk, a, b) => (lk.local === a && lk.remote === b) || (lk.local === b && lk.remote === a);
+const dropLink = (a, b) => (links = links.filter((lk) => !samePair(lk, a, b)));
 /** Vínculos vivos de `label`: [{other, host, kind, local, remote}]. */
 function linksOf(label) {
   return links
@@ -530,7 +532,7 @@ function askUnlink(base, other) {
     agentApi(base, 'unlink', { to: other }).then((j) => {
       if (!j.ok) return;
       toast(`vínculo com ${other.split('@')[0]} desfeito`);
-      links = links.filter((lk) => !((lk.local === base && lk.remote === other) || (lk.local === other && lk.remote === base)));
+      dropLink(base, other);
       renderSide(base);
       renderTabs();
       status();
@@ -564,7 +566,10 @@ function openLinkPicker(base) {
       toast(`vinculando ${base.split('@')[0]} a ${to.split('@')[0]}…${hostOf(base) !== hostOf(to) ? ' (túnel ssh)' : ''}`);
       const j = await agentApi(base, 'link', { to });
       if (!j.ok) return;
-      if (j.link) links = links.filter((lk) => !((lk.local === base && lk.remote === to) || (lk.local === to && lk.remote === base))).concat([j.link]);
+      if (j.link) {
+        dropLink(base, to);
+        links.push(j.link);
+      }
       toast(`${base.split('@')[0]} ⇄ ${to.split('@')[0]} vinculados${(j.note_errors || []).length ? ' (a nota não chegou a um deles)' : ''}`);
       SIDE.view = 'links';
       renderSide(base);
