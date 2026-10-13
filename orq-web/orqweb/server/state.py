@@ -51,6 +51,7 @@ class StateCache:
             self.usage, self.usage_ts = u, self.clock()
 
     def refresh_agents(self) -> None:
+        started = self.clock()
         ag, errs = self.ext.all_agents(self.conf.hosts)
         with self.lock:
             now = self.clock()
@@ -70,7 +71,13 @@ class StateCache:
                     continue
                 ag = [a for a in ag if a.get("label") != label] + [entry]
             self.agents, self.host_errors, self.agents_ts = ag, errs, now
-            self.links = list(getattr(self.ext, "links", []) or [])
+            # vínculo criado pela página depois de a consulta começar não pode estar na resposta: fica.
+            # Criado antes, a resposta da máquina é a verdade (ela o lista, ou ele não existe mais).
+            host_links = list(getattr(self.ext, "links", []) or [])
+            pairs = {link_pair(lk) for lk in host_links}
+            self.links = host_links + [
+                lk for lk in self.links if lk.get("page_ts", 0) > started and link_pair(lk) not in pairs
+            ]
         if self.on_agents:
             try:
                 self.on_agents(list(ag))
@@ -118,18 +125,17 @@ class StateCache:
             self.agents = [a for a in self.agents if a.get("label") != agent["label"]] + [agent]
 
     def add_link(self, record: dict) -> None:
-        """Vínculo recém-criado: aparece já, até a próxima consulta às máquinas trazê-lo de lá."""
+        """Vínculo recém-criado pela página: aparece já; `page_ts` diz a `refresh_agents` quando soltá-lo."""
+        pair = link_pair(record)
         with self.lock:
-            self.links = [
-                lk
-                for lk in self.links
-                if {lk.get("local"), lk.get("remote")} != {record["local"], record["remote"]}
+            self.links = [lk for lk in self.links if link_pair(lk) != pair] + [
+                dict(record, page_ts=self.clock())
             ]
-            self.links.append(dict(record))
 
     def drop_link(self, local: str, remote: str) -> None:
+        pair = frozenset((local, remote))
         with self.lock:
-            self.links = [lk for lk in self.links if {lk.get("local"), lk.get("remote")} != {local, remote}]
+            self.links = [lk for lk in self.links if link_pair(lk) != pair]
 
     def drop_provisional(self, label: str) -> None:
         """Desfaz `add_provisional` (o reabrir falhou): a próxima consulta às máquinas diz o que sobrou."""
@@ -164,6 +170,10 @@ class StateCache:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+def link_pair(lk: dict) -> frozenset:
+    return frozenset((lk.get("local"), lk.get("remote")))
 
 
 def provisional_agent(label: str, host: str, account: str, cwd: str, now: float, **extra: Any) -> dict:

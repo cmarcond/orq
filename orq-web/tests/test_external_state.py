@@ -405,3 +405,36 @@ def test_link_and_unlink_commands_local_and_remote():
     ext.run = lambda cmd, timeout: subprocess.CompletedProcess(cmd, 1, "", "o túnel ssh saiu: x")
     assert ext.link(LAPTOP, "a@laptop", "b@server0") == "o túnel ssh saiu: x"
     assert External(Path("/b"), FakeRunner({})).link(LAPTOP, "a", "b") == "sem resposta"
+
+
+def test_new_link_outlives_a_listing_that_started_before_it():
+    conf = config.parse({"accounts": [{"name": "g", "config_dir": "~/.c"}], "orq_hosts": []})
+    t = [1000.0]
+    rec = {"local": "a@laptop", "remote": "b@laptop", "host": "laptop", "kind": "local", "up": True}
+
+    class Ext:
+        links = []
+        add_during = None  # o vínculo nasce no meio da consulta
+
+        def all_agents(self, hosts):
+            t[0] += 2
+            if self.add_during:
+                self.add_during()
+            t[0] += 3
+            return [], {}
+
+    ext = Ext()
+    st = S.StateCache(conf, ext, clock=lambda: t[0])
+    ext.add_during = lambda: st.add_link(rec)
+    st.refresh_agents()  # começou antes do vínculo e voltou sem ele: o vínculo fica
+    assert [lk["local"] for lk in st.snapshot()["links"]] == ["a@laptop"]
+    ext.add_during = None
+    st.refresh_agents()  # começou depois e a máquina não o lista: a máquina é a verdade
+    assert st.snapshot()["links"] == []
+    st.add_link(rec)
+    ext.links = [dict(rec, sessions={"a@laptop": 1})]
+    st.refresh_agents()  # a máquina o lista: vale o dela, sem duplicar
+    (lk,) = st.snapshot()["links"]
+    assert lk["sessions"] == {"a@laptop": 1} and "page_ts" not in lk
+    st.drop_link("b@laptop", "a@laptop")
+    assert st.snapshot()["links"] == []
