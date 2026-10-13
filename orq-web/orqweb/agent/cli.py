@@ -15,6 +15,15 @@ Uso:
         cada linha JSON do stdin vai para o claude. É o que o orq-web usa, local ou por ssh.
   orq-agent stop NOME          encerra o claude e o supervisor (a conversa fica salva)
   orq-agent list               agentes desta máquina com estado
+  orq-agent link LOCAL REMOTO@MÁQUINA     vínculo: LOCAL (desta máquina) e REMOTO passam a se ver no
+        ListAgents e a se falar pelo SendMessage, com o socket de cada um esticado por ssh até o outro
+        e o registro de sessões espelhado (orqweb/agent/link.py). Fica numa sessão tmux "orql-<a>--<b>".
+  orq-agent unlink LOCAL REMOTO@MÁQUINA   desfaz (apaga os espelhos nas duas máquinas, fecha o túnel)
+  orq-agent links              vínculos desta máquina em JSON
+  orq-agent link-run LOCAL REMOTO         o processo do vínculo em primeiro plano (é o que o link abre)
+  orq-agent peer NOME [--mirror --sock S --from L | --unmirror PID]
+        lado remoto do vínculo: imprime o cartão de sessão do agente NOME (ou grava/apaga o espelho de
+        um agente de outra máquina na pasta sessions/ dele)
   orq-agent ls PASTA           arquivos da pasta em JSON [{name, size, mtime}], do mais novo ao mais antigo
   orq-agent cat ARQ [--range INI-FIM]
         manda uma linha JSON {size, start, length} e os bytes do arquivo (ou da faixa, fim inclusivo).
@@ -37,7 +46,7 @@ from pathlib import Path
 from typing import Optional
 
 from .. import config
-from . import claude, client, convert, events, files
+from . import claude, client, convert, events, files, link
 from .state import list_agents
 from .supervisor import Supervisor
 
@@ -247,6 +256,75 @@ def cmd_cat(a: argparse.Namespace) -> int:
         return 1
 
 
+def _agent_sessions_dir(label: str):
+    """(pasta sessions/ da conta do agente, nome da sessão) ou (None, erro)."""
+    from .state import StateFile
+
+    st = StateFile(config.state_dir(label) / "state.json").read()
+    if not st.get("account"):
+        return None, f"{label} não é um agente desta máquina"
+    try:
+        acc = config.load().account(st["account"])
+    except KeyError as e:
+        return None, e.args[0]
+    return acc.config_dir / "sessions", config.session_name(label)
+
+
+def cmd_peer(a: argparse.Namespace) -> int:
+    import json
+
+    sessions, name = _agent_sessions_dir(a.label)
+    if sessions is None:
+        print(json.dumps({"err": name}))
+        return 1
+    entry = link.find_entry(name, [sessions])
+    if a.unmirror:
+        sock = os.path.join(entry.sock_dir, f"{a.unmirror}.sock") if entry else None
+        link.remove_mirror(sessions, a.unmirror, sock)
+        print(json.dumps({"ok": True}))
+        return 0
+    if a.mirror:
+        try:
+            record = json.loads(sys.stdin.read())
+            paths = link.write_mirror(sessions, record, a.sock, a.origin or "?")
+        except (ValueError, KeyError, OSError) as e:
+            print(json.dumps({"err": f"espelho inválido: {e}"}))
+            return 1
+        print(json.dumps({"ok": True, "paths": [str(p) for p in paths]}))
+        return 0
+    if entry is None:
+        print(json.dumps({"err": f"{a.label} não está rodando com nome {name}"}))
+        return 1
+    print(json.dumps(entry.record(), ensure_ascii=False))
+    return 0
+
+
+def cmd_link(a: argparse.Namespace) -> int:
+    try:
+        print(client.spawn_link(a.local, a.remote))
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_link_run(a: argparse.Namespace) -> int:
+    return link.run_link(a.local, a.remote)
+
+
+def cmd_unlink(a: argparse.Namespace) -> int:
+    msg = client.unlink(a.local, a.remote)
+    print(msg)
+    return 0 if "desfeito" in msg else 1
+
+
+def cmd_links(_: argparse.Namespace) -> int:
+    import json
+
+    print(json.dumps(link.list_links(), ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="orq-agent", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -286,6 +364,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("ls")
     p.add_argument("dir")
     p.set_defaults(fn=cmd_ls)
+    for name, fn in (("link", cmd_link), ("link-run", cmd_link_run), ("unlink", cmd_unlink)):
+        p = sub.add_parser(name)
+        p.add_argument("local", help="agente desta máquina")
+        p.add_argument("remote", help="agente da outra máquina (rótulo com @máquina)")
+        p.set_defaults(fn=fn)
+    p = sub.add_parser("links")
+    p.set_defaults(fn=cmd_links)
+    p = sub.add_parser("peer")
+    p.add_argument("label")
+    p.add_argument("--mirror", action="store_true", help="grava o espelho lido do stdin")
+    p.add_argument("--sock", help="caminho do socket encaminhado (com --mirror)")
+    p.add_argument("--from", dest="origin", help="rótulo do agente de origem (com --mirror)")
+    p.add_argument("--unmirror", type=int, metavar="PID", help="apaga o espelho desse pid")
+    p.set_defaults(fn=cmd_peer)
     p = sub.add_parser("cat")
     p.add_argument("path")
     p.add_argument("--range", help="INI-FIM (fim inclusivo) ou INI-")

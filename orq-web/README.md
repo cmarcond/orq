@@ -34,6 +34,19 @@ encerra o agente (a conversa fica salva). **📎** ou arrastar arquivos para o c
 `_inbox/` dentro da pasta do projeto, na máquina do agente (por ssh quando remota), e a mensagem
 sai com os caminhos, para o Claude ler o PDF, a planilha etc. direto de lá.
 
+## Vínculo entre máquinas (`orq-agent link`)
+
+Os níveis usam o `SendMessage`/`ListAgents` nativos do Claude Code, que só enxergam sessões da mesma
+máquina: cada claude vivo tem em `<config_dir>/sessions/` um cartão `<pid>.json` (nome, pasta, estado e
+o socket Unix em que recebe mensagens) e um `<pid>.<hash>.key` ao lado. `orq-agent link A@aqui B@lá`
+estica isso por ssh: sobe um `ssh -N` com o socket de cada agente encaminhado até a outra máquina
+(`-L`/`-R` com caminhos Unix) e espelha o cartão e a chave de cada um na pasta `sessions/` do outro,
+apontando para o socket encaminhado. Daí `A` e `B` se listam e se falam como se fossem locais. O
+vínculo fica numa sessão tmux `orql-<a>--<b>`; `orq-agent unlink` (ou o agente fechar, ou o túnel cair)
+apaga os espelhos nas duas máquinas e fecha o túnel. `orq-agent links` lista; `orq-agent peer` é o lado
+remoto (imprime o cartão, grava ou apaga um espelho). Testado em 2026-10-12 entre laptop (OpenSSH 10) e
+server0 (OpenSSH 8.2), sem mexer no sshd. É a base dos vínculos entre chats na página (a fazer).
+
 ## Arquivos que o agente compartilha (`_outbox/`)
 
 O caminho inverso do 📎: todo agente da página sobe com uma nota no system prompt dizendo que, para
@@ -146,6 +159,7 @@ navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attac
 | `orqweb/agent/supervisor.py` | processo + socket + clientes; encerramento limpo |
 | `orqweb/agent/client.py` | `attach` (ponte stdin/stdout), `stop`, `spawn` em tmux `orqs-<nome>` |
 | `orqweb/agent/files.py` | `_outbox/`: lista a pasta e manda bytes com tamanho na frente (`orq-agent ls`/`cat`) |
+| `orqweb/agent/link.py` | vínculo entre máquinas: registro de sessões, espelho, túnel ssh e ciclo de vida (`orq-agent link`) |
 | `orqweb/agent/state.py` | `state.json` atômico, lido pelo `orq --status-json` |
 | `orqweb/agent/convert.py` | fecha um `claude` interativo de tmux em escalada e reabre a conversa como agente |
 | `orqweb/convert.py` | CLI `converte-web`: lista e converte em qualquer máquina |

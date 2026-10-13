@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -197,3 +198,75 @@ def spawn(
             return how
         time.sleep(0.2)
     raise RuntimeError(f"o supervisor não abriu o socket em {wait:.0f} s ({how})")
+
+
+# ---------------------------------------------------------------- vínculos (orq-agent link)
+def spawn_link(local_label: str, remote_label: str, wait: float = 45.0) -> str:
+    """Sobe `orq-agent link-run` numa sessão tmux `orql-<a>--<b>` (sem tmux: em segundo plano) e espera o
+    vínculo ficar de pé. Devolve uma linha; RuntimeError se não subiu (com o motivo gravado pelo link)."""
+    from . import link as L
+
+    st = L.StateFile(L.link_file(local_label, remote_label))
+    cur = st.read()
+    if cur.get("up") and L.pid_alive(cur.get("pid")):
+        return "já de pé"
+    try:
+        st.path.unlink()
+    except OSError:
+        pass
+    cmd = [sys.executable, "-m", "orqweb.agent.cli", "link-run", local_label, remote_label]
+    env = dict(os.environ)
+    env.pop("TMUX", None)
+    d = L.links_dir(local_label)
+    d.mkdir(parents=True, exist_ok=True)
+    log = d / (config.safe_label(remote_label) + ".log")
+    tmux = shutil.which("tmux")
+    sess = link_session(local_label, remote_label)
+    if tmux:
+        subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
+        shell = tmux_shell(cmd, env) + " 2>>" + shlex.quote(str(log))
+        subprocess.run(
+            [tmux, "new-session", "-d", "-s", sess, "-c", os.path.expanduser("~"), shell],
+            env=env,
+            check=True,
+            cwd=os.path.expanduser("~"),
+        )
+        how = f"vínculo na sessão tmux {sess}"
+    else:
+        fh = open(log, "ab")
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True, env=env)
+        how = f"vínculo em segundo plano; log em {log}"
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        cur = st.read()
+        if cur.get("up"):
+            return how
+        if cur and not cur.get("up"):
+            raise RuntimeError(cur.get("why") or "o vínculo não subiu")
+        time.sleep(0.3)
+    raise RuntimeError(f"o vínculo não subiu em {wait:.0f} s ({how}; veja {log})")
+
+
+def link_session(local_label: str, remote_label: str) -> str:
+    return "orql-" + config.safe_label(local_label.split("@")[0]) + "--" + config.safe_label(remote_label)
+
+
+def unlink(local_label: str, remote_label: str, wait: float = 20.0) -> str:
+    """Manda o processo do vínculo sair (ele desfaz os espelhos e fecha o túnel) e espera."""
+    from . import link as L
+
+    st = L.StateFile(L.link_file(local_label, remote_label))
+    cur = st.read()
+    pid = cur.get("pid")
+    if not (cur.get("up") and L.pid_alive(pid)):
+        return "não havia vínculo de pé"
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+    except OSError:
+        return "não havia vínculo de pé"
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if not st.read().get("up"):
+            return "vínculo desfeito"
+        time.sleep(0.3)
+    return f"o vínculo (pid {pid}) não respondeu em {wait:.0f} s"
