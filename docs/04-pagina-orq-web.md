@@ -1,6 +1,9 @@
 # 4. A página (orq-web): guia de uso
 
 Endereço: `http://<ip zerotier>:8765/` (senha) ou, com um `orq-web` local, `http://127.0.0.1:8765/?t=<token>`.
+No celular, use `http://<ip zerotier>:8765/m`: a mesma página com arranjo para tela estreita (abas numa
+linha com rolagem lateral, cota recolhida numa faixa com o TOTAL que abre as contas ao toque, chat com a
+tela inteira, painel lateral como gaveta). Pelo ZeroTier do celular o acesso é direto, sem túnel.
 Ao entrar, a página pede o estado (`/api/state`) a cada 5 s e abre um stream por aba aberta.
 
 ## 4.1 O topo: cota

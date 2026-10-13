@@ -149,6 +149,8 @@ function renderUsage(us) {
     )
     .join('');
   $('bell').onclick = askNotify;
+  const tot = $('usage').querySelector('.ucard.total');
+  if (tot) tot.onclick = () => $('usage').classList.toggle('open');
 }
 
 // ---------------------------------------------------------------- abas e níveis
@@ -396,10 +398,10 @@ function status() {
   $('out').hidden = $('lvl').hidden;
   $('lnk').hidden = $('lvl').hidden;
   const nl = base ? linksOf(base).length : 0;
-  $('lnk').textContent = nl ? `🔗 ${nl}` : '🔗 vincular';
+  $('lnk').innerHTML = nl ? `🔗 ${nl}` : '🔗<span class="lbl"> vincular</span>';
   $('lnk').title = nl ? 'vínculos deste agente (clique para ver; vincular a mais um pelo painel)' : 'vincular a outro agente da página (qualquer máquina): um pode pedir coisas ao outro pelo SendMessage';
   outBadge(base);
-  $('lvl').textContent = has ? '⇅ níveis' : '⇅ subir nível';
+  $('lvl').innerHTML = `⇅<span class="lbl"> ${has ? 'níveis' : 'subir nível'}</span>`;
   $('lvl').title = has ? 'mostrar/esconder o painel dos níveis' : 'subir um professor (ou mais níveis) acima deste agente';
 }
 function setState(t, st, msg) {

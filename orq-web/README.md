@@ -25,6 +25,11 @@ orq-web                      # abre http://127.0.0.1:8765/?t=<token> no navegado
 orq-web --port 8766          # outra porta; um segundo orq-web na mesma porta reaproveita o link
 ```
 
+**No celular**: `http://<ip>:8765/m` é a mesma página com outro arranjo (`static/mobile.html` +
+`mobile.css`, mesmo `app.js`): abas numa linha com rolagem lateral, cota recolhida numa faixa com o TOTAL
+(toque abre as contas), chat com a tela inteira, botões só com ícone e o painel lateral como gaveta. O
+login volta para `/m` quando a entrada foi por ela.
+
 Para desenvolver, `pip install -e ".[dev]"` (ou `uv pip install -e ".[dev]"`) instala o pacote em
 modo editável com as ferramentas de teste.
 

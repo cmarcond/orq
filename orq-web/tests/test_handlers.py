@@ -974,3 +974,18 @@ def test_downgrade_reports_unlink_failure_and_keeps_the_level_stop(server):
     assert body["errors"] == {"vínculo proj~professor@laptop ⇄ dados@server0": "ssh caiu"}
     links = req(port, "GET", "/api/state")[1]["links"]
     assert any(lk["local"] == "proj~professor@laptop" for lk in links), "não desfeito: continua no estado"
+
+
+def test_mobile_page_is_served_with_its_own_css(server):
+    port, _, _ = server
+    status, body, r = req(port, "GET", "/m")
+    assert status == 200 and r.getheader("Content-Type").startswith("text/html")
+    assert b'href="/static/mobile.css"' in body and b'src="/static/js/app.js"' in body
+    assert b"viewport-fit=cover" in body
+    status, _, r = req(port, "GET", "/static/mobile.css")
+    assert status == 200 and r.getheader("Content-Type").startswith("text/css")
+    # os mesmos ids do index.html: o app.js serve às duas páginas
+    import re
+
+    ids = lambda b: set(re.findall(rb'id="([^"]+)"', b))  # noqa: E731
+    assert ids(body) == ids(req(port, "GET", "/")[1])

@@ -279,3 +279,30 @@ def test_saved_token_comes_from_url_file(tmp_path, monkeypatch):
     assert A.saved_token(8765) == "abc123"
     A.url_file(8765).write_text("lixo")
     assert A.saved_token(8765) is None
+
+
+def test_mobile_page_login_returns_to_it(server):
+    """/m sem cookie manda para /login?next=/m; o formulário leva o destino e o login volta para /m."""
+    port, _ = server
+    status, _, r = req(port, "GET", "/m")
+    assert status == 303 and r.getheader("Location") == "/login?next=/m"
+    status, body, _ = req(port, "GET", "/login?next=/m")
+    assert status == 200 and b'name="next" value="/m"' in body
+    status, body, _ = req(port, "GET", "/login?next=/etc/passwd")
+    assert b'name="next" value="/"' in body, "destino desconhecido vira a página normal"
+    status, _, r = req(
+        port,
+        "POST",
+        "/login",
+        body=b"password=segredo&next=/m",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert status == 303 and r.getheader("Location") == "/m" and r.getheader("Set-Cookie")
+    status, body, _ = req(
+        port,
+        "POST",
+        "/login",
+        body=b"password=errada&next=/m",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert status == 403 and b'name="next" value="/m"' in body, "errar a senha não perde o destino"

@@ -55,7 +55,8 @@ vêm como `{"err": "texto"}` com 400/403/404/409/500.
 | rota | corpo / parâmetros | resposta |
 |---|---|---|
 | `GET /` | | a página (redireciona para `/login` sem cookie quando a senha está ligada) |
-| `GET /login`, `POST /login`, `POST /logout` | `password=` | cookie de sessão; 429 após tentativas seguidas |
+| `GET /m` | | a versão para celular (mesmo `app.js`, `mobile.css`); sem cookie, `/login?next=/m` |
+| `GET /login?next=`, `POST /login`, `POST /logout` | `password=`, `next=` (`/` ou `/m`) | cookie de sessão e volta para `next`; 429 após tentativas seguidas |
 | `GET /api/state` | | `{usage, usage_ts, agents, links, agents_ts, host_errors, accounts, labels, colors, migrations, auto_switch}` |
 | `GET /api/projects` | | `{items: [{host, cwd, account, mtime, title, …}]}` |
 | `GET /api/pipelines` | | `{items: [{id, titulo, descricao, niveis, cores, multi}], default}` |

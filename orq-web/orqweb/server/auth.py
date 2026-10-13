@@ -108,9 +108,14 @@ class Auth:
         return None
 
 
-def login_page(message: str = "") -> str:
-    """Página de login mínima; usa o app.css do próprio servidor, sem script."""
+PAGES = {"/": "index.html", "/m": "mobile.html"}  # rotas de página e o arquivo de cada uma
+
+
+def login_page(message: str = "", nxt: str = "/") -> str:
+    """Página de login mínima; usa o app.css do próprio servidor, sem script. `nxt` é para onde voltar
+    depois (a página normal ou a do celular, /m)."""
     msg = f'<p class="bad">{message}</p>' if message else ""
+    nxt = nxt if nxt in PAGES else "/"
     return f"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>orq · entrar</title>
 <link rel="icon" href="data:,">
@@ -120,4 +125,5 @@ def login_page(message: str = "") -> str:
 <body><main><form class="login" method="post" action="/login">
 <h2>orq</h2><label for="p">Senha</label>
 <input id="p" name="password" type="password" autofocus autocomplete="current-password">
+<input type="hidden" name="next" value="{nxt}">
 {msg}<button type="submit">Entrar</button></form></main></body></html>"""

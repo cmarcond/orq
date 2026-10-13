@@ -24,7 +24,7 @@ from ..agent.files import OUTBOX
 from ..config import session_name
 from . import pipelines
 from .assign import assign
-from .auth import Auth, login_page
+from .auth import PAGES, Auth, login_page
 from .bridge import BridgeRegistry
 from .state import StateCache, link_pair, pick_host_and_label, provisional_agent
 
@@ -142,13 +142,13 @@ def make_handler(ctx: Context):
             u = urlparse(self.path)
             q = parse_qs(u.query)
             if u.path == "/login":
-                return self.reply(200, login_page().encode(), "text/html")
+                return self.reply(200, login_page(nxt=(q.get("next") or ["/"])[0]).encode(), "text/html")
             if u.path.startswith("/static/"):
                 return self.static(u.path[len("/static/") :])
-            if u.path == "/":
+            if u.path in PAGES:  # "/" é a página normal; "/m" a versão para celular (mesmo app.js)
                 if ctx.login_required and not self.authed(q):
-                    return self.redirect("/login")
-                return self.static("index.html")
+                    return self.redirect("/login" if u.path == "/" else f"/login?next={u.path}")
+                return self.static(PAGES[u.path])
             if not self.authed(q):
                 return self.reply(403, {"err": "abra pelo link que o orq-web mostrou"})
             ctx.state.touch()
@@ -337,11 +337,13 @@ def make_handler(ctx: Context):
                 return self.reply(
                     429, login_page("muitas tentativas; espere um minuto").encode(), "text/html"
                 )
+            nxt = (form.get("next") or ["/"])[0]
+            nxt = nxt if nxt in PAGES else "/"
             sid = ctx.auth.login((form.get("password") or [""])[0], ip)
             print(f"login {'ok' if sid else 'falhou'} de {ip}", file=sys.stderr, flush=True)
             if not sid:
-                return self.reply(403, login_page("senha incorreta").encode(), "text/html")
-            return self.redirect("/", (("Set-Cookie", ctx.auth.cookie_header(sid)),))
+                return self.reply(403, login_page("senha incorreta", nxt).encode(), "text/html")
+            return self.redirect(nxt, (("Set-Cookie", ctx.auth.cookie_header(sid)),))
 
         def convert_agent(self, body: dict) -> None:
             """Fecha o claude interativo daquele tmux e reabre a conversa como agente da página."""
