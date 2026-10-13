@@ -25,6 +25,7 @@ do professor e deixa o dos executores. Os dois usam o `orq-agent` instalado (`./
 ```sh
 cd orq-web
 uv pip install --python .venv/bin/python -e ".[qa]" && .venv/bin/python -m playwright install chromium
+# Ubuntu 20.04 (server0): o Playwright novo não tem navegador para ele; use playwright==1.48.0 e --with-deps
 .venv/bin/python -m pytest qa                 # tudo (test_chat gasta um pouco de cota)
 .venv/bin/python -m pytest qa/tests/test_smoke.py   # só o que não gasta cota
 ```

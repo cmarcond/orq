@@ -117,6 +117,31 @@ Os agentes entram nesse servidor, e a cota remota é lida com `tmux run-shell "u
 é preciso `sudo systemsetup -setremotelogin on` e um `~/.zshenv` com o `PATH` (sessões ssh não leem o
 `.zshrc`). `--remove` desfaz.
 
+## Desenvolver a partir do server0
+
+Desde 2026-10-13 o ambiente de desenvolvimento fica no server0, não no laptop:
+
+```sh
+ssh server0
+cd ~/Projects/claude-orq            # clone por https com a credencial do gh (`gh auth setup-git`)
+claude-work3                     # ou outra conta: abre o Claude Code numa sessão tmux claude-work3-claude-orq
+cd orq-web && make test && make lint   # venv em .venv (uv, Python 3.12); node 22 do sistema
+.venv/bin/python -m pytest qa/tests/test_smoke.py   # QA aqui mesmo: Chromium do Playwright 1.48
+```
+
+- O `~/.bashrc` de lá exporta `ORQ_LOCAL_HOST=server0`, `ORQ_EXTRA_HOSTS=laptop`, `ORQ_QA_PROJECT=server0:~/Projects/orq-qa`
+  e `ORQ_QA_PROJECT2`: um `orq-web` local ou do QA no server0 trata a própria máquina como local e alcança o
+  laptop por ssh (`ssh laptop` funciona de lá).
+- `orq-web/deploy.sh` sem argumentos instala localmente na máquina atual e, nas outras, por ssh; `laptop` só é
+  local no Mac. `deploy/push-server0.sh` rodado no próprio server0 faz ssh para ele mesmo, o que já está
+  autorizado pelo deploy do container.
+- O Playwright mais novo não traz navegador para Ubuntu 20.04: o venv do server0 usa `playwright==1.48.0`
+  (`uv pip install --python .venv/bin/python playwright==1.48.0 && .venv/bin/python -m playwright install --with-deps chromium`).
+- A memória do Claude Code deste projeto foi copiada para cada conta do server0
+  (`~/.claude*/projects/-home-user-Projects-claude-orq/memory/`). O clone do laptop ficou, mas não é mais usado.
+- Alternativa sem terminal: abrir `server0:~/Projects/claude-orq` pelo **+** na própria página e desenvolver
+  pelo chat, com o agente rodando no server0.
+
 ## Variáveis de ambiente do servidor
 
 | variável | padrão | efeito |
