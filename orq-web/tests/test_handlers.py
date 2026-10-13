@@ -830,3 +830,92 @@ def test_link_note_texts():
     assert "`b-server0` desfeito" in H.unlink_note(me, None, rec)["message"]["content"]
     assert "`a-laptop` desfeito" in H.unlink_note({"label": "b@server0"}, None, rec)["message"]["content"]
     assert "`x` desfeito" in H.unlink_note(me, {"name": "x"}, rec)["message"]["content"]
+
+
+def test_upgrade_multi_links_bottom_level_to_linked_agents_and_downgrade_unlinks(server, agent):
+    port, ext, state = server
+    srv_ctx = server_ctx(port)
+    calls = []
+    srv_ctx.link = lambda host, a, b: calls.append(("link", host, a, b)) or None
+    srv_ctx.unlink = lambda host, a, b: calls.append(("unlink", host, a, b)) or None
+    state.add_provisional(base_entry())  # proj@laptop, com nome
+    state.add_provisional(
+        {
+            "label": "dados@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/h/d",
+            "state": "waiting",
+            "kind": "sdk",
+            "name": "dados-server0",
+        }
+    )
+    state.add_provisional(
+        {
+            "label": "velho@laptop",
+            "host": "laptop",
+            "account": "gmail",
+            "dir": "/v",
+            "state": "waiting",
+            "kind": "sdk",
+            "name": "velho-laptop",
+        }
+    )
+    state.add_link(
+        {"local": "proj@laptop", "remote": "dados@server0", "host": "laptop", "kind": "ssh", "up": True}
+    )
+    state.add_link(
+        {"local": "velho@laptop", "remote": "proj@laptop", "host": "laptop", "kind": "local", "up": False}
+    )  # desfeito: não entra
+    status, body, _ = req(
+        port, "POST", "/api/agent/proj@laptop/upgrade", {"pipeline": "professor-executores"}
+    )
+    assert status == 200, body
+    assert body["levels"] == ["proj~professor@laptop"] and body["link_errors"] == {}
+    assert [(lk["local"], lk["remote"], lk["kind"]) for lk in body["links"]] == [
+        ("proj~professor@laptop", "dados@server0", "ssh")
+    ]
+    assert calls == [("link", "laptop", "proj~professor@laptop", "dados@server0")]
+    role = ext.spawned[-1][5]
+    assert "- `proj-laptop` (o da aba): máquina laptop, pasta /p" in role
+    assert "- `dados-server0`: máquina server0, pasta /h/d" in role and "velho" not in role
+    links = req(port, "GET", "/api/state")[1]["links"]
+    assert any(lk["local"] == "proj~professor@laptop" and lk["remote"] == "dados@server0" for lk in links)
+    # desfazer os níveis desfaz o vínculo do professor (e avisa o executor remoto, se der)
+    status, body, _ = req(port, "POST", "/api/agent/proj@laptop/downgrade", {})
+    assert (
+        status == 200
+        and body["stopped"] == ["proj~professor@laptop"]
+        and body["unlinked"] == ["dados@server0"]
+    )
+    assert calls[-1] == ("unlink", "laptop", "proj~professor@laptop", "dados@server0")
+    links = req(port, "GET", "/api/state")[1]["links"]
+    assert not any(lk["local"] == "proj~professor@laptop" for lk in links)
+    assert any(lk["local"] == "proj@laptop" and lk["remote"] == "dados@server0" for lk in links), (
+        "o vínculo da base fica"
+    )
+
+
+def test_upgrade_multi_reports_link_failure_without_dropping_levels(server):
+    port, ext, state = server
+    srv_ctx = server_ctx(port)
+    srv_ctx.link = lambda host, a, b: "o túnel ssh saiu"
+    state.add_provisional(base_entry())
+    state.add_provisional(
+        {
+            "label": "dados@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/h/d",
+            "state": "waiting",
+            "kind": "sdk",
+        }
+    )
+    state.add_link(
+        {"local": "proj@laptop", "remote": "dados@server0", "host": "laptop", "kind": "ssh", "up": True}
+    )
+    status, body, _ = req(
+        port, "POST", "/api/agent/proj@laptop/upgrade", {"pipeline": "professor-executores"}
+    )
+    assert status == 200 and body["levels"] == ["proj~professor@laptop"] and body["links"] == []
+    assert body["link_errors"] == {"dados@server0": "o túnel ssh saiu"}

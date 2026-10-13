@@ -488,7 +488,19 @@ def make_handler(ctx: Context):
                 return self.reply(400, {"err": e.args[0]})
             host = base.get("host") or ctx.local_host or "?"
             acc, cwd = base.get("account") or "?", base.get("dir") or ""
-            plan = pipelines.plan_levels(p, label)
+            # receita multi: os agentes vinculados (🔗) ao da aba viram executores do nível de baixo
+            others = []
+            if p.multi:
+                for lk in ctx.state.links:
+                    if not lk.get("up") or not same_pair_has(lk, label):
+                        continue
+                    other = lk["remote"] if lk.get("local") == label else lk["local"]
+                    a = next(
+                        (x for x in agents if x.get("label") == other and x.get("state") != "closed"), None
+                    )
+                    if a is not None and a.get("kind") == "sdk":
+                        others.append(a)
+            plan = pipelines.plan_levels(p, label, pipelines.executors_list(base, others))
             started = []
             for lv in plan:
                 err = ctx.spawn(
@@ -511,7 +523,38 @@ def make_handler(ctx: Context):
                         lv["label"], host, acc, cwd, time.time(), parent=lv["parent"], level=lv["level"]
                     )
                 )
-            return self.reply(200, {"pipeline": p.id, "levels": started, "top": started[-1]})
+            # o nível de baixo ganha vínculo com cada executor vinculado (local ou por ssh); os executores
+            # recebem a nota de vínculo; falha aqui não derruba os níveis, só é reportada
+            links, link_errors = [], {}
+            bottom = started[0]
+            me = {"label": bottom, "name": session_name(bottom)}
+            for a in others:
+                err = ctx.link(host, bottom, a["label"]) if ctx.link else "vínculos desligados"
+                if err:
+                    link_errors[a["label"]] = err
+                    continue
+                rec = {
+                    "local": bottom,
+                    "remote": a["label"],
+                    "host": host,
+                    "kind": "local" if (a.get("host") or ctx.local_host) == host else "ssh",
+                    "local_name": session_name(bottom),
+                    "remote_name": a.get("name") or session_name(a["label"]),
+                    "up": True,
+                }
+                ctx.state.add_link(rec)
+                links.append(rec)
+                ctx.bridges.deliver(a["label"], link_note(a, me))
+            return self.reply(
+                200,
+                {
+                    "pipeline": p.id,
+                    "levels": started,
+                    "top": started[-1],
+                    "links": links,
+                    "link_errors": link_errors,
+                },
+            )
 
         def reopen(self, label: str, body: dict) -> None:
             """Fecha e reabre o agente na mesma conversa (ganha nome; ou noutra conta, se `account` vier)."""
@@ -540,14 +583,26 @@ def make_handler(ctx: Context):
             if not above:
                 return self.reply(400, {"err": "esse agente não tem níveis acima"})
             errors = {}
+            unlinked = []
             for lv in reversed(above):  # do topo para baixo
+                for rec in [lk for lk in ctx.state.links if lv in (lk.get("local"), lk.get("remote"))]:
+                    # vínculos do nível (receita multi): desfaz antes de fechar, para limpar os espelhos
+                    if ctx.unlink and not ctx.unlink(
+                        rec.get("host") or ctx.local_host or "?", rec["local"], rec["remote"]
+                    ):
+                        other = rec["remote"] if rec["local"] == lv else rec["local"]
+                        o = self.live_sdk(other)
+                        if o is not None:
+                            ctx.bridges.deliver(other, unlink_note(o, {"name": session_name(lv)}, rec))
+                        unlinked.append(other)
+                    ctx.state.drop_link(rec["local"], rec["remote"])
                 err = ctx.bridges.deliver(lv, {"orq": "quit"})
                 if err:
                     errors[lv] = err
                 ctx.state.mark_closing(lv)
             threading.Timer(2.0, ctx.state.refresh_agents).start()
             threading.Timer(6.0, ctx.state.refresh_agents).start()
-            return self.reply(200, {"stopped": above, "errors": errors})
+            return self.reply(200, {"stopped": above, "errors": errors, "unlinked": unlinked})
 
         def open_agent(self, body: dict) -> None:
             snap = ctx.state.snapshot()
@@ -583,6 +638,10 @@ def make_handler(ctx: Context):
 
 def same_pair(lk: dict, a: str, b: str) -> bool:
     return {lk.get("local"), lk.get("remote")} == {a, b}
+
+
+def same_pair_has(lk: dict, a: str) -> bool:
+    return a in (lk.get("local"), lk.get("remote"))
 
 
 def _user_msg(text: str) -> dict:

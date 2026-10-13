@@ -96,6 +96,19 @@ def find_entry(
     return None
 
 
+ENTRY_WAIT = 40.0
+
+
+def wait_entry(name: str, dirs: List[Path], timeout: float = ENTRY_WAIT) -> Optional[Entry]:
+    """`find_entry` com paciência: um agente recém-aberto leva alguns segundos para registrar a sessão."""
+    deadline = time.time() + timeout
+    while True:
+        e = find_entry(name, dirs)
+        if e is not None or time.time() > deadline:
+            return e
+        time.sleep(0.5)
+
+
 def write_mirror(sessions_dir: Path, record: Dict[str, Any], sock: str, origin: str) -> List[Path]:
     """Grava o cartão e a chave de uma sessão de outra máquina, apontando para o socket encaminhado."""
     sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -184,7 +197,7 @@ def local_link(local_label: str, remote_label: str, conf: Optional[config.Config
     dirs, entries = {}, {}
     for lab in (local_label, remote_label):
         dirs[lab] = agent_sessions_dir(lab, conf)
-        entries[lab] = find_entry(config.session_name(lab), [dirs[lab]])
+        entries[lab] = wait_entry(config.session_name(lab), [dirs[lab]])
         if entries[lab] is None:
             raise RuntimeError(f"{lab} não está rodando com nome {config.session_name(lab)}")
     mirrors: List[str] = []
@@ -200,9 +213,20 @@ def local_link(local_label: str, remote_label: str, conf: Optional[config.Config
         remote_name=config.session_name(remote_label),
         kind="local",
         pid=None,
+        # as sessões de então: se um agente for fechado e reaberto, o vínculo (e os espelhos) morreu com ele
+        sessions={lab: entries[lab].pid for lab in (local_label, remote_label)},
         mirrors=mirrors,
         up=True,
     )
+
+
+def local_link_alive(st: Dict[str, Any], root: Path) -> bool:
+    """Um vínculo local vive enquanto os dois agentes vivem com as MESMAS sessões de quando foi feito."""
+    for lab in (st.get("local", ""), st.get("remote", "")):
+        if not (root / config.safe_label(lab) / "agent.sock").exists():
+            return False
+    pids = st.get("sessions") or {}
+    return bool(pids) and all(pid_alive(pid) for pid in pids.values())  # registro sem pids (antigo) = morto
 
 
 def local_unlink(state: Dict[str, Any]) -> None:
@@ -223,11 +247,7 @@ def list_links(root: Optional[Path] = None) -> List[dict]:
         if not st:
             continue
         if st.get("kind") == "local":
-            alive = all(
-                (root / config.safe_label(lab) / "agent.sock").exists()
-                for lab in (st.get("local", ""), st.get("remote", ""))
-            )
-            st["up"] = bool(st.get("up")) and alive
+            st["up"] = bool(st.get("up")) and local_link_alive(st, root)
         else:
             st["up"] = bool(st.get("up")) and pid_alive(st.get("pid"))
         out.append(st)
@@ -288,7 +308,7 @@ class Link:
     # ---- subir
     def up(self) -> None:
         name = config.session_name(self.local_label)
-        self.local = find_entry(name, sessions_dirs(self.conf))
+        self.local = wait_entry(name, sessions_dirs(self.conf))
         if self.local is None:
             raise RuntimeError(
                 f"{self.local_label} não está rodando com nome {name} (abra-o pela página antes)"

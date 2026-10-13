@@ -271,7 +271,9 @@ def cmd_peer(a: argparse.Namespace) -> int:
     if sessions is None:
         print(json.dumps({"err": name}))
         return 1
-    entry = link.find_entry(name, [sessions])
+    entry = (
+        link.find_entry(name, [sessions]) if (a.unmirror or a.mirror) else link.wait_entry(name, [sessions])
+    )
     if a.unmirror:
         sock = os.path.join(entry.sock_dir, f"{a.unmirror}.sock") if entry else None
         link.remove_mirror(sessions, a.unmirror, sock)

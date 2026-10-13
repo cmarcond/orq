@@ -421,6 +421,12 @@ def test_local_link_mirrors_between_accounts(world, monkeypatch, tmp_path):
     assert lk["kind"] == "local" and lk["up"] and lk["remote_name"] == "b-laptop" and lk["pid"] is None
     # cada conta ganhou o cartão e a chave do outro, com o MESMO socket (mesma máquina)
     me, other = os.getpid(), os.getppid()
+    assert lk["sessions"] == {"a@laptop": me, "b@laptop": other}
+    # um agente reaberto (sessão nova) derruba o vínculo, mesmo com os dois sockets de pé
+    monkeypatch.setattr(link, "pid_alive", lambda pid: pid != other)
+    assert link.list_links()[0]["up"] is False
+    monkeypatch.setattr(link, "pid_alive", lambda pid: True)
+    assert link.list_links()[0]["up"] is True
     d = json.loads((tmp_path / "cfg" / "sessions" / f"{other}.json").read_text())
     assert d["messagingSocketPath"] == str(world["socks"] / "x.sock") and d["_orq_mirror"] == "b@laptop"
     assert (tmp_path / "cfg2" / "sessions" / f"{me}.json").exists() and (

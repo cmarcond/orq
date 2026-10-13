@@ -28,6 +28,12 @@ class Pipeline:
     descricao: str
     niveis: List[Dict[str, Any]]  # do topo para baixo: nome, papel, cor
 
+    @property
+    def multi(self) -> bool:
+        """Receita cujo nível de baixo coordena vários executores (usa `{executores}`): os agentes
+        vinculados (🔗) ao da aba entram como executores e ganham vínculo com esse nível."""
+        return any("{executores}" in str(n.get("papel", "")) for n in self.niveis)
+
     def summary(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -35,6 +41,7 @@ class Pipeline:
             "descricao": self.descricao,
             "niveis": [n["nome"] for n in self.niveis],
             "cores": {n["nome"]: n.get("cor", "") for n in self.niveis},
+            "multi": self.multi,
         }
 
 
@@ -165,22 +172,34 @@ def base_of_label(label: str) -> Optional[str]:
     return f"{base}@{host}" if host else base
 
 
-def plan_levels(p: Pipeline, base_label: str) -> List[Dict[str, Any]]:
+def executors_list(base: dict, others: List[dict]) -> str:
+    """`{executores}`: uma linha por executor (o da aba primeiro), com nome de sessão, máquina e pasta."""
+    lines = []
+    for a, tag in [(base, " (o da aba)")] + [(o, "") for o in others]:
+        name = a.get("name") or session_name(a.get("label", ""))
+        lines.append(f"- `{name}`{tag}: máquina {a.get('host') or '?'}, pasta {a.get('dir') or '?'}")
+    return "\n".join(lines)
+
+
+def plan_levels(p: Pipeline, base_label: str, executors: str = "") -> List[Dict[str, Any]]:
     """Os níveis a subir sobre `base_label`, de baixo para cima (o de cima do último é o topo).
 
     Cada item: label, level (nome), parent (rótulo logo abaixo), role (papel com os vizinhos
-    resolvidos) e color. O `{abaixo}` do nível mais baixo é o próprio agente da aba.
+    resolvidos) e color. O `{abaixo}` do nível mais baixo é o próprio agente da aba; `{executores}`
+    (receitas `multi`) é a lista pronta de `executors_list`, só no nível mais baixo.
     """
     labels = [level_label(base_label, n["nome"]) for n in p.niveis]  # topo -> baixo
     out = []
     for i, n in enumerate(p.niveis):
         acima = labels[i - 1] if i > 0 else ""
         abaixo = labels[i + 1] if i + 1 < len(labels) else base_label
+        bottom = i + 1 == len(labels)
         role = (
             str(n["papel"])
             .replace("{acima}", session_name(acima) if acima else "")
             .replace("{abaixo}", session_name(abaixo))
             .replace("{eu}", session_name(labels[i]))
+            .replace("{executores}", executors if bottom else "")
             .strip()
         )
         out.append(

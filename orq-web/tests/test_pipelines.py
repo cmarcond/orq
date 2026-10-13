@@ -99,3 +99,25 @@ def test_levels_above_follows_parent_chain_and_ignores_closed():
     assert P.levels_above(agents, "k@h") == ["k~arquiteto@h", "k~professor@h"]
     assert P.levels_above(agents, "k~professor@h") == []
     assert P.levels_above([{"label": "a", "parent": "b"}, {"label": "b", "parent": "a"}], "a") == ["b"]
+
+
+def test_multi_recipe_lists_executors_only_in_bottom_level():
+    p = P.get("professor-executores")
+    assert p.multi and p.summary()["multi"] is True and not P.get("professor-executor").multi
+    base = {"label": "kaggle@server0", "name": "kaggle-server0", "host": "server0", "dir": "/h/k"}
+    others = [
+        {"label": "dados@laptop", "host": "laptop", "dir": "/Users/c/dados"}
+    ]  # sem nome: rótulo saneado
+    lst = P.executors_list(base, others)
+    assert lst.splitlines() == [
+        "- `kaggle-server0` (o da aba): máquina server0, pasta /h/k",
+        "- `dados-laptop`: máquina laptop, pasta /Users/c/dados",
+    ]
+    (prof,) = P.plan_levels(p, "kaggle@server0", lst)
+    assert "- `dados-laptop`: máquina laptop" in prof["role"] and "{executores}" not in prof["role"]
+    assert (
+        "`kaggle-server0` é o principal" in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
+    )
+    # receita de três níveis: só o de baixo recebe a lista; o de cima fica sem o marcador
+    arq, top = P.plan_levels(P.get("professor-arquiteto-executor"), "k@laptop", "- `x`")
+    assert "{executores}" not in top["role"] and "{executores}" not in arq["role"]

@@ -16,6 +16,11 @@ cota; o segundo pede ao claude real que crie `resumo.md` e "compartilhe pela pá
 pasta, e espera o arquivo aparecer na lista (prova que a nota do system prompt basta). Esse segundo
 teste usa o `orq-agent` instalado em `~/.local` (é o que o servidor do QA sobe): rode `./install.sh`
 antes se mudou o agente.
+Vínculos (`test_vinculos.py`): dois agentes reais no laptop, 🔗 pela página, um pergunta ao outro a
+pasta de trabalho pelo SendMessage e recebe a resposta pelo fio. Professor com vários executores
+(`test_professor_executores.py`): os mesmos dois, vinculados, ganham um professor pela receita
+`professor-executores`, que pergunta a cada um a pasta e explica as duas; ↓ desfazer limpa o vínculo
+do professor e deixa o dos executores. Os dois usam o `orq-agent` instalado (`./install.sh` antes).
 
 ```sh
 cd orq-web

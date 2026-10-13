@@ -1196,9 +1196,13 @@ async function openLevelPicker(base) {
   $('plist').innerHTML =
     (s.items || [])
       .map(
-        (p) => `<div class="p lvp" data-id="${esc(p.id)}"><span class="path"><b>${esc(p.titulo)}</b></span><span class="mute small">${esc(
-          p.niveis.join(' → '),
-        )} → executor</span><span class="ttl">${esc(p.descricao)}</span></div>`,
+        (p) => {
+          const nl = p.multi ? linksOf(base).length : 0;
+          const tail = p.multi ? (nl ? ` → ${nl + 1} executores (este + ${nl} vinculados)` : ' → executor (nenhum vinculado ainda: 🔗 antes)') : ' → executor';
+          return `<div class="p lvp" data-id="${esc(p.id)}"><span class="path"><b>${esc(p.titulo)}</b></span><span class="mute small">${esc(
+            p.niveis.join(' → '),
+          )}${esc(tail)}</span><span class="ttl">${esc(p.descricao)}</span></div>`;
+        },
       )
       .join('') || '<div class="mute">nenhuma receita em orqweb/pipelines</div>';
   $('plist').querySelectorAll('.p').forEach((el) => (el.onclick = () => upgrade(base, el.dataset.id)));
@@ -1208,7 +1212,10 @@ async function upgrade(base, pipeline) {
   toast(`subindo níveis sobre ${base.split('@')[0]}…`);
   const j = await agentApi(base, 'upgrade', { pipeline });
   if (!j.top) return;
-  toast(`${j.levels.map(levelName).reverse().join(' → ')} → executor; a aba fala com ${levelName(j.top)}`);
+  SIDE.view = 'levels'; // o painel mostra os níveis recém-subidos, mesmo que estivesse nos vínculos
+  const nl = (j.links || []).length;
+  const le = Object.keys(j.link_errors || {}).length;
+  toast(`${j.levels.map(levelName).reverse().join(' → ')} → ${nl ? `${nl + 1} executores` : 'executor'}; a aba fala com ${levelName(j.top)}${le ? ` (${le} vínculo(s) falharam)` : ''}`);
   await refresh();
   show(base);
 }

@@ -43,6 +43,13 @@ ele. O painel lateral ganha a aba **vínculos**: um cartão por agente ligado (c
 duas vezes desfaz) e os fios, cada pedido e cada resposta pelo `SendMessage`. A aba mostra `🔗n`.
 `POST /api/agent/<x>/link {to}` e `/unlink {to}`; `/api/state` traz `links`.
 
+**Um professor, vários executores**: com vínculos feitos, **⇅ subir nível** oferece a receita
+`professor → executores (este + vinculados)`: sobe um professor acima do agente da aba e o vincula
+também a cada agente vinculado a ela (em qualquer máquina). O papel dele lista os executores
+(`{executores}`: nome de sessão, máquina e pasta) e manda distribuir o trabalho pelo que cada um
+tem à mão, intermediando quando um precisa do resultado do outro. **↓ desfazer** desfaz os vínculos
+do professor e encerra-o; os vínculos entre os executores ficam.
+
 Por baixo, `orq-agent link A B` na máquina de `A`. Na mesma máquina não há túnel, mas o `ListAgents`
 só lê a pasta `sessions/` da própria conta: agentes de contas diferentes ganham o cartão e a chave um
 do outro espelhados (mesmo socket). Entre máquinas, o túnel ssh abaixo. Os níveis (professor →
