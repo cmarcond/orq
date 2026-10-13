@@ -70,6 +70,7 @@ class External:
         self.bin = bin_dir or config.bin_dir()
         self.run = runner
         self.popen = popen  # para os downloads, que são longos demais para esperar o fim (run)
+        self.links_by_host: Dict[str, List[dict]] = {}
         self.local = local_host  # nome desta máquina; None = tudo por ssh (container)
         self.ssh_config = ssh_config
 
@@ -113,20 +114,67 @@ class External:
             p["host"] = host
         return host, items, None
 
+    LINKS_MARK = "---orq-links---"
+
     def agents(self, host: str) -> Tuple[str, List[dict], Optional[str]]:
-        """Agentes da máquina (orq --status-json); rótulos ganham @host se não tiverem."""
+        """Agentes da máquina (orq --status-json) e, na mesma conexão, os vínculos dela (orq-agent links,
+        guardados em `self.links_by_host`); rótulos ganham @host se não tiverem."""
         try:
-            r = self._local_or_ssh(
-                host, [str(self.bin / "orq"), "--status-json"], "~/.local/bin/orq --status-json", 20
-            )
-            items = json.loads(r.stdout)
+            if host == self.local:
+                r = self.run([str(self.bin / "orq"), "--status-json"], 20)
+                items = json.loads(r.stdout)
+                try:
+                    lr = self.run([str(self.bin / "orq-agent"), "links"], 20)
+                    links = json.loads(lr.stdout or "[]")
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    links = []
+            else:
+                # duas conexões ssh seguidas à mesma máquina costumam cair: tudo numa só
+                remote = (
+                    "~/.local/bin/orq --status-json; echo; echo "
+                    + self.LINKS_MARK
+                    + "; ~/.local/bin/orq-agent links 2>/dev/null"
+                )
+                r = self.run(self.ssh(host, remote), 20)
+                head, _, tail = r.stdout.partition(self.LINKS_MARK)
+                items = json.loads(head)
+                try:
+                    links = json.loads(tail.strip() or "[]")
+                except ValueError:
+                    links = []
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return host, [], "sem resposta"
+        self.links_by_host[host] = [lk for lk in links if isinstance(lk, dict)]
         for a in items:
             a["host"] = host
             if "@" not in a.get("label", ""):
                 a["label"] = f"{a.get('label', '?')}@{host}"
         return host, dedupe_labels(items), None
+
+    @property
+    def links(self) -> List[dict]:
+        """Vínculos de todas as máquinas, como vistos na última consulta a cada uma."""
+        return [lk for host in sorted(self.links_by_host) for lk in self.links_by_host[host]]
+
+    # ---- vínculo entre agentes (orq-agent link/unlink na máquina do agente local)
+    def link(self, host: str, local_label: str, remote_label: str) -> Optional[str]:
+        """Devolve texto de erro ou None."""
+        return self._link_cmd(host, "link", local_label, remote_label, 90)
+
+    def unlink(self, host: str, local_label: str, remote_label: str) -> Optional[str]:
+        return self._link_cmd(host, "unlink", local_label, remote_label, 45)
+
+    def _link_cmd(self, host: str, op: str, a: str, b: str, timeout: float) -> Optional[str]:
+        try:
+            if host == self.local:
+                r = self.run([str(self.bin / "orq-agent"), op, a, b], timeout)
+            else:
+                r = self.run(self.ssh(host, "~/.local/bin/orq-agent " + shlex.join([op, a, b]), 8), timeout)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return str(e)
+        if r.returncode:
+            return (r.stderr.strip() or r.stdout.strip() or "falhou")[-300:]
+        return None
 
     def all_projects(self, hosts: List[str], limit: int = 30) -> Tuple[List[dict], Dict[str, str]]:
         with ThreadPoolExecutor(max_workers=12) as ex:

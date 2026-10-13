@@ -27,6 +27,7 @@ class StateCache:
         self.usage: Dict[str, Any] = {}
         self.usage_ts = 0.0
         self.agents: List[dict] = []
+        self.links: List[dict] = []  # vínculos entre agentes (orq-agent links), de todas as máquinas
         self.agents_ts = 0.0
         self.host_errors: Dict[str, str] = {}
         self.projects: Optional[List[dict]] = None
@@ -69,6 +70,7 @@ class StateCache:
                     continue
                 ag = [a for a in ag if a.get("label") != label] + [entry]
             self.agents, self.host_errors, self.agents_ts = ag, errs, now
+            self.links = list(getattr(self.ext, "links", []) or [])
         if self.on_agents:
             try:
                 self.on_agents(list(ag))
@@ -91,6 +93,7 @@ class StateCache:
                 "usage": self.usage,
                 "usage_ts": self.usage_ts,
                 "agents": list(self.agents),
+                "links": list(self.links),
                 "agents_ts": self.agents_ts,
                 "host_errors": dict(self.host_errors),
                 "accounts": list(self.conf.accounts),
@@ -113,6 +116,20 @@ class StateCache:
             self.closing.pop(agent["label"], None)
             self.provisional[agent["label"]] = agent
             self.agents = [a for a in self.agents if a.get("label") != agent["label"]] + [agent]
+
+    def add_link(self, record: dict) -> None:
+        """Vínculo recém-criado: aparece já, até a próxima consulta às máquinas trazê-lo de lá."""
+        with self.lock:
+            self.links = [
+                lk
+                for lk in self.links
+                if {lk.get("local"), lk.get("remote")} != {record["local"], record["remote"]}
+            ]
+            self.links.append(dict(record))
+
+    def drop_link(self, local: str, remote: str) -> None:
+        with self.lock:
+            self.links = [lk for lk in self.links if {lk.get("local"), lk.get("remote")} != {local, remote}]
 
     def drop_provisional(self, label: str) -> None:
         """Desfaz `add_provisional` (o reabrir falhou): a próxima consulta às máquinas diz o que sobrou."""

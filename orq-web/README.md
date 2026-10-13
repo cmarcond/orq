@@ -34,6 +34,20 @@ encerra o agente (a conversa fica salva). **📎** ou arrastar arquivos para o c
 `_inbox/` dentro da pasta do projeto, na máquina do agente (por ssh quando remota), e a mensagem
 sai com os caminhos, para o Claude ler o PDF, a planilha etc. direto de lá.
 
+## Vínculos entre agentes (🔗)
+
+**🔗 vincular** na barra do chat escolhe outro agente da página, em qualquer máquina: os dois passam a se
+ver no `ListAgents` e a pedir coisas um ao outro pelo `SendMessage`, sem papel imposto (são pares).
+Cada um recebe uma nota `[orq] Vínculo criado com o agente …` dizendo o nome do outro e como falar com
+ele. O painel lateral ganha a aba **vínculos**: um cartão por agente ligado (clique abre a aba dele, ✕
+duas vezes desfaz) e os fios, cada pedido e cada resposta pelo `SendMessage`. A aba mostra `🔗n`.
+`POST /api/agent/<x>/link {to}` e `/unlink {to}`; `/api/state` traz `links`.
+
+Por baixo, `orq-agent link A B` na máquina de `A`. Na mesma máquina não há túnel, mas o `ListAgents`
+só lê a pasta `sessions/` da própria conta: agentes de contas diferentes ganham o cartão e a chave um
+do outro espelhados (mesmo socket). Entre máquinas, o túnel ssh abaixo. Os níveis (professor →
+executor) continuam uma receita por cima do mesmo mecanismo.
+
 ## Vínculo entre máquinas (`orq-agent link`)
 
 Os níveis usam o `SendMessage`/`ListAgents` nativos do Claude Code, que só enxergam sessões da mesma

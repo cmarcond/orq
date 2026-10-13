@@ -157,6 +157,13 @@ function renderUsage(us) {
 const tabs = {}; // label -> {a, el, seq, es, pending, chips, perms, live, buf, follow, wires}
 let cur = null;
 let agents = [];
+let links = []; // vínculos entre agentes (orq-agent links), de todas as máquinas
+/** Vínculos vivos de `label`: [{other, host, kind, local, remote}]. */
+function linksOf(label) {
+  return links
+    .filter((lk) => lk.up && (lk.local === label || lk.remote === label))
+    .map((lk) => ({ ...lk, other: lk.local === label ? lk.remote : lk.local }));
+}
 const hostOf = (l) => l.split('@').pop();
 const LEVEL_COLORS = { professor: '#2b6cb0', arquiteto: '#805ad5', executor: '#b7791f' };
 const sessionName = (l) => l.replace(/[^a-zA-Z0-9_-]/g, '-'); // = config.session_name
@@ -218,8 +225,9 @@ function renderTabs() {
           const sdk = a.kind === 'sdk';
           const n = i++;
           const lv = levelsAbove(l);
+          const nl = linksOf(l);
           const tail = sdk
-            ? `${lv.length ? `<span class="lv" title="${esc(lv.map(levelName).reverse().join(' → '))} → executor">⇅${lv.length}</span>` : ''}${n < 9 ? `<span class="kbd">⌘${n + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
+            ? `${lv.length ? `<span class="lv" title="${esc(lv.map(levelName).reverse().join(' → '))} → executor">⇅${lv.length}</span>` : ''}${nl.length ? `<span class="lv lk" title="vinculado a ${esc(nl.map((k) => k.other).join(', '))}">🔗${nl.length}</span>` : ''}${n < 9 ? `<span class="kbd">⌘${n + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
             : a.tmux
               ? `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`
               : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
@@ -384,6 +392,10 @@ function status() {
   const has = base && levelsAbove(base).length;
   $('lvl').hidden = !base || !(agentOf(base)?.kind === 'sdk');
   $('out').hidden = $('lvl').hidden;
+  $('lnk').hidden = $('lvl').hidden;
+  const nl = base ? linksOf(base).length : 0;
+  $('lnk').textContent = nl ? `🔗 ${nl}` : '🔗 vincular';
+  $('lnk').title = nl ? 'vínculos deste agente (clique para ver; vincular a mais um pelo painel)' : 'vincular a outro agente da página (qualquer máquina): um pode pedir coisas ao outro pelo SendMessage';
   outBadge(base);
   $('lvl').textContent = has ? '⇅ níveis' : '⇅ subir nível';
   $('lvl').title = has ? 'mostrar/esconder o painel dos níveis' : 'subir um professor (ou mais níveis) acima deste agente';
@@ -451,8 +463,11 @@ function renderSide(base) {
   const main = $('chats');
   const side = $('side');
   const hasLv = Boolean(base && levelsAbove(base).length);
-  const view = base && SIDE.files && SIDE.view === 'files' ? 'files' : hasLv ? 'levels' : null;
+  const nLinks = base ? linksOf(base).length : 0;
+  const avail = { levels: hasLv, links: nLinks > 0, files: Boolean(base && SIDE.files) };
+  const view = !base ? null : avail[SIDE.view] ? SIDE.view : hasLv ? 'levels' : nLinks ? 'links' : null;
   $('levels').hidden = view !== 'levels';
+  $('links').hidden = view !== 'links';
   $('outbox').hidden = view !== 'files';
   if (!view) {
     side.hidden = true;
@@ -464,6 +479,7 @@ function renderSide(base) {
   const n = tabs[base]?.files?.items.length || 0;
   side.querySelector('.stabs').innerHTML =
     (hasLv ? `<button data-v="levels" class="${view === 'levels' ? 'on' : ''}">⇅ níveis</button>` : '') +
+    (nLinks ? `<button data-v="links" class="${view === 'links' ? 'on' : ''}">🔗 vínculos <span class="n">${nLinks}</span></button>` : '') +
     `<button data-v="files" class="${view === 'files' ? 'on' : ''}">📂 arquivos${n ? ` <span class="n">${n}</span>` : ''}</button>` +
     (view === 'files' ? '<button class="ghost sx" title="fechar a lista de arquivos">✕</button>' : '');
   side.querySelectorAll('.stabs [data-v]').forEach((b) => {
@@ -482,6 +498,80 @@ function renderSide(base) {
       renderSide(base);
     };
   if (view === 'files') renderOutbox(base);
+  if (view === 'links') renderLinks(base);
+  if (view === 'levels' && !$('levels').contains(wiresOf(base).el)) $('levels').appendChild(wiresOf(base).el);
+}
+/** Vista dos vínculos: um cartão por agente ligado a `base` (clique abre a aba dele; ✕ desfaz) e os fios. */
+function renderLinks(base) {
+  const box = $('links');
+  const items = linksOf(base);
+  box.innerHTML = `<div class="lhead"><b>vínculos</b><button class="ghost more" title="vincular a mais um agente">+ vincular</button></div>
+    <div class="lcards">${items
+      .map((lk) => {
+        const a = agentOf(lk.other) || { label: lk.other };
+        const st = a.state || '';
+        return `<div class="lcard link ${st}" data-l="${esc(lk.other)}" title="${esc(lk.other)}: abrir a aba dele"><div class="lrow"><span class="dot"></span><b>${esc(lk.other.split('@')[0])}</b><span class="small mute">${esc(hostOf(lk.other))}${lk.kind === 'ssh' ? ' · ssh' : ''} · ${esc(ST[st] || st)}</span><button class="ghost ul" data-u="${esc(lk.other)}" title="desfazer o vínculo">✕</button></div></div>`;
+      })
+      .join('')}</div><div class="lhead"><b>fios</b><span class="small mute">pedidos e respostas pelo SendMessage</span></div>`;
+  box.appendChild(wiresOf(base).el);
+  box.querySelector('.more').onclick = () => openLinkPicker(base);
+  box.querySelectorAll('.lcard').forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.closest('button')) return;
+      show(el.dataset.l);
+    };
+  });
+  box.querySelectorAll('.ul').forEach((bt) => (bt.onclick = () => askUnlink(base, bt.dataset.u)));
+}
+function askUnlink(base, other) {
+  const t = tab(base);
+  if (t._unlink === other) {
+    t._unlink = null;
+    agentApi(base, 'unlink', { to: other }).then((j) => {
+      if (!j.ok) return;
+      toast(`vínculo com ${other.split('@')[0]} desfeito`);
+      links = links.filter((lk) => !((lk.local === base && lk.remote === other) || (lk.local === other && lk.remote === base)));
+      renderSide(base);
+      renderTabs();
+      status();
+    });
+    return;
+  }
+  t._unlink = other;
+  toast(`clique de novo em ✕ para desfazer o vínculo com ${other.split('@')[0]}`);
+  setTimeout(() => (t._unlink = null), 4000);
+}
+/** Escolhe outro agente da página (qualquer máquina) para vincular a `base`. */
+function openLinkPicker(base) {
+  const linked = new Set(linksOf(base).map((lk) => lk.other));
+  const chain = new Set(chainOf(base));
+  const rows = agents.filter((a) => live(a) && a.kind === 'sdk' && a.label !== base && !linked.has(a.label) && !chain.has(a.label) && !isLevel(a));
+  picker(
+    `Vincular ${base.split('@')[0]} a…`,
+    'Os dois passam a se ver no ListAgents e a pedir coisas um ao outro pelo SendMessage (em máquinas diferentes, o orq estica o socket por ssh). Cada um recebe uma nota dizendo como falar com o outro.',
+    rows.length
+      ? rows
+          .map(
+            (a) => `<div class="p" data-l="${esc(a.label)}"><span class="mute">${esc(hostOf(a.label))}</span><span class="path"><b>${esc(a.label.split('@')[0])}</b> <span class="mute">${esc(a.dir || '')}</span></span><span><i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '')}</span><span class="small mute">${esc(ST[a.state] || a.state || '')}</span></div>`,
+          )
+          .join('')
+      : '<div class="mute">Nenhum outro agente da página para vincular. Abra outro projeto no <b>+</b> antes.</div>',
+  );
+  $('plist').querySelectorAll('.p').forEach((el) => {
+    el.onclick = async () => {
+      const to = el.dataset.l;
+      $('picker').hidden = true;
+      toast(`vinculando ${base.split('@')[0]} a ${to.split('@')[0]}…${hostOf(base) !== hostOf(to) ? ' (túnel ssh)' : ''}`);
+      const j = await agentApi(base, 'link', { to });
+      if (!j.ok) return;
+      if (j.link) links = links.filter((lk) => !((lk.local === base && lk.remote === to) || (lk.local === to && lk.remote === base))).concat([j.link]);
+      toast(`${base.split('@')[0]} ⇄ ${to.split('@')[0]} vinculados${(j.note_errors || []).length ? ' (a nota não chegou a um deles)' : ''}`);
+      SIDE.view = 'links';
+      renderSide(base);
+      renderTabs();
+      status();
+    };
+  });
 }
 const fileUrl = (base, name, dl = false) =>
   `/api/agent/${encodeURIComponent(base)}/file?name=${encodeURIComponent(name)}${dl ? '&dl=1' : ''}${T ? `&t=${encodeURIComponent(T)}` : ''}`;
@@ -1017,6 +1107,17 @@ $('lvl').onclick = () => {
   }
   openLevelPicker(base);
 };
+$('lnk').onclick = () => {
+  const base = curBase();
+  if (!base) return;
+  if (linksOf(base).length) {
+    SIDE.view = 'links';
+    $('chats').classList.add('showside');
+    renderSide(base);
+    return;
+  }
+  openLinkPicker(base);
+};
 $('out').onclick = () => {
   const base = curBase();
   if (!base) return;
@@ -1138,6 +1239,7 @@ async function refresh() {
     COL = s.colors || {};
     renderUsage(s.usage);
     agents = s.agents;
+    links = s.links || [];
     for (const a of agents) {
       const t = tabs[a.label];
       if (!t) continue;

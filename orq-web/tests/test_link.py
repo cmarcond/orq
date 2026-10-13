@@ -386,3 +386,57 @@ def test_run_link_handles_sigterm(world, monkeypatch):
     assert link.run_link("a@laptop", "b@server0", **kw) == 0
     st = json.loads(link.link_file("a@laptop", "b@server0").read_text())
     assert st["up"] is False and st["why"] == "unlink"
+
+
+# ---------------------------------------------------------------- mesma máquina: sem túnel
+def test_local_link_mirrors_between_accounts(world, monkeypatch, tmp_path):
+    """Contas diferentes têm sessions/ diferentes e o ListAgents só lê a própria: o vínculo local espelha."""
+    from orqweb.agent.state import StateFile
+
+    assert link.same_host("a@laptop", "b@laptop") and not link.same_host("a@laptop", "b@server0")
+    conf = config.parse(
+        {
+            "accounts": [
+                {"name": "g", "config_dir": str(tmp_path / "cfg")},
+                {"name": "h", "config_dir": str(tmp_path / "cfg2")},
+            ]
+        }
+    )
+    monkeypatch.setattr(link.config, "load", lambda: conf)
+    with pytest.raises(RuntimeError, match="@laptop não está rodando"):
+        client.spawn_link("a@laptop", "b@laptop")
+    for lab, acc in (("a@laptop", "g"), ("b@laptop", "h")):
+        d = config.state_dir(lab)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "agent.sock").write_text("")
+        StateFile(d / "state.json").write(label=lab, account=acc, kind="sdk")
+    monkeypatch.setattr(client, "socket_alive", lambda p: p.exists())
+    with pytest.raises(RuntimeError, match="b@laptop não está rodando com nome b-laptop"):
+        client.spawn_link("a@laptop", "b@laptop")
+    entry(tmp_path / "cfg2" / "sessions", os.getpid() + 1, "b-laptop", str(world["socks"] / "x.sock"))
+    monkeypatch.setattr(link, "pid_alive", lambda pid: True)
+    assert "4 arquivos espelhados" in client.spawn_link("a@laptop", "b@laptop")
+    (lk,) = link.list_links()
+    assert lk["kind"] == "local" and lk["up"] and lk["remote_name"] == "b-laptop" and lk["pid"] is None
+    # cada conta ganhou o cartão e a chave do outro, com o MESMO socket (mesma máquina)
+    me, other = os.getpid(), os.getpid() + 1
+    d = json.loads((tmp_path / "cfg" / "sessions" / f"{other}.json").read_text())
+    assert d["messagingSocketPath"] == str(world["socks"] / "x.sock") and d["_orq_mirror"] == "b@laptop"
+    assert (tmp_path / "cfg2" / "sessions" / f"{me}.json").exists() and (
+        tmp_path / "cfg2" / "sessions" / f"{me}.abc123.key"
+    ).exists()
+    assert len(lk["mirrors"]) == 4
+    # vincular de novo troca os espelhos sem duplicar; fechar um dos dois derruba o `up`
+    assert "4 arquivos espelhados" in client.spawn_link("a@laptop", "b@laptop")
+    (config.state_dir("b@laptop") / "agent.sock").unlink()
+    assert link.list_links()[0]["up"] is False, "um dos dois fechou"
+    (config.state_dir("b@laptop") / "agent.sock").write_text("")
+    assert client.unlink("a@laptop", "b@laptop") == "vínculo desfeito"
+    assert not (tmp_path / "cfg" / "sessions" / f"{other}.json").exists()
+    assert not (tmp_path / "cfg2" / "sessions" / f"{me}.json").exists()
+    st = link.list_links()[0]
+    assert st["up"] is False and st["why"] == "unlink" and st["mirrors"] == []
+    # mesma conta: nada a espelhar
+    StateFile(config.state_dir("b@laptop") / "state.json").write(account="g")
+    entry(tmp_path / "cfg" / "sessions", other, "b-laptop", str(world["socks"] / "x.sock"))
+    assert "já se enxergavam" in client.spawn_link("a@laptop", "b@laptop")

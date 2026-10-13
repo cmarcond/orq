@@ -364,3 +364,44 @@ def test_open_file_local_and_remote(tmp_path):
         ext.open_file("server0", "~/p/_outbox/a.bin", 99, None)
     with pytest.raises(FileNotFoundError):
         ext.open_file(LAPTOP, str(tmp_path / "nada"))
+
+
+# ---------------------------------------------------------------- vínculos
+def test_agents_also_bring_links_in_one_connection():
+    agents_json = '[{"label": "k", "kind": "sdk", "state": "waiting"}]'
+    links_json = '[{"local": "k@server0", "remote": "p@laptop", "up": true}]'
+    r = FakeRunner(
+        {"--status-json": (0, agents_json + "\n" + External.LINKS_MARK + "\n" + links_json + "\n")}
+    )
+    ext = External(Path("/b"), r)
+    host, items, err = ext.agents("server0")
+    assert err is None and items[0]["label"] == "k@server0"
+    assert (
+        r.calls[-1][0] == "ssh"
+        and "orq --status-json; echo; echo ---orq-links---; ~/.local/bin/orq-agent links" in r.calls[-1][-1]
+    )
+    assert ext.links == [{"local": "k@server0", "remote": "p@laptop", "up": True}]
+    # máquina antiga, sem `orq-agent links`: a lista de agentes continua valendo, vínculos vazios
+    r = FakeRunner({"--status-json": (0, agents_json + "\n" + External.LINKS_MARK + "\n")})
+    ext = External(Path("/b"), r)
+    assert ext.agents("server0")[2] is None and ext.links == []
+    # local: duas chamadas (sem ssh não há o problema da segunda conexão)
+    r = FakeRunner({"--status-json": (0, agents_json), "orq-agent links": (0, links_json)})
+    ext = External(Path("/b"), r)
+    assert ext.agents(LAPTOP)[2] is None and ext.links[0]["local"] == "k@server0"
+    assert r.calls[-1] == ["/b/orq-agent", "links"]
+    # all_agents consolida o que cada máquina devolveu (aqui só o laptop tem; o ssh falso não traz a marca)
+    ext.all_agents(["server0"])
+    assert set(ext.links_by_host) == {"laptop", "server0"} and len(ext.links) == 1
+
+
+def test_link_and_unlink_commands_local_and_remote():
+    r = FakeRunner({"orq-agent": (0, "vínculo na sessão tmux orql-a--b")})
+    ext = External(Path("/b"), r)
+    assert ext.link(LAPTOP, "a@laptop", "b@server0") is None
+    assert r.calls[-1] == ["/b/orq-agent", "link", "a@laptop", "b@server0"]
+    assert ext.unlink("server0", "b@server0", "a@laptop") is None
+    assert r.calls[-1][0] == "ssh" and r.calls[-1][-1] == "~/.local/bin/orq-agent unlink b@server0 a@laptop"
+    ext.run = lambda cmd, timeout: subprocess.CompletedProcess(cmd, 1, "", "o túnel ssh saiu: x")
+    assert ext.link(LAPTOP, "a@laptop", "b@server0") == "o túnel ssh saiu: x"
+    assert External(Path("/b"), FakeRunner({})).link(LAPTOP, "a", "b") == "sem resposta"

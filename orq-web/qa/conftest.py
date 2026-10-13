@@ -8,6 +8,7 @@ from orqqa import Orq, server_down, server_up
 from playwright.sync_api import sync_playwright
 
 PROJECT = os.environ.get("ORQ_QA_PROJECT", "laptop:~/Projects/orq-qa")
+PROJECT2 = os.environ.get("ORQ_QA_PROJECT2", "laptop:~/Projects/orq-qa2")  # segundo agente (vínculos)
 
 
 @pytest.fixture(scope="session")
@@ -56,3 +57,17 @@ def pytest_runtest_makereport(item, call):
     out = yield
     rep = out.get_result()
     setattr(item, "rep_" + rep.when, rep)
+
+
+@pytest.fixture
+def agent2(orq, agent):
+    """Um segundo agente real, noutra pasta descartável, para os vínculos; a aba volta ao primeiro."""
+    host, _, path = PROJECT2.partition(":")
+    orq.ensure_stopped(f"{path.rstrip('/').split('/')[-1]}@{host}")
+    label = orq.open_project(PROJECT2)
+    orq.show(agent)
+    yield label
+    try:
+        orq.stop(label)
+    except Exception:
+        orq.ensure_stopped(label)

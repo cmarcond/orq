@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ..agent.files import OUTBOX
+from ..config import session_name
 from . import pipelines
 from .assign import assign
 from .auth import Auth, login_page
@@ -34,7 +35,8 @@ CSP = (
 )
 TYPES = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
 AGENT_RE = re.compile(
-    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade|reopen|files|file)$"
+    r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade|reopen|files|file"
+    r"|link|unlink)$"
 )
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
@@ -60,6 +62,8 @@ class Context:
         self.convert = convert  # (host, label) -> {ok, label, how, msg}; None desliga /api/agent/convert
         self.put_file = None  # (host, path, data) -> erro ou None; None desliga /api/agent/<x>/upload
         self.list_files = None  # (host, pasta) -> ([{name,size,mtime}], erro); None desliga /files e /file
+        self.link = None  # (host, local, remoto) -> erro ou None; None desliga /link e /unlink
+        self.unlink = None
         self.open_file = None  # (host, path, start, end) -> FileStream
         self.token = token or secrets.token_urlsafe(16)
         self.auth: Optional[Auth] = None  # login por senha (rede); None ou desligado = só o token
@@ -300,6 +304,10 @@ def make_handler(ctx: Context):
                 return self.downgrade(label)
             if op == "reopen":
                 return self.reopen(label, body)
+            if op == "link":
+                return self.link_agents(label, body)
+            if op == "unlink":
+                return self.unlink_agents(label, body)
             msg = build_message(op, body)
             if msg is None:
                 return self.reply(400, {"err": "mensagem vazia" if op == "send" else "pedido inválido"})
@@ -388,6 +396,73 @@ def make_handler(ctx: Context):
             if err:
                 return self.reply(500, {"err": f"não consegui gravar em {entry.get('host')}: {err}"})
             return self.reply(200, {"path": path, "bytes": n})
+
+        def live_sdk(self, label: str) -> Optional[dict]:
+            with ctx.state.lock:
+                return next(
+                    (
+                        a
+                        for a in ctx.state.agents
+                        if a.get("label") == label and a.get("state") != "closed" and a.get("kind") == "sdk"
+                    ),
+                    None,
+                )
+
+        def link_agents(self, label: str, body: dict) -> None:
+            """Vínculo entre dois agentes da página: `orq-agent link` na máquina do primeiro (túnel ssh e
+            registro espelhado se as máquinas diferem) e uma nota a cada um dizendo como pedir ao outro."""
+            if not ctx.link:
+                return self.reply(400, {"err": "vínculos desligados"})
+            to = (body.get("to") or "").strip()
+            a, b = self.live_sdk(label), self.live_sdk(to)
+            if a is None or b is None:
+                return self.reply(
+                    404, {"err": "agente desconhecido (os dois precisam ser agentes da página, vivos)"}
+                )
+            if label == to:
+                return self.reply(400, {"err": "um agente não se vincula a si mesmo"})
+            if any(same_pair(lk, label, to) and lk.get("up") for lk in ctx.state.links):
+                return self.reply(400, {"err": "já estão vinculados"})
+            host = a.get("host") or ctx.local_host or "?"
+            err = ctx.link(host, label, to)
+            if err:
+                return self.reply(500, {"err": f"vínculo falhou: {err}"})
+            record = {
+                "local": label,
+                "remote": to,
+                "host": host,
+                "kind": "local" if (b.get("host") or ctx.local_host) == host else "ssh",
+                "local_name": a.get("name") or session_name(label),
+                "remote_name": b.get("name") or session_name(to),
+                "up": True,
+            }
+            ctx.state.add_link(record)
+            errs = [
+                e
+                for e in (ctx.bridges.deliver(x["label"], link_note(x, y)) for x, y in ((a, b), (b, a)))
+                if e
+            ]
+            return self.reply(200, {"ok": True, "link": record, "note_errors": errs})
+
+        def unlink_agents(self, label: str, body: dict) -> None:
+            if not ctx.unlink:
+                return self.reply(400, {"err": "vínculos desligados"})
+            to = (body.get("to") or "").strip()
+            rec = next((lk for lk in ctx.state.links if same_pair(lk, label, to)), None)
+            if rec is None:
+                return self.reply(404, {"err": "não há vínculo entre esses agentes"})
+            err = ctx.unlink(rec.get("host") or ctx.local_host or "?", rec["local"], rec["remote"])
+            if err:
+                return self.reply(500, {"err": f"desfazer falhou: {err}"})
+            ctx.state.drop_link(rec["local"], rec["remote"])
+            a, b = self.live_sdk(rec["local"]), self.live_sdk(rec["remote"])
+            errs = []
+            for x, y in ((a, b), (b, a)):
+                if x is not None:
+                    e = ctx.bridges.deliver(x["label"], unlink_note(x, y, rec))
+                    if e:
+                        errs.append(e)
+            return self.reply(200, {"ok": True, "note_errors": errs})
 
         def upgrade(self, label: str, body: dict) -> None:
             """Sobe os níveis de uma receita acima do agente da aba (mesma máquina, pasta e conta)."""
@@ -504,6 +579,33 @@ def make_handler(ctx: Context):
             return self.reply(200, {"label": p["label"], "acc": p["acc"], "why": p["why"]})
 
     return Handler
+
+
+def same_pair(lk: dict, a: str, b: str) -> bool:
+    return {lk.get("local"), lk.get("remote")} == {a, b}
+
+
+def _user_msg(text: str) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def link_note(me: dict, other: dict) -> dict:
+    """O que cada agente recebe ao ganhar um vínculo: quem é o outro e como falar com ele."""
+    name = other.get("name") or session_name(other.get("label", ""))
+    mine = me.get("name") or session_name(me.get("label", ""))
+    return _user_msg(
+        f"[orq] Vínculo criado com o agente `{name}` (pasta {other.get('dir') or '?'} em "
+        f"{other.get('host') or '?'}). Vocês se enxergam no ListAgents. Para pedir algo a ele, use "
+        f'SendMessage com to="{name}" e peça que responda pelo SendMessage a "{mine}"; ele pode pedir '
+        "coisas a você do mesmo jeito. Nada a fazer agora: só tome nota."
+    )
+
+
+def unlink_note(me: dict, other: Optional[dict], rec: dict) -> dict:
+    name = (other or {}).get("name") or rec.get(
+        "remote_name" if rec.get("local") == me.get("label") else "local_name"
+    )
+    return _user_msg(f"[orq] Vínculo com o agente `{name}` desfeito: ele não está mais ao seu alcance.")
 
 
 def safe_filename(name: str) -> str:

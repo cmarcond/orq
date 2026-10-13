@@ -208,6 +208,18 @@ def spawn_link(local_label: str, remote_label: str, wait: float = 45.0) -> str:
 
     st = L.StateFile(L.link_file(local_label, remote_label))
     cur = st.read()
+    if L.same_host(local_label, remote_label):
+        for lab in (local_label, remote_label):
+            if not socket_alive(config.state_dir(lab) / "agent.sock"):
+                raise RuntimeError(f"{lab} não está rodando")
+        if cur.get("kind") == "local":
+            L.local_unlink(cur)  # sobras de um vínculo anterior entre os mesmos dois
+        state = L.local_link(local_label, remote_label)
+        st.write(**state)
+        n = len(state["mirrors"])
+        return "vínculo local (mesma máquina): " + (
+            "os dois já se enxergavam" if not n else f"{n} arquivos espelhados entre as contas"
+        )
     if cur.get("up") and L.pid_alive(cur.get("pid")):
         return "já de pé"
     try:
@@ -257,6 +269,10 @@ def unlink(local_label: str, remote_label: str, wait: float = 20.0) -> str:
 
     st = L.StateFile(L.link_file(local_label, remote_label))
     cur = st.read()
+    if cur.get("kind") == "local":
+        L.local_unlink(cur)
+        st.write(up=False, why="unlink", mirrors=[])
+        return "vínculo desfeito"
     pid = cur.get("pid")
     if not (cur.get("up") and L.pid_alive(pid)):
         return "não havia vínculo de pé"

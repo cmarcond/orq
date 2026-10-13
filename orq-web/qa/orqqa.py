@@ -14,6 +14,8 @@ e ver o resultado em captura de tela, console e estado:
   python qa/orqqa.py allow | deny         responde à permissão pendente
   python qa/orqqa.py stop [rótulo]        encerra o agente (✕ duas vezes)
   python qa/orqqa.py levels [receita]     ⇅ subir nível na aba atual (padrão professor-executor)
+  python qa/orqqa.py link rótulo          🔗 vincula a aba atual ao agente rótulo (qualquer máquina)
+  python qa/orqqa.py unlink rótulo        desfaz o vínculo
   python qa/orqqa.py wires                fios entre os níveis e os níveis do painel
   python qa/orqqa.py undo                 ↓ desfazer: encerra os níveis de cima
   python qa/orqqa.py quota ["texto"]       força "sem cota" na aba atual e espera a troca de conta
@@ -418,7 +420,7 @@ class Orq:
 
         Todo SendMessage vira um fio de quem mandou ('professor' delegou, 'executor' reportou um marco)."""
         return self.page.evaluate(
-            "[...document.querySelectorAll('#levels .wire')].map((e) => ({"
+            "[...document.querySelectorAll('#side .wire')].map((e) => ({"
             "frm: e.querySelector('.wh b')?.textContent || '',"
             " head: e.querySelector('.wh').innerText.replace(/\\s+/g, ' ').trim(),"
             " delivered: e.classList.contains('delivered') || e.classList.contains('in'),"
@@ -429,7 +431,7 @@ class Orq:
         """Espera um fio do nível `frm` cujo texto tenha `contains` (se dado); com `delivered`, espera o
         ✓✓ (o outro lado recebeu, o que chega um instante depois do fio). Devolve o último que casa."""
         self.page.wait_for_function(
-            "([f, c, d]) => [...document.querySelectorAll('#levels .wire')].some((e) =>"
+            "([f, c, d]) => [...document.querySelectorAll('#side .wire')].some((e) =>"
             " e.querySelector('.wh b')?.textContent === f"
             " && (e.querySelector('pre')?.textContent || '').toLowerCase().includes(c.toLowerCase())"
             " && (!d || e.classList.contains('delivered') || e.classList.contains('in')))",
@@ -505,6 +507,39 @@ class Orq:
 
     def migrations(self) -> List[dict]:
         return self.state().get("migrations", [])
+
+    # ---- vínculos entre agentes (🔗)
+    def link(self, to: str, timeout: float = 120) -> List[str]:
+        """🔗 vincular na aba atual: escolhe `to` no seletor; espera o vínculo aparecer no painel."""
+        base = self.current()
+        self.page.click("#lnk")
+        self.page.wait_for_selector("#picker:not([hidden]) #plist .p", timeout=20000)
+        self.page.click(f'#plist .p[data-l="{to}"]')
+        self.page.wait_for_function(
+            "(n) => !document.getElementById('links').hidden"
+            " && [...document.querySelectorAll('#links .lcard')].some((e) => e.dataset.l === n)",
+            arg=to,
+            timeout=timeout * 1000,
+        )
+        assert self.current() == base
+        return self.links()
+
+    def links(self) -> List[str]:
+        """Rótulos dos agentes vinculados ao da aba (painel de vínculos)."""
+        return self.page.evaluate(
+            "document.getElementById('links').hidden ? []"
+            " : [...document.querySelectorAll('#links .lcard')].map((e) => e.dataset.l)"
+        )
+
+    def unlink(self, to: str, timeout: float = 60) -> None:
+        self.page.click(f'#links .lcard[data-l="{to}"] .ul')
+        self.page.click(f'#links .lcard[data-l="{to}"] .ul')
+        self.page.wait_for_function(
+            "(n) => document.getElementById('links').hidden"
+            " || ![...document.querySelectorAll('#links .lcard')].some((e) => e.dataset.l === n)",
+            arg=to,
+            timeout=timeout * 1000,
+        )
 
     # ---- arquivos que o agente compartilhou (_outbox/)
     def open_files(self) -> None:
@@ -648,6 +683,11 @@ def main(argv: List[str]) -> int:
                 lab = args[0] if args else o.current()
                 o.stop(lab)
                 print(f"encerrado: {lab}")
+            elif cmd == "link":
+                print("vínculos:", ", ".join(o.link(argv[2])) or "nenhum")
+            elif cmd == "unlink":
+                o.unlink(argv[2])
+                print("vínculos:", ", ".join(o.links()) or "nenhum")
             elif cmd == "levels":
                 print(
                     "níveis:",

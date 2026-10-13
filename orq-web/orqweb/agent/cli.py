@@ -258,16 +258,10 @@ def cmd_cat(a: argparse.Namespace) -> int:
 
 def _agent_sessions_dir(label: str):
     """(pasta sessions/ da conta do agente, nome da sessão) ou (None, erro)."""
-    from .state import StateFile
-
-    st = StateFile(config.state_dir(label) / "state.json").read()
-    if not st.get("account"):
-        return None, f"{label} não é um agente desta máquina"
     try:
-        acc = config.load().account(st["account"])
-    except KeyError as e:
-        return None, e.args[0]
-    return acc.config_dir / "sessions", config.session_name(label)
+        return link.agent_sessions_dir(label), config.session_name(label)
+    except RuntimeError as e:
+        return None, str(e)
 
 
 def cmd_peer(a: argparse.Namespace) -> int:

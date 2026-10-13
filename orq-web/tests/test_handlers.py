@@ -737,3 +737,96 @@ def test_files_and_file_routes(server, short_tmp):
     assert get("/api/agent/k%40laptop/files")[0].status == 200
     srv_ctx.list_files = None
     assert get("/api/agent/k%40laptop/files")[0].status == 400
+
+
+# ---------------------------------------------------------------- vínculos entre agentes
+def test_link_and_unlink_routes(server, agent):
+    port, ext, state = server
+    srv_ctx = server_ctx(port)
+    calls = []
+    srv_ctx.link = lambda host, a, b: calls.append(("link", host, a, b)) or None
+    srv_ctx.unlink = lambda host, a, b: calls.append(("unlink", host, a, b)) or None
+    state.add_provisional(  # o agente real do fixture (claude falso, com nome)
+        {
+            "label": "proj@laptop",
+            "host": "laptop",
+            "account": "gmail",
+            "dir": "/p",
+            "state": "waiting",
+            "kind": "sdk",
+            "name": "proj-laptop",
+        }
+    )
+    state.add_provisional(
+        {
+            "label": "r@server0",
+            "host": "server0",
+            "account": "gmail",
+            "dir": "/h/r",
+            "state": "waiting",
+            "kind": "sdk",
+            "name": "r-server0",
+        }
+    )
+    sse = SSE(port, "proj%40laptop")
+    sse.until(lambda e: e.get("type") == "system" and e.get("subtype") == "init")
+    # erros antes de qualquer coisa: agente desconhecido, consigo mesmo
+    assert req(port, "POST", "/api/agent/proj%40laptop/link", {"to": "nada@x"})[0] == 404
+    assert req(port, "POST", "/api/agent/proj%40laptop/link", {"to": "proj@laptop"})[0] == 400
+    status, body, _ = req(port, "POST", "/api/agent/proj%40laptop/link", {"to": "r@server0"})
+    assert status == 200 and body["ok"] and body["link"]["kind"] == "ssh" and body["link"]["host"] == "laptop"
+    assert body["link"]["remote_name"] == "r-server0" and calls == [
+        ("link", "laptop", "proj@laptop", "r@server0")
+    ]
+    # a nota chega ao agente da página (o claude falso a ecoa); o outro, sem ponte, vira erro de nota
+    got = sse.until(
+        lambda e: e.get("type") == "user" and "[orq] Vínculo criado" in json.dumps(e, ensure_ascii=False)
+    )
+    txt = got[-1]["message"]["content"]
+    assert 'to="r-server0"' in txt and "/h/r em server0" in txt and 'a "proj-laptop"' in txt
+    assert isinstance(body["note_errors"], list)  # entrega da nota é de melhor esforço
+    # o vínculo aparece no estado já, e de novo não
+    assert any(
+        lk["local"] == "proj@laptop" and lk["remote"] == "r@server0"
+        for lk in req(port, "GET", "/api/state")[1]["links"]
+    )
+    assert req(port, "POST", "/api/agent/proj%40laptop/link", {"to": "r@server0"})[0] == 400
+    # desfazer, pelo outro lado do par também vale
+    status, body, _ = req(port, "POST", "/api/agent/r%40server0/unlink", {"to": "proj@laptop"})
+    assert status == 200 and body["ok"] and calls[-1] == ("unlink", "laptop", "proj@laptop", "r@server0")
+    sse.until(
+        lambda e: (
+            e.get("type") == "user"
+            and "Vínculo com o agente `r-server0` desfeito" in json.dumps(e, ensure_ascii=False)
+        )
+    )
+    assert req(port, "GET", "/api/state")[1]["links"] == []
+    assert req(port, "POST", "/api/agent/proj%40laptop/unlink", {"to": "r@server0"})[0] == 404
+    # falha do orq-agent link vira 500 com o motivo; desligado vira 400
+    srv_ctx.link = lambda host, a, b: "o túnel ssh saiu"
+    status, body, _ = req(port, "POST", "/api/agent/proj%40laptop/link", {"to": "r@server0"})
+    assert status == 500 and "túnel" in body["err"]
+    srv_ctx.link = None
+    assert req(port, "POST", "/api/agent/proj%40laptop/link", {"to": "r@server0"})[0] == 400
+    sse.close()
+
+
+def test_link_note_texts():
+    me = {"label": "a@laptop", "name": "a-laptop"}
+    other = {"label": "b@server0", "dir": "/h/b", "host": "server0"}  # sem nome: usa o rótulo saneado
+    n = H.link_note(me, other)["message"]["content"]
+    assert (
+        n.startswith("[orq] ")
+        and 'to="b-server0"' in n
+        and 'a "a-laptop"' in n
+        and "/h/b em server0" in n
+    )
+    rec = {
+        "local": "a@laptop",
+        "remote": "b@server0",
+        "local_name": "a-laptop",
+        "remote_name": "b-server0",
+    }
+    assert "`b-server0` desfeito" in H.unlink_note(me, None, rec)["message"]["content"]
+    assert "`a-laptop` desfeito" in H.unlink_note({"label": "b@server0"}, None, rec)["message"]["content"]
+    assert "`x` desfeito" in H.unlink_note(me, {"name": "x"}, rec)["message"]["content"]

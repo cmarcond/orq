@@ -160,14 +160,75 @@ def link_file(local_label: str, remote_label: str) -> Path:
     return links_dir(local_label) / (config.safe_label(remote_label) + ".json")
 
 
+def same_host(a: str, b: str) -> bool:
+    return config.host_of(a) == config.host_of(b)
+
+
+def agent_sessions_dir(label: str, conf: Optional[config.Config] = None) -> Path:
+    """Pasta sessions/ da conta do agente desta máquina (pelo state.json dele). RuntimeError se não há."""
+    st = StateFile(config.state_dir(label) / "state.json").read()
+    if not st.get("account"):
+        raise RuntimeError(f"{label} não é um agente desta máquina")
+    try:
+        return (conf or config.load()).account(st["account"]).config_dir / "sessions"
+    except KeyError as e:
+        raise RuntimeError(e.args[0]) from None
+
+
+def local_link(local_label: str, remote_label: str, conf: Optional[config.Config] = None) -> Dict[str, Any]:
+    """Vínculo entre dois agentes desta máquina: sem túnel. O ListAgents só lê a pasta sessions/ da
+    própria conta, então agentes de contas diferentes precisam do cartão e da chave um do outro
+    espelhados (mesmo socket, já que é a mesma máquina). Devolve o estado a gravar."""
+    conf = conf or config.load()
+    dirs, entries = {}, {}
+    for lab in (local_label, remote_label):
+        dirs[lab] = agent_sessions_dir(lab, conf)
+        entries[lab] = find_entry(config.session_name(lab), [dirs[lab]])
+        if entries[lab] is None:
+            raise RuntimeError(f"{lab} não está rodando com nome {config.session_name(lab)}")
+    mirrors: List[str] = []
+    if dirs[local_label].resolve() != dirs[remote_label].resolve():
+        for me, other in ((local_label, remote_label), (remote_label, local_label)):
+            e = entries[other]
+            mirrors += [str(p) for p in write_mirror(dirs[me], e.record(), e.sock, other)]
+    return dict(
+        local=local_label,
+        remote=remote_label,
+        host=config.host_of(remote_label),
+        local_name=config.session_name(local_label),
+        remote_name=config.session_name(remote_label),
+        kind="local",
+        pid=None,
+        mirrors=mirrors,
+        up=True,
+    )
+
+
+def local_unlink(state: Dict[str, Any]) -> None:
+    for m in state.get("mirrors") or []:
+        try:
+            os.unlink(m)
+        except OSError:
+            pass
+
+
 def list_links(root: Optional[Path] = None) -> List[dict]:
-    """Vínculos desta máquina (um arquivo por par), com `up` corrigido pelo pid do processo do vínculo."""
+    """Vínculos desta máquina (um arquivo por par). `up`: o processo do vínculo vive (ou, num vínculo
+    local, os dois agentes vivem)."""
     out = []
-    for f in sorted((root or config.state_root()).glob("*/links/*.json")):
+    root = root or config.state_root()
+    for f in sorted(root.glob("*/links/*.json")):
         st = StateFile(f).read()
         if not st:
             continue
-        st["up"] = bool(st.get("up")) and pid_alive(st.get("pid"))
+        if st.get("kind") == "local":
+            alive = all(
+                (root / config.safe_label(lab) / "agent.sock").exists()
+                for lab in (st.get("local", ""), st.get("remote", ""))
+            )
+            st["up"] = bool(st.get("up")) and alive
+        else:
+            st["up"] = bool(st.get("up")) and pid_alive(st.get("pid"))
         out.append(st)
     return out
 
