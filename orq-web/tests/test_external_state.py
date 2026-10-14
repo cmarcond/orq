@@ -448,3 +448,13 @@ def test_links_of_an_unreachable_host_are_dropped():
     assert len(ext.links) == 1
     ext.run = lambda cmd, timeout: (_ for _ in ()).throw(OSError("sem rede"))
     assert ext.agents("server0")[2] == "sem resposta" and ext.links == []
+
+
+def test_spawn_passes_permission_and_set():
+    r = FakeRunner({"orq-agent": (0, "pronto")})
+    ext = External(Path("/b"), r)
+    assert ext.spawn(LAPTOP, "p@laptop", "/p", "gmail", "new", permission="auto", set_id="artigo") is None
+    cmd = r.calls[-1]
+    assert cmd[cmd.index("--permission-mode") + 1] == "auto" and cmd[cmd.index("--set") + 1] == "artigo"
+    ext.spawn("server0", "p@server0", "~/p", "gmail", "new", permission="auto", set_id="artigo")
+    assert "--permission-mode auto" in r.calls[-1][-1] and "--set artigo" in r.calls[-1][-1]

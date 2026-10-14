@@ -181,6 +181,126 @@ Ficam para depois: histórico de rodadas e linha do tempo de marcos; modelo/esfo
 editáveis pela página; um professor para vários executores; busca na lista de projetos; painel de níveis
 melhor no celular; níveis na grade do `orq` do terminal; `orq-web --no-open`.
 
+## Fase 5 — conjuntos: abrir vários agentes de uma vez, com ou sem professor  (planejada em 2026-10-13)
+
+Um **conjunto** é um JSON que descreve agentes para abrir juntos: os trabalhos que estavam em andamento
+(cada um na sua pasta e máquina, conversa retomada) ou um grupo com um professor líder, em que cada agente
+sobe com um system prompt próprio. Um botão **⊞ conjuntos** ao lado das abas lista os salvos, abre um,
+recebe um JSON pronto, ou fotografa as abas abertas num conjunto novo. Vale também no `/m`.
+
+Decisões tomadas com o autor em 2026-10-13: conjuntos ficam numa **pasta do servidor** editável pela página
+(`~/.config/orq-web/conjuntos/*.json`, `ORQ_SETS_DIR`; no container, volume gravável); **dois modos**, sem líder
+(agentes independentes) e com líder (professor sobre o primeiro agente, os outros vinculados a ele, receita
+`professor-executores`, como o `upgrade` já faz); o JSON pode levar **tarefa inicial**, **conta fixa** e **modo de
+permissão**; se qualquer agente do conjunto **já estiver aberto** (mesma máquina e pasta), a página **recusa e
+avisa** quais, sem abrir nada.
+
+### 5.1 O formato
+
+```json
+{
+  "nome": "artigo-kaggle",
+  "descricao": "modelo no server0, texto no node3, professor coordena",
+  "permissao": "auto",
+  "agentes": [
+    {"maquina": "server0", "pasta": "~/Projects/kaggle", "modo": "resume",
+     "conta": "work3", "prompt": "Você cuida do modelo…", "tarefa": "Retome de onde parou e reporte."},
+    {"maquina": "node3", "pasta": "~/Projects/paper", "modo": "new",
+     "prompt": "Você escreve o artigo…"}
+  ],
+  "lider": {
+    "receita": "professor-executores",
+    "prompt": "opcional: substitui o papel do TOML; aceita {executores}, {abaixo}, {eu}",
+    "tarefa": "opcional: primeira mensagem ao professor"
+  }
+}
+```
+
+- `nome` é o id (nome do arquivo saneado). `descricao`, `permissao`, `conta`, `prompt`, `tarefa` e `lider` são
+  opcionais. `modo` padrão: `resume` (a conversa mais recente da pasta; `new` se não houver).
+- `permissao` vale para o conjunto inteiro (`auto` | `acceptEdits` | `manual`); sem ela, o `permission_mode` da
+  máquina. Todos os agentes e níveis sobem no mesmo modo (modos diferentes retêm mensagens entre níveis).
+- `conta` ausente: `assign` escolhe pela folga, para o conjunto inteiro de uma vez, o que já distribui a carga entre
+  as contas (`PER_AGENT`) em vez de empilhar todos na mesma.
+- `prompt` de um agente vai por `--append-system-prompt`, como o papel de um nível. A nota do `_outbox/` continua.
+- Sem `lider`, cada agente é independente: nenhum vínculo é feito. Com `lider`, todos os demais são vinculados ao
+  primeiro e o professor sobe acima dele; `lider.prompt` substitui `papel` do TOML (com os mesmos marcadores).
+- Em `tarefa`, o texto é entregue como mensagem da pessoa assim que o agente confirma que subiu; com `lider`, a
+  `tarefa` dos agentes é entregue antes da do professor.
+
+### 5.2 Supervisor (`orq-agent spawn`)
+
+- `--role-file` passa a valer para agente base, não só para nível: sem `--parent`/`--level`, é só o prompt. O
+  `state.json` grava `role: true`, e o `--restart` (troca de conta, reabrir com nome) reaproveita o `role.txt`
+  sempre que existir, não só quando há `parent`/`level`.
+- `--permission-mode` novo, gravado no `state.json` e reaproveitado no `--restart`. Sem ele, o da máquina.
+- `state.json` ganha `conjunto: <id>` (de que conjunto o agente veio), para a fotografia (5.4) e para a aba
+  mostrar de onde ele veio.
+
+### 5.3 Servidor (`orqweb/server/sets.py` e rotas)
+
+| rota | o que faz |
+|---|---|
+| `GET /api/conjuntos` | catálogo: id, nome, descricao, nº de agentes, líder ou não, máquinas, `aberto` (quantos agentes dele já estão abertos) |
+| `POST /api/conjuntos` `{json}` | valida e salva (cria ou substitui pelo `nome`); é o "enviar JSON" e o "salvar como conjunto" |
+| `GET /api/conjuntos/<id>` | o JSON, para baixar ou editar fora |
+| `POST /api/conjuntos/<id>/delete` | apaga o arquivo (o botão pede confirmação) |
+| `POST /api/conjuntos/<id>/open` | abre: recusa (409, lista) se algum `maquina:pasta` já tem agente vivo ou claude de terminal; senão sobe tudo |
+| `POST /api/conjuntos/snapshot` `{nome}` | fotografa as abas abertas (5.4) e salva |
+
+Abertura (`/open`): a resposta volta na hora com o plano (rótulos, contas, porquês), e o trabalho roda numa thread
+do servidor, porque abrir N agentes por ssh leva de 5 a 15 s cada. Os agentes entram como provisórios conforme sobem,
+então as abas aparecem na página pelo `/api/state` normal. Ordem: `spawn` dos agentes (em paralelo entre máquinas
+diferentes, **em sequência na mesma máquina**, porque ssh em rajada para a mesma máquina cai); depois, com líder,
+`link` de cada um com o primeiro e `upgrade` com a receita e o `prompt` do líder (mesma rotina de hoje, fatorada do
+handler para uma função); por fim, `tarefa`s entregues quando cada agente sai de `abrindo…` (espera até 90 s). O
+andamento vai em `/api/state.conjuntos_abrindo` (`{id, etapa, feitos, erros}`) e a página mostra como toast; falha num
+agente não desfaz os outros, só é listada.
+
+Validação (`sets.validate`): campos conhecidos, `maquina` entre as configuradas, `conta` entre as contas, `permissao`
+entre os modos, `modo` em `resume|new`, `lider.receita` no catálogo, pelo menos um agente, `nome` saneável e sem
+colisão de `maquina:pasta` dentro do próprio conjunto.
+
+### 5.4 Fotografia das abas abertas
+
+`snapshot` monta um conjunto a partir do estado atual: um agente por aba (máquina, pasta, conta atual, `modo:
+resume`, `prompt` se o agente subiu com `role.txt` — o servidor lê pelo `orq-agent cat` — e `permissao` do
+`state.json`); se a aba atual tem níveis acima, vira `lider` com a receita registrada em `level` e os vinculados a ela
+entram como agentes; o restante das abas entra como independente. A página pede o nome, mostra o JSON resultante
+numa prévia editável e só salva ao confirmar.
+
+### 5.5 Página
+
+- Botão **⊞ conjuntos** na faixa das abas (ao lado da cota) e, no `/m`, na gaveta. Abre o seletor já existente
+  (`picker`) com uma linha por conjunto: nome, descrição, `N agentes · máquinas · 👨‍🏫 líder`, e à direita **abrir**,
+  **⬇ JSON**, **✕**. Linha de cima: **📄 enviar JSON** (input de arquivo, valida no servidor e lista o erro com a
+  linha) e **📷 salvar abas abertas**.
+- Abrir com algum agente já aberto: toast vermelho "já aberto: kaggle@server0, paper@node3; feche-os ou abra
+  só os demais à mão", sem abrir nada.
+- Durante a abertura, toasts de andamento (`conjuntos_abrindo`); ao terminar, `show()` do primeiro agente (ou do
+  topo do líder).
+- A aba de um agente vindo de conjunto mostra `⊞ nome` no estado da barra inferior.
+
+### 5.6 Testes
+
+- `tests/test_sets.py`: validação (cada erro), catálogo com arquivo quebrado pulado, `plan` (rótulos, `assign`
+  do conjunto inteiro, marcadores do líder), recusa por agente já aberto, snapshot a partir de um estado montado.
+- `tests/test_handlers.py` + `fake_claude`: abrir conjunto de dois sem líder → dois `spawn` com `--role-file`
+  e `--permission-mode`, nenhum `link`; com líder → dois `spawn`, um `link`, um `upgrade` com papel
+  substituído, `tarefa`s entregues na ordem; `delete` e `POST` com JSON inválido (400 com motivo).
+- `tests/test_supervisor.py`: `spawn --role-file` sem nível grava `role: true`; `--restart` reaproveita papel
+  e `--permission-mode`.
+- QA (`qa/tests/test_conjuntos.py`): enviar JSON, abrir, ver abas, salvar abas abertas, apagar.
+- Verificação real: conjunto com `kaggle@server0` + uma pasta no node3 e professor; tarefa inicial chega.
+
+### 5.7 Docs
+
+`docs/04-pagina-orq-web.md` ganha 4.12 "Conjuntos"; `docs/07-referencia.md` as rotas e o esquema do JSON;
+`docs/05-arquitetura.md` a sequência "abrir um conjunto" em 5.5 e `ORQ_SETS_DIR` em 5.4.
+
+Tamanho estimado: ~900 linhas (sets.py ~200, handlers ~150, supervisor ~60, app.js ~200, testes ~300), mais docs.
+Ordem sugerida: supervisor (5.2) → sets.py e rotas sem líder → página → líder e tarefas → snapshot → QA e docs.
+
 ---
 
 ## Estimativa e ordem

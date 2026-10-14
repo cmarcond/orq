@@ -36,8 +36,23 @@ class FakeExt:
     def all_projects(self, hosts, limit=30):
         return [{"cwd": "/p", "host": "laptop", "mtime": 1, "account": "gmail", "title": "t"}], {}
 
-    def spawn(self, host, label, cwd, account, mode, role=None, parent=None, level=None, restart=False):
+    def spawn(
+        self,
+        host,
+        label,
+        cwd,
+        account,
+        mode,
+        role=None,
+        parent=None,
+        level=None,
+        restart=False,
+        permission=None,
+        set_id=None,
+    ):
         self.spawned.append((host, label, cwd, account, mode, role, parent, level))
+        self.extras = getattr(self, "extras", {})
+        self.extras[label] = {"permission": permission, "set_id": set_id}
         self.restarts = getattr(self, "restarts", []) + ([label] if restart else [])
         if cwd == "/falha":
             return "falhou de propósito"
@@ -989,3 +1004,217 @@ def test_mobile_page_is_served_with_its_own_css(server):
 
     ids = lambda b: set(re.findall(rb'id="([^"]+)"', b))  # noqa: E731
     assert ids(body) == ids(req(port, "GET", "/")[1])
+
+
+# ---------------------------------------------------------------- conjuntos
+@pytest.fixture
+def sets_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORQ_SETS_DIR", str(tmp_path / "conj"))
+    monkeypatch.setattr(H, "SSH_GAP", 0)
+    return tmp_path / "conj"
+
+
+def wait_job(port, sid, timeout=15):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        jobs = req(port, "GET", "/api/state")[1].get("conjuntos_abrindo") or []
+        j = next((x for x in jobs if x["id"] == sid), None)
+        if j and j["etapa"] == "pronto":
+            return j
+        time.sleep(0.1)
+    raise AssertionError(f"o conjunto {sid} não terminou de abrir: {jobs}")
+
+
+def capture_deliveries(port):
+    out = []
+    server_ctx(port).bridges.deliver = lambda label, obj, linger=1.5, fresh=False: (
+        out.append((label, obj, fresh)) or None
+    )
+    return out
+
+
+def user_texts(delivered):
+    return [(lab, o["message"]["content"]) for lab, o, _ in delivered if o.get("type") == "user"]
+
+
+def test_sets_crud(server, sets_dir):
+    port, _, _ = server
+    status, body, _ = req(port, "POST", "/api/conjuntos", {"nome": "x"})
+    assert status == 400 and "`agentes`" in body["err"]
+    data = {
+        "nome": "Meu Conjunto",
+        "agentes": [
+            {"maquina": "laptop", "pasta": "/a", "prompt": "p1", "tarefa": "t1"},
+            {"maquina": "node1", "pasta": "~/b"},
+        ],
+    }
+    status, body, _ = req(port, "POST", "/api/conjuntos", data)
+    assert (
+        status == 200 and body["id"] == "meu-conjunto" and body["conjunto"]["agentes"][1]["modo"] == "resume"
+    )
+    status, body, _ = req(port, "GET", "/api/conjuntos")
+    assert status == 200 and body["dir"] == str(sets_dir)
+    assert [(s["id"], s["n"], s["lider"], s["abertos"]) for s in body["items"]] == [
+        ("meu-conjunto", 2, False, [])
+    ]
+    status, body, _ = req(port, "GET", "/api/conjuntos/meu-conjunto")
+    assert status == 200 and body["conjunto"]["nome"] == "Meu Conjunto"
+    assert req(port, "GET", "/api/conjuntos/nao-existe")[0] == 404
+    assert req(port, "GET", "/api/conjuntos/..%2Fx")[0] == 404
+    assert req(port, "POST", "/api/conjuntos/meu-conjunto/delete", {})[0] == 200
+    assert req(port, "POST", "/api/conjuntos/meu-conjunto/delete", {})[0] == 404
+    assert req(port, "GET", "/api/conjuntos")[1]["items"] == []
+
+
+def test_set_open_without_leader_spawns_all_sends_tasks_and_refuses_when_open(server, sets_dir):
+    port, ext, state = server
+    delivered = capture_deliveries(port)
+    linkcalls = []
+    server_ctx(port).link = lambda h, a, b: linkcalls.append((h, a, b)) or None
+    data = {
+        "nome": "sem lider",
+        "permissao": "acceptEdits",
+        "agentes": [
+            {"maquina": "laptop", "pasta": "/a", "prompt": "p1", "tarefa": "t1"},
+            {"maquina": "node1", "pasta": "~/b", "modo": "new", "tarefa": "t2"},
+            {"maquina": "laptop", "pasta": "/c"},
+        ],
+    }
+    assert req(port, "POST", "/api/conjuntos", data)[0] == 200
+    status, body, _ = req(port, "POST", "/api/conjuntos/sem-lider/open", {})
+    assert status == 200, body
+    assert [a["label"] for a in body["agentes"]] == ["a@laptop", "b@node1", "c@laptop"]
+    assert all(a["acc"] == "gmail" for a in body["agentes"]) and body["lider"] is False
+    j = wait_job(port, "sem-lider")
+    assert (
+        sorted(j["feitos"]) == ["a@laptop", "b@node1", "c@laptop"] and j["erros"] == {} and j["top"] is None
+    )
+    by = {s[1]: s for s in ext.spawned}
+    assert by["a@laptop"][2:6] == ("/a", "gmail", "resume", "p1") and by["b@node1"][4:6] == ("new", None)
+    assert ext.extras["a@laptop"] == {"permission": "acceptEdits", "set_id": "sem-lider"}
+    assert linkcalls == []
+    assert user_texts(delivered) == [("a@laptop", "t1"), ("b@node1", "t2")]
+    assert all(fresh for _, _, fresh in delivered)
+    snap = req(port, "GET", "/api/state")[1]
+    a = next(x for x in snap["agents"] if x["label"] == "a@laptop")
+    assert a["set"] == "sem-lider" and a["permission"] == "acceptEdits" and a["role"] == "p1"
+    assert "role" not in next(x for x in snap["agents"] if x["label"] == "c@laptop")
+    # de novo: tudo já está aberto, a página recusa e lista
+    status, body, _ = req(port, "POST", "/api/conjuntos/sem-lider/open", {})
+    assert (
+        status == 409
+        and body["abertos"] == ["a@laptop", "b@node1", "c@laptop"]
+        and "já aberto" in body["err"]
+    )
+    assert len(ext.spawned) == 3
+    items = req(port, "GET", "/api/conjuntos")[1]["items"]
+    assert items[0]["abertos"] == ["a@laptop", "b@node1", "c@laptop"]
+
+
+def test_set_open_with_leader_links_the_others_and_upgrades_the_first(server, sets_dir):
+    port, ext, state = server
+    delivered = capture_deliveries(port)
+    linkcalls = []
+    server_ctx(port).link = lambda h, a, b: linkcalls.append((h, a, b)) or None
+    data = {
+        "nome": "grupo",
+        "agentes": [
+            {"maquina": "laptop", "pasta": "/a", "tarefa": "t1"},
+            {"maquina": "node1", "pasta": "~/b", "prompt": "escreva"},
+        ],
+        "lider": {"prompt": "CHEFE de {abaixo}, eu sou {eu}:\n{executores}", "tarefa": "coordene"},
+    }
+    assert req(port, "POST", "/api/conjuntos", data)[0] == 200
+    status, body, _ = req(port, "POST", "/api/conjuntos/grupo/open", {})
+    assert status == 200 and body["lider"] is True, body
+    j = wait_job(port, "grupo")
+    assert j["erros"] == {} and j["top"] == "a~professor@laptop"
+    assert [s[1] for s in ext.spawned] == ["a@laptop", "b@node1", "a~professor@laptop"]
+    host, label, cwd, acc, mode, role, parent, level = ext.spawned[-1]
+    assert (host, cwd, mode, parent, level) == ("laptop", "/a", "new", "a@laptop", "professor")
+    assert role.startswith("CHEFE de a-laptop, eu sou a-professor-laptop:")
+    assert "- `a-laptop` (o da aba): máquina laptop, pasta /a" in role
+    assert "- `b-node1`: máquina node1, pasta ~/b" in role
+    assert ext.extras["a~professor@laptop"]["set_id"] == "grupo"
+    assert linkcalls == [("laptop", "a@laptop", "b@node1"), ("laptop", "a~professor@laptop", "b@node1")]
+    texts = user_texts(delivered)
+    notes = [lab for lab, txt in texts if txt.startswith("[orq] Vínculo criado")]
+    assert notes == ["a@laptop", "b@node1", "b@node1"]
+    assert [x for x in texts if not x[1].startswith("[orq]")] == [
+        ("a@laptop", "t1"),
+        ("a~professor@laptop", "coordene"),
+    ]
+    links = req(port, "GET", "/api/state")[1]["links"]
+    assert {(lk["local"], lk["remote"]) for lk in links} == {
+        ("a@laptop", "b@node1"),
+        ("a~professor@laptop", "b@node1"),
+    }
+
+
+def test_set_open_errors_and_partial_failures(server, sets_dir):
+    port, ext, state = server
+    capture_deliveries(port)
+    assert req(port, "POST", "/api/conjuntos/nao-existe/open", {})[0] == 404
+    sets_dir.mkdir(parents=True, exist_ok=True)
+    (sets_dir / "marte.json").write_text(
+        json.dumps({"nome": "marte", "agentes": [{"maquina": "marte", "pasta": "/x"}]})
+    )
+    status, body, _ = req(port, "POST", "/api/conjuntos/marte/open", {})
+    assert status == 400 and "marte" in body["err"]
+    data = {
+        "nome": "meio",
+        "agentes": [
+            {"maquina": "laptop", "pasta": "/falha", "tarefa": "t"},
+            {"maquina": "laptop", "pasta": "/ok"},
+        ],
+        "lider": {"tarefa": "coordene"},
+    }
+    assert req(port, "POST", "/api/conjuntos", data)[0] == 200
+    assert req(port, "POST", "/api/conjuntos/meio/open", {})[0] == 200
+    j = wait_job(port, "meio")
+    assert j["feitos"] == ["ok@laptop"] and "falha@laptop" in j["erros"] and j["top"] is None
+    assert "líder" in " ".join(j["erros"]) or "lider" in " ".join(j["erros"])
+    assert [s[1] for s in ext.spawned] == ["falha@laptop", "ok@laptop"]  # sem professor: o primeiro falhou
+    labels = [a["label"] for a in req(port, "GET", "/api/state")[1]["agents"]]
+    assert "ok@laptop" in labels and "falha@laptop" not in labels
+    # um conjunto que ainda está abrindo não abre de novo
+    with server_ctx(port).jobs_lock:
+        server_ctx(port).set_jobs["meio"]["done"] = False
+    status, body, _ = req(port, "POST", "/api/conjuntos/meio/open", {})
+    assert status == 409 and "sendo aberto" in body["err"]
+
+
+def test_set_snapshot_endpoint(server, sets_dir):
+    port, ext, state = server
+    state.add_provisional(base_entry(role="sou o proj", permission="auto"))
+    remote = base_entry("dados@node1", "/h/d", permission="auto")
+    remote["host"] = "node1"
+    state.add_provisional(remote)
+    state.add_provisional(base_entry("proj~professor@laptop", "/p", parent="proj@laptop", level="professor"))
+    state.add_link(
+        {"local": "proj@laptop", "remote": "dados@node1", "host": "laptop", "kind": "ssh", "up": True}
+    )
+    status, body, _ = req(port, "POST", "/api/conjuntos/snapshot", {"nome": "Foto"})
+    assert status == 200 and body["avisos"] == []
+    c = body["conjunto"]
+    assert (
+        c["nome"] == "Foto" and c["permissao"] == "auto" and c["lider"] == {"receita": "professor-executores"}
+    )
+    assert c["agentes"] == [
+        {"maquina": "laptop", "pasta": "/p", "modo": "resume", "conta": "gmail", "prompt": "sou o proj"},
+        {"maquina": "node1", "pasta": "/h/d", "modo": "resume", "conta": "gmail"},
+    ]
+    # o que a fotografia devolve pode ser salvo como está
+    status, body, _ = req(port, "POST", "/api/conjuntos", c)
+    assert status == 200 and body["id"] == "foto"
+
+
+def test_upgrade_passes_permission_and_set_of_the_base(server):
+    port, ext, state = server
+    state.add_provisional(base_entry(permission="plan", set="meu"))
+    status, body, _ = req(port, "POST", "/api/agent/proj@laptop/upgrade", {})
+    assert status == 200, body
+    assert ext.extras["proj~professor@laptop"] == {"permission": "plan", "set_id": "meu"}
+    snap = req(port, "GET", "/api/state")[1]
+    prof = next(a for a in snap["agents"] if a["label"] == "proj~professor@laptop")
+    assert prof["permission"] == "plan" and prof["set"] == "meu"

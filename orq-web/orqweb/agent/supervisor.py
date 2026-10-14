@@ -51,6 +51,9 @@ class Supervisor:
         name: Optional[str] = None,
         parent: Optional[str] = None,
         level: Optional[str] = None,
+        permission: Optional[str] = None,
+        role: Optional[str] = None,
+        set_id: Optional[str] = None,
     ):
         self.label, self.folder, self.account = label, folder, account
         self.command, self.env, self.sid = command, env, sid
@@ -59,6 +62,9 @@ class Supervisor:
         self.name = name  # nome da sessão (-n): como outras sessões a endereçam no SendMessage
         self.parent = parent  # nível acima de outro agente: rótulo do agente logo abaixo
         self.level = level  # nome do nível na receita (professor, arquiteto…)
+        self.permission = permission  # modo de permissão com que o claude subiu (--permission-mode)
+        self.role = role  # prompt extra (papel de um nível, ou o prompt próprio de um agente de conjunto)
+        self.set_id = set_id  # conjunto (orqweb/server/sets.py) de que este agente veio
         self.dir = state_dir
         self.sock_path = state_dir / "agent.sock"
         self.state = StateFile(state_dir / "state.json")
@@ -90,6 +96,12 @@ class Supervisor:
             fields["parent"] = self.parent
         if self.level:
             fields["level"] = self.level
+        if self.permission:
+            fields["permission"] = self.permission
+        if self.role:
+            fields["role"] = self.role
+        if self.set_id:
+            fields["set"] = self.set_id
         if msg is not None:
             fields["msg"] = msg
         try:

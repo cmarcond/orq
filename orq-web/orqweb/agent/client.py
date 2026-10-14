@@ -108,6 +108,8 @@ def start_command(
     role_file: Optional[str] = None,
     parent: Optional[str] = None,
     level: Optional[str] = None,
+    permission: Optional[str] = None,
+    set_id: Optional[str] = None,
 ) -> List[str]:
     cmd = [
         sys.executable,
@@ -129,6 +131,10 @@ def start_command(
         cmd += ["--parent", parent]
     if level:
         cmd += ["--level", level]
+    if permission:
+        cmd += ["--permission-mode", permission]
+    if set_id:
+        cmd += ["--set", set_id]
     return cmd
 
 
@@ -177,6 +183,8 @@ def spawn(
     parent: Optional[str] = None,
     level: Optional[str] = None,
     restart: bool = False,
+    permission: Optional[str] = None,
+    set_id: Optional[str] = None,
 ) -> str:
     """Garante o supervisor rodando: numa sessão tmux `orqs-<nome>` ou, sem tmux, em segundo plano.
 
@@ -191,7 +199,7 @@ def spawn(
             return "já rodando"
         if not stop_and_wait(sock):
             raise RuntimeError(f"o agente {label} não encerrou para ser reaberto")
-    cmd = start_command(label, folder, account, mode, role_file, parent, level)
+    cmd = start_command(label, folder, account, mode, role_file, parent, level, permission, set_id)
     Path(os.path.expanduser(folder)).mkdir(parents=True, exist_ok=True)
     d.mkdir(parents=True, exist_ok=True)
     how = spawn_detached(

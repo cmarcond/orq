@@ -1,5 +1,6 @@
 """Rotas HTTP da página: estáticos, /api/state, /api/projects, /api/pipelines, /api/agent/* (abrir,
-stream SSE, enviar, permissão, interromper, parar, níveis: upgrade/downgrade).
+stream SSE, enviar, permissão, interromper, parar, níveis: upgrade/downgrade), /api/conjuntos (listar,
+salvar, apagar, fotografar as abas abertas e abrir vários agentes de uma vez, com ou sem professor).
 
 Segurança: só responde aos Hosts permitidos (127.0.0.1/localhost e, se configurado, o IP da rede
 privada); tudo em /api exige o token (cabeçalho X-Orq-Token, ou ?t= no SSE, que não aceita
@@ -22,7 +23,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ..agent.files import OUTBOX
 from ..config import session_name
-from . import pipelines
+from . import pipelines, sets
 from .assign import assign
 from .auth import PAGES, Auth, login_page
 from .bridge import BridgeRegistry
@@ -38,8 +39,11 @@ AGENT_RE = re.compile(
     r"^/api/agent/([^/]+)/(stream|send|permission|interrupt|stop|upload|upgrade|downgrade|reopen|files|file"
     r"|link|unlink)$"
 )
+SETS_RE = re.compile(r"^/api/conjuntos/([^/]+)(?:/(open|delete))?$")
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
+SSH_GAP = 4.0  # s entre duas conexões ssh seguidas à mesma máquina: a segunda, logo atrás, costuma cair
+JOB_TTL = 60  # s em que um conjunto já aberto continua em /api/state (a página mostra o resultado)
 # arquivo da _outbox servido ao navegador: nada nele roda nem enxerga a página (um .html do agente não
 # vira script na nossa origem), e o tipo declarado é o que vale
 FILE_CSP = "default-src 'none'; sandbox; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'"
@@ -70,6 +74,8 @@ class Context:
         self.allowed_hosts = {"127.0.0.1", "localhost"}  # cabeçalho Host aceito
         self.local_host: Optional[str] = "laptop"  # nome desta máquina na página; None = sem agentes locais
         self.migrator = None  # troca automática de conta (app.serve liga); /api/state mostra o histórico
+        self.set_jobs: Dict[str, dict] = {}  # conjuntos abrindo (ou recém-abertos), por id
+        self.jobs_lock = threading.Lock()
 
     @property
     def login_required(self) -> bool:
@@ -77,6 +83,14 @@ class Context:
 
     def valid_hosts(self) -> list:
         return ([self.local_host] if self.local_host else []) + list(self.conf.hosts)
+
+    def jobs(self) -> List[dict]:
+        """Conjuntos abrindo, e os prontos há menos de JOB_TTL s, para a página contar o andamento."""
+        now = time.time()
+        with self.jobs_lock:
+            for k in [k for k, j in self.set_jobs.items() if j["done"] and now - j["ts"] > JOB_TTL]:
+                del self.set_jobs[k]
+            return [dict(j, feitos=list(j["feitos"]), erros=dict(j["erros"])) for j in self.set_jobs.values()]
 
 
 def make_handler(ctx: Context):
@@ -157,6 +171,7 @@ def make_handler(ctx: Context):
                 if ctx.migrator is not None:
                     snap["migrations"] = ctx.migrator.history[-20:]
                     snap["auto_switch"] = ctx.migrator.enabled
+                snap["conjuntos_abrindo"] = ctx.jobs()
                 return self.reply(200, snap)
             if u.path == "/api/projects":
                 items = ctx.state.get_projects()
@@ -164,6 +179,11 @@ def make_handler(ctx: Context):
             if u.path == "/api/pipelines":
                 items = [p.summary() for p in pipelines.catalog().values()]
                 return self.reply(200, {"items": items, "default": pipelines.DEFAULT})
+            if u.path == "/api/conjuntos":
+                return self.sets_list()
+            m = SETS_RE.match(u.path)
+            if m and not m.group(2):
+                return self.set_get(unquote(m.group(1)))
             label, op = self.agent_path(u.path)
             if op == "stream":
                 return self.stream(label, int((q.get("since") or ["0"])[0]))
@@ -295,6 +315,15 @@ def make_handler(ctx: Context):
                 return self.open_agent(body)
             if path == "/api/agent/convert":
                 return self.convert_agent(body)
+            if path == "/api/conjuntos":
+                return self.set_save(body)
+            if path == "/api/conjuntos/snapshot":
+                return self.set_snapshot(body)
+            m = SETS_RE.match(path)
+            if m and m.group(2) == "open":
+                return self.set_open(unquote(m.group(1)))
+            if m and m.group(2) == "delete":
+                return self.set_delete(unquote(m.group(1)))
             label, op = self.agent_path(path)
             if op is None:
                 return self.reply(404, {"err": "?"})
@@ -436,24 +465,7 @@ def make_handler(ctx: Context):
             return self.reply(200, {"ok": True, "link": record, "note_errors": errs})
 
         def make_link(self, a: dict, b: dict) -> Tuple[Optional[dict], Optional[str]]:
-            """`orq-agent link` na máquina de `a` e o registro do vínculo no estado (até a máquina o
-            listar). `host` do registro é sempre a máquina onde o vínculo roda: a de `a`."""
-            host = link_host(a, ctx.local_host)
-            err = ctx.link(host, a["label"], b["label"])
-            if err:
-                return None, err
-            record = {
-                "local": a["label"],
-                "remote": b["label"],
-                "host": host,
-                "remote_host": link_host(b, ctx.local_host),
-                "kind": "local" if link_host(b, ctx.local_host) == host else "ssh",
-                "local_name": a.get("name") or session_name(a["label"]),
-                "remote_name": b.get("name") or session_name(b["label"]),
-                "up": True,
-            }
-            ctx.state.add_link(record)
-            return record, None
+            return make_link(ctx, a, b)
 
         def break_link(self, rec: dict, closing: Optional[str] = None) -> Tuple[Optional[str], List[str]]:
             """`orq-agent unlink` na máquina do vínculo, tira-o do estado e avisa quem sobrou (com
@@ -485,83 +497,100 @@ def make_handler(ctx: Context):
 
         def upgrade(self, label: str, body: dict) -> None:
             """Sobe os níveis de uma receita acima do agente da aba (mesma máquina, pasta e conta)."""
+            status, out = run_upgrade(ctx, label, body.get("pipeline") or None)
+            return self.reply(status, out)
+
+        # ---- conjuntos
+        def sets_list(self) -> None:
             with ctx.state.lock:
                 agents = list(ctx.state.agents)
-            base = next((a for a in agents if a.get("label") == label and a.get("state") != "closed"), None)
-            if base is None:
-                return self.reply(404, {"err": "agente desconhecido"})
-            if base.get("kind") != "sdk":
-                return self.reply(
-                    400, {"err": "só um agente da página ganha níveis; converta o do terminal antes"}
-                )
-            if base.get("parent"):
-                return self.reply(400, {"err": "esse agente já é um nível de cima"})
-            if pipelines.levels_above(agents, label):
-                return self.reply(409, {"err": "já tem níveis; desfaça-os antes de trocar de receita"})
-            if not base.get("name"):
-                msg = "reabra o agente (✕ e abrir de novo): ele precisa subir com nome para ter níveis"
-                return self.reply(409, {"err": msg})
+            items = [sets.summary(sid, d, agents) for sid, d in sets.catalog().items()]
+            return self.reply(200, {"items": items, "dir": str(sets.sets_dir())})
+
+        def set_get(self, sid: str) -> None:
             try:
-                p = pipelines.get(body.get("pipeline") or None)
+                d = sets.load(sid)
             except KeyError as e:
-                return self.reply(400, {"err": e.args[0]})
-            host = base.get("host") or ctx.local_host or "?"
-            acc, cwd = base.get("account") or "?", base.get("dir") or ""
-            # receita multi: os agentes vinculados (🔗) ao da aba viram executores do nível de baixo
-            others = []
-            if p.multi:
-                for lk in ctx.state.links:
-                    if not lk.get("up") or label not in link_pair(lk):
-                        continue
-                    other = lk["remote"] if lk.get("local") == label else lk["local"]
-                    a = next(
-                        (x for x in agents if x.get("label") == other and x.get("state") != "closed"), None
-                    )
-                    if a is not None and a.get("kind") == "sdk":
-                        others.append(a)
-            plan = pipelines.plan_levels(p, label, pipelines.executors_list(base, others))
-            started = []
-            for lv in plan:
-                err = ctx.spawn(
-                    host,
-                    lv["label"],
-                    cwd,
-                    acc,
-                    "new",
-                    role=lv["role"],
-                    parent=lv["parent"],
-                    level=lv["level"],
-                )
-                if err:
-                    for done in reversed(started):  # não deixa nível órfão rodando
-                        ctx.bridges.deliver(done, {"orq": "quit"})
-                    return self.reply(500, {"err": f"não consegui subir {lv['label']}: {err}"})
-                started.append(lv["label"])
-                ctx.state.add_provisional(
-                    provisional_agent(
-                        lv["label"], host, acc, cwd, time.time(), parent=lv["parent"], level=lv["level"]
-                    )
-                )
-            # o nível de baixo ganha vínculo com cada executor vinculado (local ou por ssh); os executores
-            # recebem a nota de vínculo; falha aqui não derruba os níveis, só é reportada
-            links, link_errors = [], {}
-            bottom = started[0]
-            me = {"label": bottom, "name": session_name(bottom), "host": host, "dir": cwd}
-            for a in others:
-                rec, err = self.make_link(me, a) if ctx.link else (None, "vínculos desligados")
-                if err:
-                    link_errors[a["label"]] = err
-                    continue
-                links.append(rec)
-                ctx.bridges.deliver(a["label"], link_note(a, me))
+                return self.reply(404, {"err": e.args[0]})
+            return self.reply(200, {"id": sid, "conjunto": d})
+
+        def set_validate(self, data: Any) -> dict:
+            return sets.validate(data, ctx.valid_hosts(), list(ctx.conf.accounts), list(pipelines.catalog()))
+
+        def set_save(self, body: dict) -> None:
+            """Grava um conjunto (novo, ou substitui o de mesmo nome): é o "enviar JSON" e o "salvar"."""
+            try:
+                d = self.set_validate(body)
+            except ValueError as e:
+                return self.reply(400, {"err": str(e)})
+            try:
+                sid = sets.save(d)
+            except OSError as e:
+                return self.reply(500, {"err": f"não consegui gravar em {sets.sets_dir()}: {e}"})
+            return self.reply(200, {"id": sid, "conjunto": sets.clean(d)})
+
+        def set_delete(self, sid: str) -> None:
+            if not sets.delete(sid):
+                return self.reply(404, {"err": f"conjunto desconhecido: {sid}"})
+            return self.reply(200, {"ok": True})
+
+        def set_snapshot(self, body: dict) -> None:
+            """Fotografa as abas abertas num conjunto (não salva: a página mostra para editar e salvar)."""
+            with ctx.state.lock:
+                agents, links = list(ctx.state.agents), list(ctx.state.links)
+            d, avisos = sets.snapshot(agents, links)
+            d["nome"] = (body.get("nome") or "").strip()
+            return self.reply(200, {"conjunto": sets.clean(d), "avisos": avisos})
+
+        def set_open(self, sid: str) -> None:
+            """Abre todos os agentes do conjunto. Recusa se algum `maquina:pasta` já tem agente vivo. O
+            trabalho (spawns, vínculos, professor, tarefas) roda numa thread; a resposta traz o plano e
+            o andamento vai em /api/state (`conjuntos_abrindo`)."""
+            try:
+                raw = sets.load(sid)
+            except KeyError as e:
+                return self.reply(404, {"err": e.args[0]})
+            try:
+                d = self.set_validate(raw)
+            except ValueError as e:
+                return self.reply(400, {"err": f"o conjunto {sid} não vale mais: {e}"})
+            with ctx.jobs_lock:
+                cur = ctx.set_jobs.get(sid)
+                if cur is not None and not cur["done"]:
+                    return self.reply(409, {"err": f"o conjunto {d['nome']} já está sendo aberto"})
+            snap = ctx.state.snapshot()
+            abertos = sets.conflicts(d, snap["agents"])
+            if abertos:
+                msg = f"já aberto: {', '.join(abertos)}; feche-os antes de abrir o conjunto {d['nome']}"
+                return self.reply(409, {"err": msg, "abertos": abertos})
+            plan = sets.plan(
+                d,
+                ctx.state.live_labels(),
+                snap["usage"],
+                list(ctx.conf.accounts),
+                ctx.state.running_accounts(),
+            )
+            job = {
+                "id": sid,
+                "nome": d["nome"],
+                "etapa": "abrindo",
+                "labels": [it["label"] for it in plan],
+                "feitos": [],
+                "erros": {},
+                "top": None,
+                "done": False,
+                "ts": time.time(),
+            }
+            with ctx.jobs_lock:
+                ctx.set_jobs[sid] = job
+            threading.Thread(target=open_set_job, args=(ctx, sid, d, plan, job), daemon=True).start()
             return self.reply(
                 200,
                 {
-                    "pipeline": p.id,
-                    "levels": started,
-                    "top": started[-1],
-                    "links": links,
-                    "link_errors": link_errors,
+                    "id": sid,
+                    "nome": d["nome"],
+                    "agentes": [{k: it[k] for k in ("label", "host", "acc", "why")} for it in plan],
+                    "lider": bool(d["lider"]),
                 },
             )
 
@@ -644,6 +673,261 @@ def make_handler(ctx: Context):
 def link_host(agent: dict, local_host: Optional[str]) -> str:
     """Máquina de um agente, como o `orq-agent link` precisa (a local é `local_host`, não `laptop`)."""
     return agent.get("host") or local_host or "?"
+
+
+def live_entry(ctx: Context, label: str) -> Optional[dict]:
+    with ctx.state.lock:
+        return next(
+            (a for a in ctx.state.agents if a.get("label") == label and a.get("state") != "closed"), None
+        )
+
+
+def make_link(ctx: Context, a: dict, b: dict) -> Tuple[Optional[dict], Optional[str]]:
+    """`orq-agent link` na máquina de `a` e o registro do vínculo no estado (até a máquina o listar).
+    `host` do registro é sempre a máquina onde o vínculo roda: a de `a`."""
+    host = link_host(a, ctx.local_host)
+    err = ctx.link(host, a["label"], b["label"])
+    if err:
+        return None, err
+    record = {
+        "local": a["label"],
+        "remote": b["label"],
+        "host": host,
+        "remote_host": link_host(b, ctx.local_host),
+        "kind": "local" if link_host(b, ctx.local_host) == host else "ssh",
+        "local_name": a.get("name") or session_name(a["label"]),
+        "remote_name": b.get("name") or session_name(b["label"]),
+        "up": True,
+    }
+    ctx.state.add_link(record)
+    return record, None
+
+
+def run_upgrade(
+    ctx: Context, label: str, pipeline_id: Optional[str], role: Optional[str] = None
+) -> Tuple[int, dict]:
+    """Sobe os níveis de uma receita acima do agente `label` (mesma máquina, pasta, conta e modo de
+    permissão). `role` substitui o papel do TOML (com os mesmos marcadores) quando a receita tem um nível
+    só, caso dos conjuntos com líder. Devolve (status HTTP, corpo)."""
+    with ctx.state.lock:
+        agents = list(ctx.state.agents)
+    base = next((a for a in agents if a.get("label") == label and a.get("state") != "closed"), None)
+    if base is None:
+        return 404, {"err": "agente desconhecido"}
+    if base.get("kind") != "sdk":
+        return 400, {"err": "só um agente da página ganha níveis; converta o do terminal antes"}
+    if base.get("parent"):
+        return 400, {"err": "esse agente já é um nível de cima"}
+    if pipelines.levels_above(agents, label):
+        return 409, {"err": "já tem níveis; desfaça-os antes de trocar de receita"}
+    if not base.get("name"):
+        return 409, {"err": "reabra o agente (✕ e abrir de novo): ele precisa subir com nome para ter níveis"}
+    try:
+        p = pipelines.get(pipeline_id)
+    except KeyError as e:
+        return 400, {"err": e.args[0]}
+    if role:
+        if len(p.niveis) != 1:
+            return 400, {
+                "err": f"a receita {p.id} tem {len(p.niveis)} níveis; o prompt próprio só vale com um"
+            }
+        p = pipelines.Pipeline(p.id, p.titulo, p.descricao, [dict(p.niveis[0], papel=role)])
+    host = base.get("host") or ctx.local_host or "?"
+    acc, cwd = base.get("account") or "?", base.get("dir") or ""
+    # receita multi: os agentes vinculados (🔗) ao da aba viram executores do nível de baixo
+    others = []
+    if p.multi:
+        for lk in ctx.state.links:
+            if not lk.get("up") or label not in link_pair(lk):
+                continue
+            other = lk["remote"] if lk.get("local") == label else lk["local"]
+            a = next((x for x in agents if x.get("label") == other and x.get("state") != "closed"), None)
+            if a is not None and a.get("kind") == "sdk":
+                others.append(a)
+    plan = pipelines.plan_levels(p, label, pipelines.executors_list(base, others))
+    started = []
+    for lv in plan:
+        err = ctx.spawn(
+            host,
+            lv["label"],
+            cwd,
+            acc,
+            "new",
+            role=lv["role"],
+            parent=lv["parent"],
+            level=lv["level"],
+            permission=base.get("permission"),
+            set_id=base.get("set"),
+        )
+        if err:
+            for done in reversed(started):  # não deixa nível órfão rodando
+                ctx.bridges.deliver(done, {"orq": "quit"})
+            return 500, {"err": f"não consegui subir {lv['label']}: {err}"}
+        started.append(lv["label"])
+        ctx.state.add_provisional(
+            provisional_agent(
+                lv["label"],
+                host,
+                acc,
+                cwd,
+                time.time(),
+                parent=lv["parent"],
+                level=lv["level"],
+                permission=base.get("permission"),
+                set=base.get("set"),
+            )
+        )
+    # o nível de baixo ganha vínculo com cada executor vinculado (local ou por ssh); os executores
+    # recebem a nota de vínculo; falha aqui não derruba os níveis, só é reportada
+    links, link_errors = [], {}
+    bottom = started[0]
+    me = {"label": bottom, "name": session_name(bottom), "host": host, "dir": cwd}
+    for a in others:
+        rec, err = make_link(ctx, me, a) if ctx.link else (None, "vínculos desligados")
+        if err:
+            link_errors[a["label"]] = err
+            continue
+        links.append(rec)
+        ctx.bridges.deliver(a["label"], link_note(a, me))
+    return 200, {
+        "pipeline": p.id,
+        "levels": started,
+        "top": started[-1],
+        "links": links,
+        "link_errors": link_errors,
+    }
+
+
+class Pacer:
+    """Espaça as conexões ssh a uma mesma máquina (SSH_GAP): a segunda, logo atrás da primeira, costuma
+    cair. A máquina local não precisa. Uso: `with pacer.turn(host): …`."""
+
+    def __init__(self, local_host: Optional[str]):
+        self.local = local_host
+        self.last: Dict[str, float] = {}
+        self.lock = threading.Lock()
+
+    def turn(self, host: Optional[str]) -> "Pacer._Turn":
+        return Pacer._Turn(self, host)
+
+    class _Turn:
+        def __init__(self, pacer: "Pacer", host: Optional[str]):
+            self.p, self.host = pacer, host
+
+        def __enter__(self) -> None:
+            if not self.host or self.host == self.p.local:
+                return
+            with self.p.lock:
+                due = self.p.last.get(self.host, 0) + SSH_GAP
+            wait = due - time.time()
+            if wait > 0:
+                time.sleep(wait)
+
+        def __exit__(self, *_: Any) -> None:
+            if self.host and self.host != self.p.local:
+                with self.p.lock:
+                    self.p.last[self.host] = time.time()
+
+
+def open_set_job(ctx: Context, sid: str, d: dict, plan: List[dict], job: dict) -> None:
+    """Abre um conjunto (numa thread): spawns em paralelo entre máquinas e em sequência na mesma; com
+    líder, vincula os demais ao primeiro e sobe o professor sobre ele; por fim entrega as tarefas. Falha
+    num passo é anotada em `job["erros"]` e não desfaz os outros."""
+    pacer = Pacer(ctx.local_host)
+    lock = threading.Lock()
+
+    def step(etapa: str) -> None:
+        with lock:
+            job["etapa"], job["ts"] = etapa, time.time()
+
+    def run_host(items: List[dict]) -> None:
+        for it in items:
+            lab = it["label"]
+            ctx.state.add_provisional(
+                provisional_agent(
+                    lab,
+                    it["host"],
+                    it["acc"],
+                    it["cwd"],
+                    time.time(),
+                    permission=d["permissao"],
+                    role=it["prompt"] or None,
+                    set=sid,
+                )
+            )
+            with pacer.turn(it["host"]):
+                err = ctx.spawn(
+                    it["host"],
+                    lab,
+                    it["cwd"],
+                    it["acc"],
+                    it["mode"],
+                    role=it["prompt"] or None,
+                    permission=d["permissao"],
+                    set_id=sid,
+                )
+            with lock:
+                if err:
+                    job["erros"][lab] = err
+                    ctx.state.drop_provisional(lab)
+                else:
+                    job["feitos"].append(lab)
+
+    by_host: Dict[str, List[dict]] = {}
+    for it in plan:
+        by_host.setdefault(it["host"], []).append(it)
+    threads = [threading.Thread(target=run_host, args=(items,), daemon=True) for items in by_host.values()]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    ok = [it for it in plan if it["label"] in job["feitos"]]
+    top = None
+    lider = d.get("lider")
+    if lider and plan and plan[0]["label"] not in job["feitos"]:
+        job["erros"]["líder"] = f"o primeiro agente ({plan[0]['label']}) não abriu; o professor não subiu"
+    elif lider and ok:
+        first = live_entry(ctx, ok[0]["label"]) or {"label": ok[0]["label"], "host": ok[0]["host"]}
+        if len(ok) > 1:
+            step("vínculos")
+        for it in ok[1:]:
+            other = live_entry(ctx, it["label"])
+            if other is None:
+                continue
+            with pacer.turn(first.get("host")):
+                rec, err = make_link(ctx, first, other) if ctx.link else (None, "vínculos desligados")
+            if err:
+                job["erros"][f"vínculo {first['label']} ⇄ {other['label']}"] = err
+                continue
+            for x, y in ((first, other), (other, first)):
+                with pacer.turn(x.get("host")):
+                    ctx.bridges.deliver(x["label"], link_note(x, y))
+        step("professor")
+        with pacer.turn(first.get("host")):
+            status, body = run_upgrade(ctx, first["label"], lider["receita"], role=lider["prompt"] or None)
+        if status != 200:
+            job["erros"]["líder"] = body.get("err") or "o professor não subiu"
+        else:
+            top = body["top"]
+            with lock:
+                job["top"] = top
+            for k, v in body.get("link_errors", {}).items():
+                job["erros"][f"vínculo professor ⇄ {k}"] = v
+    tasks = [(it["label"], it["host"], it["tarefa"]) for it in ok if it["tarefa"]]
+    if lider and lider.get("tarefa"):
+        if top:
+            tasks.append((top, ok[0]["host"], lider["tarefa"]))
+        else:
+            job["erros"]["tarefa do líder"] = "o professor não subiu; a tarefa dele não foi enviada"
+    if tasks:
+        step("tarefas")
+    for lab, host, text in tasks:
+        with pacer.turn(host):
+            err = ctx.bridges.deliver(lab, _user_msg(text), fresh=True)
+        if err:
+            job["erros"][f"tarefa de {lab}"] = err
+    with lock:
+        job["etapa"], job["done"], job["ts"] = "pronto", True, time.time()
 
 
 def _user_msg(text: str) -> dict:

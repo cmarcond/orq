@@ -19,3 +19,8 @@ def test_session_name_has_no_at():
     assert config.session_name("kaggle@server0") == "kaggle-server0"
     assert config.session_name("kaggle~professor@server0") == "kaggle-professor-server0"
     assert "@" not in config.session_name("a@b@c")
+
+
+def test_build_command_permission_mode_is_positional_arg():
+    cmd = claude.build_command("/x/claude", "acceptEdits")
+    assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"

@@ -506,3 +506,59 @@ def test_quota_exhausted_marks_state_and_keeps_last_message_for_retry(sup):
     st = state_of(sup)
     assert st["state"] == "quota" and st["retry"] == "esgote a cota, por favor" and "limit" in st["msg"]
     c.close()
+
+
+# ---------------------------------------------------------------- conjuntos: prompt em agente base,
+# modo de permissão e origem gravados no state.json; o --restart reaproveita tudo
+def test_state_records_permission_role_and_set(short_tmp):
+    s = Supervisor(
+        label="proj@laptop",
+        folder=short_tmp / "proj",
+        account="gmail",
+        command=[sys.executable, str(FAKE)],
+        env=dict(os.environ),
+        state_dir=short_tmp / "state" / "proj-laptop",
+        log=lambda *_: None,
+        permission="acceptEdits",
+        role="Você cuida do modelo.",
+        set_id="artigo",
+    )
+    s.start()
+    try:
+        st = state_of(s)
+        assert (
+            st["permission"] == "acceptEdits"
+            and st["role"] == "Você cuida do modelo."
+            and st["set"] == "artigo"
+        )
+        assert "parent" not in st and "level" not in st  # prompt próprio não faz do agente um nível
+    finally:
+        s.quit()
+        s.wait(10)
+
+
+def test_spawn_cli_passes_permission_set_and_role_for_base_agent(monkeypatch, short_tmp):
+    from orqweb.agent import cli
+
+    monkeypatch.setenv("ORQ_STATE_DIR", str(short_tmp))
+    seen = {}
+    monkeypatch.setattr(cli.client, "spawn", lambda *a, **k: seen.update(k) or "ok")
+    monkeypatch.setattr(cli.config, "load", lambda: type("C", (), {"account": lambda self, n: n})())
+    monkeypatch.setattr(cli, "_refuse_if_terminal_live", lambda *a: None)
+    monkeypatch.setattr(sys, "stdin", type("I", (), {"read": lambda self: "papel do base"})())
+    args = ["spawn", "--dir", "/p", "--account", "g", "--label", "p@l", "--role-file", "-"]
+    assert cli.main(args + ["--permission-mode", "auto", "--set", "artigo"]) == 0
+    assert seen["permission"] == "auto" and seen["set_id"] == "artigo" and seen["parent"] is None
+    assert Path(seen["role_file"]).read_text() == "papel do base"
+    # --restart sem argumentos (troca de conta, reabrir com nome): papel, permissão e conjunto de antes
+    StateFile(short_tmp / "p-l" / "state.json").write(permission="auto", set="artigo")
+    seen.clear()
+    assert cli.main(["spawn", "--dir", "/p", "--account", "g", "--label", "p@l", "--restart"]) == 0
+    assert seen["role_file"] == str(short_tmp / "p-l" / "role.txt")
+    assert seen["permission"] == "auto" and seen["set_id"] == "artigo" and seen["restart"] is True
+
+
+def test_start_command_carries_permission_and_set():
+    cmd = client.start_command("p@l", "/p", "g", "new", permission="plan", set_id="s1")
+    assert cmd[cmd.index("--permission-mode") + 1] == "plan" and cmd[cmd.index("--set") + 1] == "s1"
+    assert "--permission-mode" not in client.start_command("p@l", "/p", "g", "new")

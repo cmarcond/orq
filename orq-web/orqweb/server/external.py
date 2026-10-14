@@ -285,18 +285,26 @@ class External:
         parent: Optional[str] = None,
         level: Optional[str] = None,
         restart: bool = False,
+        permission: Optional[str] = None,
+        set_id: Optional[str] = None,
     ) -> Optional[str]:
         """Sobe o supervisor na máquina. Devolve mensagem de erro ou None.
 
-        Um nível de cima leva o papel (`role`) pelo stdin do `orq-agent spawn --role-file -`, que o
-        guarda na máquina do agente; `parent` é o rótulo do agente logo abaixo e `level` o nome do nível.
-        `restart` fecha o agente que estiver rodando com esse rótulo antes (reabrir com nome, trocar conta).
+        O papel (`role`: de um nível, ou o prompt próprio de um agente de conjunto) vai pelo stdin do
+        `orq-agent spawn --role-file -`, que o guarda na máquina do agente; `parent` é o rótulo do agente
+        logo abaixo e `level` o nome do nível. `permission` troca o modo de permissão só deste agente e
+        `set_id` marca o conjunto de origem. `restart` fecha o agente que estiver rodando com esse rótulo
+        antes (reabrir com nome, trocar conta).
         """
         args = ["spawn", "--dir", cwd, "--account", account, "--label", label, "--mode", mode]
         if parent:
             args += ["--parent", parent]
         if level:
             args += ["--level", level]
+        if permission:
+            args += ["--permission-mode", permission]
+        if set_id:
+            args += ["--set", set_id]
         if restart:
             args.append("--restart")
         extra = {}
