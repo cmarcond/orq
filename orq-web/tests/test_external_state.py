@@ -456,5 +456,8 @@ def test_spawn_passes_permission_and_set():
     assert ext.spawn(LAPTOP, "p@laptop", "/p", "gmail", "new", permission="auto", set_id="artigo") is None
     cmd = r.calls[-1]
     assert cmd[cmd.index("--permission-mode") + 1] == "auto" and cmd[cmd.index("--set") + 1] == "artigo"
-    ext.spawn("server0", "p@server0", "~/p", "gmail", "new", permission="auto", set_id="artigo")
+    ext.spawn(
+        "server0", "p@server0", "~/p", "gmail", "new", permission="auto", set_id="artigo", pipeline="x-y"
+    )
     assert "--permission-mode auto" in r.calls[-1][-1] and "--set artigo" in r.calls[-1][-1]
+    assert "--pipeline x-y" in r.calls[-1][-1]

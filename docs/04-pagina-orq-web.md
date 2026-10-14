@@ -141,3 +141,51 @@ página por um túnel: `ssh -N -L 8765:<ip zerotier>:8765 server0` e `http://127
 Um `claude` interativo rodando em tmux (aberto por `claude-gmail` etc.) aparece como aba tracejada com
 **⇄ converter**: a página dá `/exit` nele (ou Ctrl-C, ou SIGTERM, nessa ordem) e reabre a mesma conversa
 como agente da página. No terminal, `converte-web` lista e converte em qualquer máquina.
+
+## 4.13 Conjuntos: abrir vários agentes de uma vez
+
+**⊞ conjuntos**, no topo ao lado do sino, abre a lista dos conjuntos salvos. Um conjunto é um JSON com
+vários agentes para abrir juntos: os trabalhos que estavam em andamento (cada um na sua pasta e máquina,
+conversa retomada) ou um grupo com um **professor líder**, em que cada agente sobe com um system prompt
+próprio. Clique na linha para abrir; **⬇** baixa o JSON; **✕** (duas vezes) apaga. Em cima, **📄 enviar
+JSON** recebe um arquivo pronto e **📷 salvar abas abertas** fotografa o que está aberto (máquinas,
+pastas, contas, prompts, professor) num JSON que você confere, nomeia e salva. Os arquivos ficam em
+`~/.config/orq-web/conjuntos/` do servidor (`ORQ_SETS_DIR`; no container, o volume `~/.config/orq-web`).
+
+```json
+{
+  "nome": "artigo-kaggle",
+  "descricao": "modelo no server0, texto no node3, professor coordena",
+  "permissao": "auto",
+  "agentes": [
+    {"maquina": "server0", "pasta": "~/Projects/kaggle", "modo": "resume",
+     "conta": "work3", "prompt": "Você cuida do modelo…", "tarefa": "Retome de onde parou e reporte."},
+    {"maquina": "node3", "pasta": "~/Projects/paper", "modo": "new", "prompt": "Você escreve o artigo…"}
+  ],
+  "lider": {"receita": "professor-executores", "prompt": "opcional, substitui o papel do TOML", "tarefa": "…"}
+}
+```
+
+- Só `nome` e `agentes` (com `maquina` e `pasta`) são obrigatórios. `modo` padrão é `resume` (a conversa
+  mais recente da pasta; nova se não houver). `conta` fixa a conta; sem ela, a escolha pela folga é feita
+  para o conjunto inteiro de uma vez, o que distribui a carga entre as contas. `permissao` (`auto`,
+  `manual`, `acceptEdits`, `plan`) vale para todos; sem ela, o `permission_mode` da máquina.
+- `prompt` vai no system prompt do agente (`--append-system-prompt`, como o papel de um nível); num
+  agente retomado ele entra numa conversa que já tinha contexto, então grupos com professor costumam
+  ficar mais limpos com `modo: new`. `tarefa` é a primeira mensagem, enviada assim que o agente sobe.
+- **Sem `lider`**, os agentes são independentes. **Com `lider`**, o professor sobe acima do primeiro
+  agente da lista e os demais são vinculados a ele (🔗) e viram executores, exatamente como ⇅ com a
+  receita `professor-executores` (4.8 e 4.9); `lider.prompt` substitui o papel do TOML (aceita
+  `{abaixo}`, `{eu}`, `{executores}`) e `lider.tarefa` vai ao professor depois das tarefas dos agentes.
+- Se qualquer `maquina:pasta` do conjunto já tiver um agente vivo (da página ou de terminal), a página
+  **recusa e diz quais**: feche-os ou abra só os demais à mão. A lista mostra "N já abertos" na linha.
+- Abrir leva de alguns segundos a um minuto: cada agente sobe por ssh (em paralelo entre máquinas, em
+  sequência na mesma), depois vêm os vínculos, o professor e as tarefas. As abas aparecem conforme sobem
+  e os toasts contam cada etapa; o último diz quantos subiram e lista problemas, se houver. A barra de
+  estado de um agente aberto assim mostra `⊞ <conjunto>`.
+- Reabrir uma pasta cujo agente foi encerrado sem **↓ desfazer** (por fora da página, ou porque o claude
+  caiu) encerra os níveis órfãos que ainda apontavam para aquele rótulo, tanto pelo **+** quanto por um
+  conjunto; senão o professor antigo grudaria no agente novo e o ⇅ recusaria com "já tem níveis".
+- A fotografia pega todas as abas abertas: se alguma tem níveis acima, ela vira a primeira e o `lider`
+  recebe a receita (só o primeiro professor; os outros agentes viram executores dele); `prompt` só
+  aparece em agentes que subiram com um. O JSON fica editável antes de salvar.

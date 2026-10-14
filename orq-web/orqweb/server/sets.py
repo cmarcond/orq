@@ -330,9 +330,14 @@ def snapshot(
         out["agentes"].append(item)
     if first:
         above = pipelines.levels_above(live, first["label"])
-        names = [next((a.get("level") for a in live if a.get("label") == lab), "") for lab in reversed(above)]
-        has_links = any(
-            first["label"] in (lk.get("local"), lk.get("remote")) and lk.get("up", True) for lk in links
-        )
-        out["lider"] = {"receita": infer_recipe([n for n in names if n], has_links, cat)}
+        lv = [next((a for a in live if a.get("label") == lab), {}) for lab in reversed(above)]
+        recorded = next((a.get("pipeline") for a in lv if a.get("pipeline") in cat), None)
+        if recorded:
+            receita = recorded
+        else:  # nível de antes desta versão, sem `pipeline` no estado: pelos nomes e pelos vínculos
+            has_links = any(
+                first["label"] in (lk.get("local"), lk.get("remote")) and lk.get("up", True) for lk in links
+            )
+            receita = infer_recipe([a.get("level") for a in lv if a.get("level")], has_links, cat)
+        out["lider"] = {"receita": receita}
     return out, avisos

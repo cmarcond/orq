@@ -35,7 +35,7 @@
 
 | subcomando | uso |
 |---|---|
-| `spawn --dir P --account C --label L [--mode resume\|new] [--force] [--role-file ARQ\|-] [--parent L2] [--level N] [--restart]` | garante o supervisor numa sessão tmux `orqs-<L>`; `--restart` fecha o que roda e sobe de novo; `--role-file -` lê o papel do stdin |
+| `spawn --dir P --account C --label L [--mode resume\|new] [--force] [--role-file ARQ\|-] [--parent L2] [--level N] [--permission-mode M] [--set S] [--pipeline R] [--restart]` | garante o supervisor numa sessão tmux `orqs-<L>`; `--restart` fecha o que roda e sobe de novo (e reaproveita papel, permissão e conjunto do `state.json`); `--role-file -` lê o papel do stdin (sem `--parent`/`--level` é só o prompt do agente); `--permission-mode` troca o modo só deste agente; `--set` marca o conjunto de origem; `--pipeline` a receita de que um nível veio |
 | `start …` | o supervisor em primeiro plano (é o que o `spawn` abre no tmux) |
 | `attach L [--since N]` | ponte stdin/stdout com o socket (o que o servidor usa) |
 | `stop L` | encerra o claude e o supervisor |
@@ -57,10 +57,10 @@ vêm como `{"err": "texto"}` com 400/403/404/409/500.
 | `GET /` | | a página (redireciona para `/login` sem cookie quando a senha está ligada) |
 | `GET /m` | | a versão para celular (mesmo `app.js`, `mobile.css`); sem cookie, `/login?next=/m` |
 | `GET /login?next=`, `POST /login`, `POST /logout` | `password=`, `next=` (`/` ou `/m`) | cookie de sessão e volta para `next`; 429 após tentativas seguidas |
-| `GET /api/state` | | `{usage, usage_ts, agents, links, agents_ts, host_errors, accounts, labels, colors, migrations, auto_switch}` |
+| `GET /api/state` | | `{usage, usage_ts, agents, links, agents_ts, host_errors, accounts, labels, colors, migrations, auto_switch, conjuntos_abrindo}` |
 | `GET /api/projects` | | `{items: [{host, cwd, account, mtime, title, …}]}` |
 | `GET /api/pipelines` | | `{items: [{id, titulo, descricao, niveis, cores, multi}], default}` |
-| `POST /api/agent/open` | `{host, cwd, account?, mode: "resume"\|"new"}` | `{label, acc, why}`; 409 se há claude de terminal na pasta |
+| `POST /api/agent/open` | `{host, cwd, account?, mode: "resume"\|"new"}` | `{label, acc, why, orphans_closed}`; 409 se há claude de terminal na pasta; níveis órfãos de uma vida anterior do rótulo são encerrados |
 | `POST /api/agent/convert` | `{label}` | `{label, how, msg}` |
 | `GET /api/agent/<L>/stream?since=N` | | SSE: um `data:` por evento do agente |
 | `POST /api/agent/<L>/send` | `{text}` | `{ok}` |
@@ -75,9 +75,16 @@ vêm como `{"err": "texto"}` com 400/403/404/409/500.
 | `POST /api/agent/<L>/reopen` | `{account?}` | `{label, acc}`; mesma conversa, com nome ou noutra conta |
 | `POST /api/agent/<L>/link` | `{to}` | `{ok, link, note_errors}` |
 | `POST /api/agent/<L>/unlink` | `{to}` | `{ok, told}` |
+| `GET /api/conjuntos` | | `{items: [{id, nome, descricao, n, maquinas, lider, permissao, abertos}], dir}` |
+| `POST /api/conjuntos` | o JSON do conjunto (4.13) | `{id, conjunto}`; 400 com todos os problemas de validação |
+| `GET /api/conjuntos/<id>` | | `{id, conjunto}` |
+| `POST /api/conjuntos/<id>/delete` | `{}` | `{ok}` |
+| `POST /api/conjuntos/snapshot` | `{nome?}` | `{conjunto, avisos}`: as abas abertas como conjunto (não salva) |
+| `POST /api/conjuntos/<id>/open` | `{}` | `{id, nome, agentes: [{label, host, acc, why}], lider}`; 409 `{err, abertos}` se algum já está aberto; o andamento vai em `conjuntos_abrindo` do `/api/state`: `{id, nome, etapa (abrindo\|vínculos\|professor\|tarefas\|pronto), labels, feitos, erros, top, done, ts}` |
 
 Agente no `/api/state`: `{label, host, account, dir, state, msg, pid, kind ("sdk"\|terminal), name,
-parent?, level?, tmux?, ts}`. Vínculo: `{local, remote, host, remote_host, kind ("local"\|"ssh"),
+parent?, level?, permission?, role?, set?, pipeline?, tmux?, ts}` (`role` é o prompt extra com que subiu; `set` o
+conjunto de origem; `pipeline` a receita de um nível, que a fotografia de conjunto reaproveita). Vínculo: `{local, remote, host, remote_host, kind ("local"\|"ssh"),
 local_name, remote_name, up, resources?, sessions?, why?}`.
 
 ## 7.3 Rótulos e nomes
@@ -93,7 +100,8 @@ local_name, remote_name, up, resources?, sessions?, why?}`.
 
 ## 7.4 Variáveis de ambiente
 
-Servidor: ver o capítulo 2. Agente e utilitários: `ORQ_STATE_DIR`, `ORQ_BIN`, `CLAUDE_MULTICONTA_CONF`. QA:
+Servidor: ver o capítulo 2 (mais `ORQ_SETS_DIR`, a pasta dos conjuntos, padrão `~/.config/orq-web/conjuntos`).
+Agente e utilitários: `ORQ_STATE_DIR`, `ORQ_BIN`, `CLAUDE_MULTICONTA_CONF`. QA:
 `ORQ_QA_URL`, `ORQ_QA_PASSWORD`, `ORQ_QA_VIA` (túnel ssh), `ORQ_QA_PORT` (8790), `ORQ_QA_PROJECT`,
 `ORQ_QA_PROJECT2`, `ORQ_QA_HEADED`, `ORQ_QA_KEEP`. `orq-run`/`orq-hook`: `ORQ_TTY`, `ORQ_DEPTH`,
 `ORQ_LABEL`, `ORQ_STATE`.

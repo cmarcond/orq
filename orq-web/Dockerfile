@@ -14,6 +14,7 @@ COPY orqweb /app/orqweb
 ENV PYTHONPATH=/app PYTHONUNBUFFERED=1 ORQ_NO_OPEN=1 \
     ORQ_BIND=0.0.0.0 ORQ_LOCAL_HOST=none \
     ORQ_STATE_DIR=/home/$USER/.config/orq-web/state \
+    ORQ_SETS_DIR=/home/$USER/.config/orq-web/conjuntos \
     ORQ_PASSWORD_FILE=/home/$USER/.config/orq-web/password \
     ORQ_SSH_CONFIG=/home/$USER/.config/orq-web/ssh_config \
     CLAUDE_MULTICONTA_CONF=/home/$USER/.config/claude-multiconta/accounts.json

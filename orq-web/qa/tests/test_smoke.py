@@ -4,9 +4,7 @@
 def test_pagina_abre_sem_erros(orq):
     assert orq.page.title() == "orq"
     # a cota vem do usage-all, que pode demorar uns segundos na primeira consulta
-    orq.page.wait_for_function(
-        "() => document.getElementById('usage').textContent.trim().length > 0", timeout=60000
-    )
+    orq.wait_fn("() => document.getElementById('usage').textContent.trim().length > 0", timeout=60000)
     st = orq.state()
     assert st.get("accounts"), "nenhuma conta no /api/state"
     assert not [p for p in orq.problems() if "pageerror" in p], orq.problems()

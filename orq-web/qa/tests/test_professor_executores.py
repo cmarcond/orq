@@ -27,7 +27,7 @@ def test_professor_coordena_dois_executores(orq, agent, agent2):
     st = orq.answer_permissions(300)
     assert "erro" not in st, st
     # as duas respostas chegam pelos fios; a explicação final cita as duas pastas
-    orq.page.wait_for_function(
+    orq.wait_fn(
         "() => [...document.querySelectorAll('#side .wire.in, #side .wire.delivered')].length >= 2",
         timeout=240000,
     )

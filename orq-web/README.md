@@ -108,6 +108,17 @@ nome: o seletor de níveis oferece **↻ reabrir com nome** (`POST /api/agent/<x
 permissão, o cartão dele no painel mostra o pedido com Permitir/Negar; uma pergunta (`AskUserQuestion`)
 abre o chat daquele nível.
 
+## Conjuntos (⊞): vários agentes de uma vez
+
+**⊞ conjuntos** no topo lista JSONs salvos em `~/.config/orq-web/conjuntos/` (`ORQ_SETS_DIR`): cada um
+descreve agentes para abrir juntos (máquina, pasta, `modo`, `conta` opcional, `prompt` próprio no system
+prompt, `tarefa` inicial), um `permissao` para todos e, opcionalmente, um `lider`: o professor sobe acima do
+primeiro agente e os demais são vinculados a ele como executores (receita `professor-executores`, papel
+substituível por `lider.prompt`). Sem `lider`, agentes independentes. A página recusa abrir se algum
+`maquina:pasta` já tiver agente vivo. **📄 enviar JSON** recebe um pronto; **📷 salvar abas abertas**
+fotografa o que está aberto num conjunto novo. O servidor abre numa thread (`handlers.open_set_job`) e o
+andamento vai em `conjuntos_abrindo` do `/api/state`. Formato e detalhes: `docs/04-pagina-orq-web.md`, 4.13.
+
 ## Cota acabou: troca de conta sozinha
 
 Quando o claude avisa que a conta esgotou (`rate_limit_event` com `status: rejected`, ou um turno que
@@ -199,7 +210,8 @@ navegador ──SSE/POST──> orq-web (handlers) ──Bridge (orq-agent attac
 | `orqweb/server/bridge.py` | uma ponte por aba; ponte passageira para entregar sem aba |
 | `orqweb/server/migrate.py` | troca de conta quando a cota acaba: escolhe a conta com folga, reabre com `--restart`, reenvia a mensagem |
 | `orqweb/server/pipelines.py` | receitas de níveis (`orqweb/pipelines/*.toml`), rótulos `base~nível@host`, papéis com os vizinhos resolvidos |
-| `orqweb/server/handlers.py` | rotas, SSE, token, CSP, estáticos, níveis (`/api/pipelines`, `upgrade`, `downgrade`) |
+| `orqweb/server/sets.py` | conjuntos (⊞): formato JSON, validação, catálogo, conflitos, plano e fotografia das abas abertas |
+| `orqweb/server/handlers.py` | rotas, SSE, token, CSP, estáticos, níveis (`/api/pipelines`, `upgrade`, `downgrade`), conjuntos (`/api/conjuntos`, `open_set_job`) |
 | `orqweb/server/app.py` | porta, link com token, segundo servidor, encerramento |
 | `static/js/format.js` | escape, tempos, Markdown sanitizado |
 | `static/js/classify.js` | registros internos, origem de máquina, resumos de ferramenta |
@@ -252,4 +264,5 @@ em Node 22. O supervisor roda nas máquinas remotas, por isso o código fica com
 
 - histórico de rodadas de níveis e linha do tempo de marcos por projeto;
 - modelo e esforço por nível na receita; receitas editáveis pela página;
-- um professor para vários executores (máquinas diferentes).
+- conjuntos: andamento no painel (hoje só toasts), abrir "só os que faltam" quando parte já está aberta,
+  `lider.prompt` em receitas com mais de um nível.

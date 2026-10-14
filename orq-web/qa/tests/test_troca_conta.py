@@ -31,14 +31,12 @@ def test_troca_de_conta_forcada_continua_a_conversa(orq, agent):
     ), orq.migrations()
 
     # a mensagem pendente foi reenviada na conta nova, e o claude novo lembra a conversa do antigo
-    orq.page.wait_for_function(
+    orq.wait_fn(
         "(s) => [...document.querySelectorAll('.chat.on .ai')].some(e => e.innerText.includes(s))",
         arg=SECRET,
         timeout=240000,
     )
-    orq.page.wait_for_function(
-        "() => document.getElementById('cstate').textContent.includes('esperando')", timeout=60000
-    )
+    orq.wait_fn("() => document.getElementById('cstate').textContent.includes('esperando')", timeout=60000)
     orq.shot("troca-depois")
     assert SECRET in orq.last_ai(), orq.last_ai()
     toasts = orq.page.evaluate("window.__toasts")

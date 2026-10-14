@@ -18,6 +18,8 @@ e ver o resultado em captura de tela, console e estado:
   python qa/orqqa.py unlink rótulo        desfaz o vínculo
   python qa/orqqa.py wires                fios entre os níveis e os níveis do painel
   python qa/orqqa.py undo                 ↓ desfazer: encerra os níveis de cima
+  python qa/orqqa.py sets                 ⊞ conjuntos: lista os salvos (nome, agentes, já abertos)
+  python qa/orqqa.py set ID               abre o conjunto ID pelo seletor e espera o servidor terminar
   python qa/orqqa.py quota ["texto"]       força "sem cota" na aba atual e espera a troca de conta
   python qa/orqqa.py click "seletor" | text "seletor" | eval "js"
   python qa/orqqa.py watch [segundos]     fica ouvindo console, erros e requisições que falham
@@ -41,7 +43,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
 from playwright.sync_api import Page, Playwright, sync_playwright
@@ -324,9 +326,7 @@ class Orq:
     # ---- ações
     def show(self, label: str) -> None:
         self.page.click(f'.tab[data-l="{label}"] .meta')
-        self.page.wait_for_function(
-            f"() => document.querySelector('.tab.on')?.dataset.l === {json.dumps(label)}"
-        )
+        self.wait_fn(f"() => document.querySelector('.tab.on')?.dataset.l === {json.dumps(label)}")
 
     def open_project(self, spec: str, timeout: float = 90) -> str:
         """`maquina:/caminho` pelo +, conversa nova. Espera o agente sair de 'abrindo…'. Devolve o rótulo."""
@@ -338,7 +338,7 @@ class Orq:
         self.page.fill("#pnew", spec)
         self.page.click("#popen")
         name = path.rstrip("/").split("/")[-1]
-        self.page.wait_for_function(
+        self.wait_fn(
             "([n, h]) => (document.querySelector('.tab.on')?.dataset.l || '').startsWith(n) "
             "&& document.querySelector('.tab.on').dataset.l.endsWith('@' + h)",
             arg=[name, host],
@@ -347,7 +347,7 @@ class Orq:
         label = self.current()
         # 'abrindo…' é o chute provisório da página; a máquina confirma o agente pronto em até ~15 s.
         # A aba tem de continuar lá: se ela sumir, o estado fica vazio e isso não é "pronto".
-        self.page.wait_for_function(
+        self.wait_fn(
             "(l) => document.querySelector('.tab.on')?.dataset.l === l"
             " && /esperando|trabalhando|permiss/.test(document.getElementById('cstate').textContent)",
             arg=label,
@@ -369,16 +369,34 @@ class Orq:
       return done && !document.getElementById('cstate').textContent.includes('trabalhando');
     }"""
 
+    def wait_fn(self, js: str, arg: Any = None, timeout: float = 30000) -> None:
+        """Como `page.wait_for_function(js, arg=…, timeout=ms)`, mas sondando pelo `evaluate` a cada 300 ms.
+
+        O Playwright 1.48 (o mais novo com Chromium para o Ubuntu 20.04 do server0) avalia o predicado
+        uma vez pelo CDP e, se não for verdadeiro de cara, passa a sondar com `eval` dentro da página, que
+        a CSP (sem `unsafe-eval`) barra. O `evaluate` vai sempre pelo CDP."""
+        end = time.time() + timeout / 1000
+        while True:
+            try:
+                if self.page.evaluate(js, arg):
+                    return
+            except Exception as e:  # noqa: BLE001 - a página pode estar entre dois estados
+                if "unsafe-eval" not in str(e) and "Execution context" not in str(e):
+                    raise
+            if time.time() >= end:
+                raise AssertionError(f"esperei {timeout / 1000:.0f} s por: {js.strip()[:120]}…")
+            self.page.wait_for_timeout(300)
+
     def wait_idle(self, timeout: float = 180) -> str:
         """Espera o turno terminar. Devolve o texto do estado ('esperando você', 'pede permissão', 'erro')."""
-        self.page.wait_for_function(self.TURN_DONE, timeout=timeout * 1000)
+        self.wait_fn(self.TURN_DONE, timeout=timeout * 1000)
         return self.cstate()
 
     def say(self, text: str, wait: bool = True, timeout: float = 180) -> str:
         """Digita no chat e envia (Enter). Com `wait`, espera o turno e devolve o último texto do claude."""
         self.page.fill("#input", text)
         self.page.press("#input", "Enter")
-        self.page.wait_for_function("() => !document.querySelector('.chat.on .me.pending')", timeout=20000)
+        self.wait_fn("() => !document.querySelector('.chat.on .me.pending')", timeout=20000)
         if not wait:
             return ""
         self.page.wait_for_timeout(500)
@@ -401,7 +419,7 @@ class Orq:
         self.page.click(f'.p.lvp[data-id="{recipe}"]')
         self.page.wait_for_selector("#levels:not([hidden]) .lcard", timeout=timeout * 1000)
         # a aba passa a falar com o nível de cima; ele sai de 'abrindo…' quando a máquina confirma
-        self.page.wait_for_function(
+        self.wait_fn(
             "() => /esperando|trabalhando|permiss/.test(document.getElementById('cstate').textContent)"
             " && document.querySelectorAll('#levels .lcard').length >= 2",
             timeout=timeout * 1000,
@@ -430,7 +448,7 @@ class Orq:
     def wait_wire(self, frm: str, contains: str = "", delivered: bool = False, timeout: float = 180) -> dict:
         """Espera um fio do nível `frm` cujo texto tenha `contains` (se dado); com `delivered`, espera o
         ✓✓ (o outro lado recebeu, o que chega um instante depois do fio). Devolve o último que casa."""
-        self.page.wait_for_function(
+        self.wait_fn(
             "([f, c, d]) => [...document.querySelectorAll('#side .wire')].some((e) =>"
             " e.querySelector('.wh b')?.textContent === f"
             " && (e.querySelector('pre')?.textContent || '').toLowerCase().includes(c.toLowerCase())"
@@ -515,7 +533,7 @@ class Orq:
         self.page.click("#lnk")
         self.page.wait_for_selector("#picker:not([hidden]) #plist .p", timeout=20000)
         self.page.click(f'#plist .p[data-l="{to}"]')
-        self.page.wait_for_function(
+        self.wait_fn(
             "(n) => !document.getElementById('links').hidden"
             " && [...document.querySelectorAll('#links .lcard')].some((e) => e.dataset.l === n)",
             arg=to,
@@ -534,12 +552,72 @@ class Orq:
     def unlink(self, to: str, timeout: float = 60) -> None:
         self.page.click(f'#links .lcard[data-l="{to}"] .ul')
         self.page.click(f'#links .lcard[data-l="{to}"] .ul')
-        self.page.wait_for_function(
+        self.wait_fn(
             "(n) => document.getElementById('links').hidden"
             " || ![...document.querySelectorAll('#links .lcard')].some((e) => e.dataset.l === n)",
             arg=to,
             timeout=timeout * 1000,
         )
+
+    # ---- conjuntos (⊞ no topo)
+    def open_sets(self) -> List[dict]:
+        """⊞ conjuntos: abre o seletor e devolve as linhas {id, text} (text = nome, resumo, já abertos)."""
+        if self.page.is_hidden("#picker") or self.page.is_hidden("#setsnap"):
+            self.page.click("#sets")
+        self.page.wait_for_selector("#picker:not([hidden]) #setsnap", timeout=20000)
+        return self.page.evaluate(
+            "[...document.querySelectorAll('#plist .setp')]"
+            ".map((e) => ({id: e.dataset.id, text: e.innerText}))"
+        )
+
+    def save_set(self, data: dict) -> str:
+        """Salva um conjunto pela API (o mesmo POST do "enviar JSON"); devolve o id."""
+        j = self.api("/api/conjuntos", data)
+        assert "id" in j, j
+        return j["id"]
+
+    def set_job(self, sid: str) -> Optional[dict]:
+        return next((j for j in self.state().get("conjuntos_abrindo", []) if j["id"] == sid), None)
+
+    def open_set(self, sid: str, timeout: float = 300) -> dict:
+        """Clica no conjunto no seletor e espera o servidor terminar de abrir (agentes, vínculos,
+        professor, tarefas). Devolve o registro do andamento (feitos, erros, top)."""
+        self.open_sets()
+        self.page.click(f'#plist .setp[data-id="{sid}"]')
+        self.wait_fn(
+            "() => document.getElementById('picker').hidden"
+            " || /já aberto|sendo aberto|não vale/.test(document.getElementById('toast').textContent)",
+            timeout=30000,
+        )
+        if not self.page.is_hidden("#picker"):
+            raise AssertionError(f"o conjunto {sid} não abriu: {self.toast()}")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            j = self.set_job(sid)
+            if j and j["etapa"] == "pronto":
+                return j
+            self.page.wait_for_timeout(2000)
+        raise AssertionError(f"o conjunto {sid} não terminou de abrir: {self.set_job(sid)}")
+
+    def snapshot_set(self, nome: str) -> dict:
+        """📷 salvar abas abertas: fotografa, dá o nome e salva. Devolve o JSON que foi salvo."""
+        self.open_sets()
+        self.page.click("#setsnap")
+        self.page.wait_for_selector("#picker:not([hidden]) #snapjson", timeout=20000)
+        self.page.fill("#snapname", nome)
+        data = json.loads(self.page.input_value("#snapjson"))
+        data["nome"] = nome
+        self.page.click("#snapsave")
+        self.wait_fn("() => /salvo/.test(document.getElementById('toast').textContent)", timeout=20000)
+        self.page.click("#pclose")  # a lista volta a aparecer depois de salvar; fecha para liberar a página
+        return data
+
+    def delete_set(self, sid: str) -> None:
+        self.open_sets()
+        for _ in range(2):  # ✕ duas vezes, como o encerrar de uma aba
+            self.page.click(f'#plist .setp[data-id="{sid}"] [data-del]')
+        self.wait_fn('(s) => !document.querySelector(`#plist .setp[data-id="${s}"]`)', arg=sid, timeout=20000)
+        self.page.click("#pclose")
 
     # ---- arquivos que o agente compartilhou (_outbox/)
     def open_files(self) -> None:
@@ -557,7 +635,7 @@ class Orq:
     def wait_file(self, name: str, timeout: float = 120) -> None:
         """Espera `name` aparecer na lista (a página relê a _outbox/ ao fim de cada rodada e a cada 30 s)."""
         self.open_files()
-        self.page.wait_for_function(
+        self.wait_fn(
             "(n) => [...document.querySelectorAll('#outbox .frow b')].some((e) => e.textContent === n)",
             arg=name,
             timeout=timeout * 1000,
@@ -567,7 +645,7 @@ class Orq:
         """Clica no arquivo e devolve a tag do que a prévia mostra (IMG, IFRAME, VIDEO, PRE, DIV)."""
         self.page.click(f'#outbox .frow[data-n="{name}"] .fmeta')
         self.page.wait_for_selector("#view:not([hidden]) .vbody > *")
-        self.page.wait_for_function(
+        self.wait_fn(
             "() => !document.querySelector('#view .vbody').textContent.includes('carregando')", timeout=30000
         )
         return self.page.evaluate("document.querySelector('#view .vbody > *').tagName")
@@ -699,6 +777,14 @@ def main(argv: List[str]) -> int:
                 for w in o.wires():
                     print(f"[{'✓✓' if w['delivered'] else '…'}] {w['head']}\n    {w['text'][:200]}")
                 print("níveis:", " → ".join(o.levels()) or "nenhum")
+            elif cmd == "sets":
+                for r in o.open_sets():
+                    print(f"  {r['id']:24} {r['text'].replace(chr(10), ' · ')[:120]}")
+            elif cmd == "set":
+                j = o.open_set(args[0])
+                print(f"feitos: {', '.join(j['feitos']) or 'nenhum'}; professor: {j.get('top') or '-'}")
+                for k, v in j["erros"].items():
+                    print(f"  problema {k}: {v}")
             elif cmd == "undo":
                 o.downgrade()
                 print("níveis encerrados ·", o.cstate())

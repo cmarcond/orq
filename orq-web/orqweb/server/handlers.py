@@ -662,10 +662,13 @@ def make_handler(ctx: Context):
             err = ctx.spawn(p["host"], p["label"], p["cwd"], p["acc"], p["mode"])
             if err:
                 return self.reply(500, {"err": err})
+            orphans = close_orphan_levels(ctx, p["label"])
             ctx.state.add_provisional(
                 provisional_agent(p["label"], p["host"], p["acc"], p["cwd"], time.time())
             )
-            return self.reply(200, {"label": p["label"], "acc": p["acc"], "why": p["why"]})
+            return self.reply(
+                200, {"label": p["label"], "acc": p["acc"], "why": p["why"], "orphans_closed": orphans}
+            )
 
     return Handler
 
@@ -680,6 +683,19 @@ def live_entry(ctx: Context, label: str) -> Optional[dict]:
         return next(
             (a for a in ctx.state.agents if a.get("label") == label and a.get("state") != "closed"), None
         )
+
+
+def close_orphan_levels(ctx: Context, label: str) -> List[str]:
+    """Níveis que ainda apontam para `label` logo depois de ele ser aberto são órfãos de uma vida anterior
+    do mesmo rótulo (a base foi encerrada sem o ↓ desfazer): recebem `quit` e saem do estado, senão o
+    próximo ⇅ (ou o professor de um conjunto) recusa com "já tem níveis". Devolve os encerrados."""
+    with ctx.state.lock:
+        agents = list(ctx.state.agents)
+    above = pipelines.levels_above(agents, label)
+    for lv in reversed(above):
+        ctx.bridges.deliver(lv, {"orq": "quit"})
+        ctx.state.mark_closing(lv)
+    return above
 
 
 def make_link(ctx: Context, a: dict, b: dict) -> Tuple[Optional[dict], Optional[str]]:
@@ -758,6 +774,7 @@ def run_upgrade(
             level=lv["level"],
             permission=base.get("permission"),
             set_id=base.get("set"),
+            pipeline=p.id,
         )
         if err:
             for done in reversed(started):  # não deixa nível órfão rodando
@@ -775,6 +792,7 @@ def run_upgrade(
                 level=lv["level"],
                 permission=base.get("permission"),
                 set=base.get("set"),
+                pipeline=p.id,
             )
         )
     # o nível de baixo ganha vínculo com cada executor vinculado (local ou por ssh); os executores
@@ -872,6 +890,8 @@ def open_set_job(ctx: Context, sid: str, d: dict, plan: List[dict], job: dict) -
                     ctx.state.drop_provisional(lab)
                 else:
                     job["feitos"].append(lab)
+            if not err:
+                close_orphan_levels(ctx, lab)
 
     by_host: Dict[str, List[dict]] = {}
     for it in plan:

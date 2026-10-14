@@ -522,10 +522,12 @@ def test_state_records_permission_role_and_set(short_tmp):
         permission="acceptEdits",
         role="Você cuida do modelo.",
         set_id="artigo",
+        pipeline="professor-executor",
     )
     s.start()
     try:
         st = state_of(s)
+        assert st["pipeline"] == "professor-executor"
         assert (
             st["permission"] == "acceptEdits"
             and st["role"] == "Você cuida do modelo."
@@ -551,11 +553,14 @@ def test_spawn_cli_passes_permission_set_and_role_for_base_agent(monkeypatch, sh
     assert seen["permission"] == "auto" and seen["set_id"] == "artigo" and seen["parent"] is None
     assert Path(seen["role_file"]).read_text() == "papel do base"
     # --restart sem argumentos (troca de conta, reabrir com nome): papel, permissão e conjunto de antes
-    StateFile(short_tmp / "p-l" / "state.json").write(permission="auto", set="artigo")
+    StateFile(short_tmp / "p-l" / "state.json").write(
+        permission="auto", set="artigo", pipeline="professor-executor"
+    )
     seen.clear()
     assert cli.main(["spawn", "--dir", "/p", "--account", "g", "--label", "p@l", "--restart"]) == 0
     assert seen["role_file"] == str(short_tmp / "p-l" / "role.txt")
     assert seen["permission"] == "auto" and seen["set_id"] == "artigo" and seen["restart"] is True
+    assert seen["pipeline"] == "professor-executor"
 
 
 def test_start_command_carries_permission_and_set():

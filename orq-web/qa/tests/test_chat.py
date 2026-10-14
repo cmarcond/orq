@@ -15,9 +15,7 @@ def test_abre_projeto_e_responde(orq, agent):
 def test_interrompe_turno_longo(orq, agent):
     orq.say("Conte de 1 até 300, um número por linha, sem resumir.", wait=False)
     # espera o claude começar a escrever (ou a chamar ferramenta) e interrompe pelo Esc
-    orq.page.wait_for_function(
-        "() => document.querySelector('.chat.on .ai, .chat.on .chip') !== null", timeout=90000
-    )
+    orq.wait_fn("() => document.querySelector('.chat.on .ai, .chat.on .chip') !== null", timeout=90000)
     orq.interrupt()
     st = orq.wait_idle(60)
     orq.shot("chat-interrompido")

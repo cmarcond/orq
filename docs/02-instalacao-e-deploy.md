@@ -137,6 +137,11 @@ cd orq-web && make test && make lint   # venv em .venv (uv, Python 3.12); node 2
   autorizado pelo deploy do container.
 - O Playwright mais novo não traz navegador para Ubuntu 20.04: o venv do server0 usa `playwright==1.48.0`
   (`uv pip install --python .venv/bin/python playwright==1.48.0 && .venv/bin/python -m playwright install --with-deps chromium`).
+  Nessa versão o `page.wait_for_function` só serve quando o predicado já é verdadeiro de cara: para sondar,
+  ele usa `eval` dentro da página e a CSP (sem `unsafe-eval`) barra. Por isso o harness (`qa/orqqa.py`) espera
+  com `Orq.wait_fn`, que avalia pelo CDP a cada 300 ms; os testes de QA usam só ela. Para rodar o QA aqui:
+  `ORQ_LOCAL_HOST=server0 ORQ_EXTRA_HOSTS=laptop ORQ_QA_PROJECT=server0:~/Projects/orq-qa
+  ORQ_QA_PROJECT2=server0:~/Projects/orq-qa2 .venv/bin/python -m pytest qa/tests/test_conjuntos.py`.
 - A memória do Claude Code deste projeto foi copiada para cada conta do server0
   (`~/.claude*/projects/-home-user-Projects-claude-orq/memory/`). O clone do laptop ficou, mas não é mais usado.
 - Alternativa sem terminal: abrir `server0:~/Projects/claude-orq` pelo **+** na própria página e desenvolver
@@ -154,6 +159,7 @@ cd orq-web && make test && make lint   # venv em .venv (uv, Python 3.12); node 2
 | `ORQ_SSH_CONFIG` | vazio | `ssh -F` próprio (o container) |
 | `ORQ_USAGE_HOST` | vazio | máquina que responde `usage-all --json` por ssh; vazio = esta |
 | `ORQ_STATE_DIR` | `~/.cache/orq` | estado dos agentes e dos vínculos |
+| `ORQ_SETS_DIR` | `~/.config/orq-web/conjuntos` | os conjuntos (⊞) salvos pela página |
 | `ORQ_BIN` | `~/.local/bin` | onde estão `usage-all`, `claude-last`, `orq`, `orq-agent` |
 | `CLAUDE_MULTICONTA_CONF` | `~/.config/claude-multiconta/accounts.json` | as contas |
 | `ORQ_NO_OPEN` | vazio | `1` não abre o navegador ao subir |

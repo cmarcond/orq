@@ -85,7 +85,7 @@ def test_lista_previa_download_e_aviso(orq, agent):
     clear_outbox()
     orq.open_files()
     orq.page.click("#outbox .rf")  # a página já tinha lido a pasta antes da limpeza: relê
-    orq.page.wait_for_function("() => document.querySelectorAll('#outbox .frow').length === 0")
+    orq.wait_fn("() => document.querySelectorAll('#outbox .frow').length === 0")
     assert orq.files() == [] and "Nada compartilhado" in orq.page.inner_text("#outbox")
     OUTBOX.mkdir(exist_ok=True)
     (OUTBOX / "relatório.md").write_text("# Relatório\n\nTudo **certo**.\n")
@@ -94,7 +94,7 @@ def test_lista_previa_download_e_aviso(orq, agent):
     time.sleep(1.1)
     (OUTBOX / "grafico.png").write_bytes(PNG)
     orq.page.click("#outbox .rf")  # ↻: relê agora (senão, no fim da rodada ou em 30 s)
-    orq.page.wait_for_function("() => document.querySelectorAll('#outbox .frow').length === 3")
+    orq.wait_fn("() => document.querySelectorAll('#outbox .frow').length === 3")
     assert orq.files() == ["grafico.png", "relatorio.pdf", "relatório.md"], orq.files()
     assert "arquivos novos" in orq.toast() or "novo arquivo" in orq.toast(), orq.toast()
     assert orq.page.inner_text("#out").strip().endswith("3"), "contagem no 📂"
@@ -106,7 +106,7 @@ def test_lista_previa_download_e_aviso(orq, agent):
     orq.page.wait_for_timeout(2500)
     orq.close_preview()
     assert orq.preview("grafico.png") == "IMG"
-    orq.page.wait_for_function("() => document.querySelector('#view img').naturalWidth === 320")
+    orq.wait_fn("() => document.querySelector('#view img').naturalWidth === 320")
     orq.shot("arquivos-previa-png")
     orq.page.wait_for_timeout(2500)
     orq.close_preview()

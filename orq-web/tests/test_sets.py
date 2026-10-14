@@ -173,7 +173,7 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
     live = [
         agent("a@laptop", "laptop", "/p/a", permission="auto", role="sou o a", set="velho"),
         agent("b@server0", "server0", "/p/b", permission="auto"),
-        agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor"),
+        agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor"),  # sem `pipeline`
         agent("morto@laptop", "laptop", "/p/m", state="closed"),
         {"label": "t@laptop", "host": "laptop", "dir": "/t", "state": "waiting", "kind": "term"},
     ]
@@ -202,6 +202,19 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
     live3 = live2 + [agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor")]
     out, avisos = sets.snapshot(live3, [], cat)
     assert out["agentes"][0]["maquina"] == "laptop" and any("b@server0" in w for w in avisos)
+    # nível que gravou a receita: ela vale, sem inferir (mesmo sem vínculo de pé)
+    live4 = [
+        agent("a@laptop", "laptop", "/p/a"),
+        agent(
+            "a~professor@laptop",
+            "laptop",
+            "/p/a",
+            parent="a@laptop",
+            level="professor",
+            pipeline="professor-executores",
+        ),
+    ]
+    assert sets.snapshot(live4, [], cat)[0]["lider"] == {"receita": "professor-executores"}
     # nada aberto: conjunto vazio, sem líder
     out, avisos = sets.snapshot([], [], cat)
     assert out["agentes"] == [] and "lider" not in out

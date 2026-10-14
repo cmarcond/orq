@@ -49,10 +49,13 @@ class FakeExt:
         restart=False,
         permission=None,
         set_id=None,
+        pipeline=None,
     ):
         self.spawned.append((host, label, cwd, account, mode, role, parent, level))
         self.extras = getattr(self, "extras", {})
         self.extras[label] = {"permission": permission, "set_id": set_id}
+        if pipeline:
+            self.extras[label]["pipeline"] = pipeline
         self.restarts = getattr(self, "restarts", []) + ([label] if restart else [])
         if cwd == "/falha":
             return "falhou de propósito"
@@ -1190,7 +1193,15 @@ def test_set_snapshot_endpoint(server, sets_dir):
     remote = base_entry("dados@node1", "/h/d", permission="auto")
     remote["host"] = "node1"
     state.add_provisional(remote)
-    state.add_provisional(base_entry("proj~professor@laptop", "/p", parent="proj@laptop", level="professor"))
+    state.add_provisional(
+        base_entry(
+            "proj~professor@laptop",
+            "/p",
+            parent="proj@laptop",
+            level="professor",
+            pipeline="professor-executores",
+        )
+    )
     state.add_link(
         {"local": "proj@laptop", "remote": "dados@node1", "host": "laptop", "kind": "ssh", "up": True}
     )
@@ -1214,7 +1225,37 @@ def test_upgrade_passes_permission_and_set_of_the_base(server):
     state.add_provisional(base_entry(permission="plan", set="meu"))
     status, body, _ = req(port, "POST", "/api/agent/proj@laptop/upgrade", {})
     assert status == 200, body
-    assert ext.extras["proj~professor@laptop"] == {"permission": "plan", "set_id": "meu"}
+    assert ext.extras["proj~professor@laptop"] == {
+        "permission": "plan",
+        "set_id": "meu",
+        "pipeline": "professor-executor",
+    }
     snap = req(port, "GET", "/api/state")[1]
     prof = next(a for a in snap["agents"] if a["label"] == "proj~professor@laptop")
-    assert prof["permission"] == "plan" and prof["set"] == "meu"
+    assert prof["permission"] == "plan" and prof["set"] == "meu" and prof["pipeline"] == "professor-executor"
+
+
+def test_opening_a_label_closes_orphan_levels_from_a_previous_life(server, sets_dir):
+    """A base foi encerrada sem desfazer os níveis; reabrir a mesma pasta (mesmo rótulo) não pode herdar o
+    professor fantasma: ele recebe quit e o professor novo do conjunto sobe."""
+    port, ext, state = server
+    delivered = capture_deliveries(port)
+    server_ctx(port).link = lambda h, a, b: None
+    zombie = base_entry("x~professor@laptop", "/novo/x", parent="x@laptop", level="professor")
+    state.add_provisional(zombie)
+    status, body, _ = req(
+        port, "POST", "/api/agent/open", {"host": "laptop", "cwd": "/novo/x", "mode": "new"}
+    )
+    assert status == 200 and body["label"] == "x@laptop" and body["orphans_closed"] == ["x~professor@laptop"]
+    assert ("x~professor@laptop", {"orq": "quit"}, False) in delivered
+    assert (
+        next(a for a in state.snapshot()["agents"] if a["label"] == "x~professor@laptop")["state"] == "closed"
+    )
+    # o mesmo num conjunto com líder: o fantasma sai e o professor novo sobe sobre a base recém-aberta
+    state.add_provisional(base_entry("y~professor@laptop", "/novo/y", parent="y@laptop", level="professor"))
+    data = {"nome": "y", "agentes": [{"maquina": "laptop", "pasta": "/novo/y"}], "lider": {}}
+    assert req(port, "POST", "/api/conjuntos", data)[0] == 200
+    assert req(port, "POST", "/api/conjuntos/y/open", {})[0] == 200
+    j = wait_job(port, "y")
+    assert j["erros"] == {} and j["top"] == "y~professor@laptop", j
+    assert [s[1] for s in ext.spawned] == ["x@laptop", "y@laptop", "y~professor@laptop"]

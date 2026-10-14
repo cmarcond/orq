@@ -13,7 +13,7 @@ def test_vincula_pede_e_recebe(orq, agent, agent2):
     assert linked == [agent2], linked
     orq.shot("vinculo-criado")
     # a nota chega aos dois como chip de máquina ([orq] …), não como fala sua
-    orq.page.wait_for_function(
+    orq.wait_fn(
         "() => [...document.querySelectorAll('.chat.on .chip.sysm')]"
         ".some((e) => e.innerText.includes('Vínculo criado'))",
         timeout=30000,

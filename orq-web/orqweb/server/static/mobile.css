@@ -7,7 +7,7 @@
 .tline{overflow:visible}.trow+.trow .tline{border-top:none;padding-top:0}
 .tab{max-width:150px;padding:7px 9px;gap:5px}.tab .kbd{display:none}
 .usage{position:relative;max-width:none;border-left:none;border-top:1px solid var(--line);padding:4px 8px 6px;gap:4px;grid-template-columns:repeat(2,minmax(0,1fr))}
-.usage .bell{position:absolute;right:6px;top:2px;margin:0;z-index:1}
+.usage .tools{position:absolute;right:6px;top:2px;margin:0;z-index:1}
 .usage .ucard.total{padding:4px 40px 4px 10px;cursor:pointer;grid-column:1/-1;position:relative}
 .usage .ucard.total .small{display:none}.usage .ucard.total .name{font-size:12px;padding-right:22px}
 .usage .ucard:not(.total){display:none}.usage.open .ucard:not(.total){display:block}

@@ -181,7 +181,19 @@ Ficam para depois: histórico de rodadas e linha do tempo de marcos; modelo/esfo
 editáveis pela página; um professor para vários executores; busca na lista de projetos; painel de níveis
 melhor no celular; níveis na grade do `orq` do terminal; `orq-web --no-open`.
 
-## Fase 5 — conjuntos: abrir vários agentes de uma vez, com ou sem professor  (planejada em 2026-10-13)
+## Fase 5 — conjuntos: abrir vários agentes de uma vez, com ou sem professor  ✅ feita em 2026-10-13
+
+O que mudou em relação ao planejado: o prompt de um agente fica no próprio `state.json` (`role`), não só em
+`role.txt`, então a fotografia não precisa ler arquivo nas máquinas; `snapshot` devolve o JSON sem salvar
+(a página mostra para editar e o `POST /api/conjuntos` salva); `lider.prompt` só vale para receitas de um
+nível (as de dois ou mais usam os papéis do TOML); a receita da fotografia vem do `pipeline` gravado no
+estado do nível pelo upgrade (inferida pelos nomes dos níveis e pelos vínculos só para níveis de antes desta versão),
+porque a lista de vínculos oscila quando o `orq-agent links` da máquina falha sob carga. Achado no QA real: um professor cuja base foi
+encerrada sem ↓ desfazer sobrevive e gruda no próximo agente de mesmo rótulo (a pasta é a mesma), e o ⇅ recusa
+com "já tem níveis"; agora abrir um rótulo (pelo + ou por um conjunto) encerra esses níveis órfãos
+(`handlers.close_orphan_levels`). Testes: `tests/test_sets.py`,
+`tests/test_handlers.py` (conjuntos), `tests/test_supervisor.py` (permissão/papel/conjunto no estado) e
+`qa/tests/test_conjuntos.py`.
 
 Um **conjunto** é um JSON que descreve agentes para abrir juntos: os trabalhos que estavam em andamento
 (cada um na sua pasta e máquina, conversa retomada) ou um grupo com um professor líder, em que cada agente

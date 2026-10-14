@@ -138,7 +138,7 @@ function totalCard(t) {
 }
 function renderUsage(us) {
   $('usage').innerHTML =
-    `<button id="bell" class="ghost bell" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button>` +
+    `<span class="tools"><button id="sets" class="ghost" title="conjuntos: abrir vários agentes de uma vez (cada um com prompt próprio, com ou sem professor), salvar as abas abertas como conjunto ou enviar um JSON pronto">⊞ conjuntos</button><button id="bell" class="ghost" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button></span>` +
     totalCard(us._total) +
     Object.entries(us)
     .filter(([n]) => !n.startsWith('_'))
@@ -149,6 +149,7 @@ function renderUsage(us) {
     )
     .join('');
   $('bell').onclick = askNotify;
+  $('sets').onclick = openSetsPicker;
   const tot = $('usage').querySelector('.ucard.total');
   if (tot) tot.onclick = () => $('usage').classList.toggle('open');
 }
@@ -386,8 +387,9 @@ function status() {
   const a = t && (agentOf(cur) || t.a);
   const st = a ? a.state : '';
   const lv = cur && (isLevel(a) || levelsAbove(cur).length) ? ` · <b style="color:${levelColor(cur)}">${esc(levelName(cur))}</b>` : '';
+  const st8 = a && a.set ? ` · <span title="aberto pelo conjunto ${esc(a.set)}">⊞ ${esc(a.set)}</span>` : '';
   $('cstate').innerHTML = a
-    ? `<i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '')}${lv} · ${esc(ST[st] || st)}${
+    ? `<i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '')}${lv}${st8} · ${esc(ST[st] || st)}${
         a.msg && st !== 'working' ? ' · ' + esc(a.msg) : ''
       }`
     : '';
@@ -1236,6 +1238,145 @@ async function openAgent(p, mode) {
     show(j.label);
   }
 }
+// ---------------------------------------------------------------- conjuntos
+// ⊞ no topo: um conjunto é um JSON (em ~/.config/orq-web/conjuntos, no servidor) com vários agentes para
+// abrir de uma vez, cada um com prompt e tarefa próprios, com ou sem um professor líder. O servidor abre numa
+// thread; o andamento chega pelo /api/state (conjuntos_abrindo) e vira toast aqui.
+const SETS = { seen: {} }; // id -> última etapa vista, para avisar cada passo uma vez
+const setApi = (id, op, body) => api(`/api/conjuntos/${encodeURIComponent(id)}${op ? '/' + op : ''}`, body);
+async function openSetsPicker() {
+  picker(
+    'Conjuntos',
+    'Vários agentes de uma vez, cada um com prompt e tarefa próprios, com ou sem um professor líder. Clique para abrir; ⬇ baixa o JSON; ✕ apaga. Se algum agente do conjunto já estiver aberto, a página recusa e diz quais.',
+    '…',
+  );
+  const s = await api('/api/conjuntos');
+  if (s.err) return;
+  const rows = (s.items || [])
+    .map((c) => {
+      const open = c.abertos.length;
+      const tag = [`${c.n} agente${c.n === 1 ? '' : 's'}`, c.maquinas.join(', '), c.lider ? '👨‍🏫 professor' : 'independentes', c.permissao]
+        .filter(Boolean)
+        .join(' · ');
+      return `<div class="p setp" data-id="${esc(c.id)}" title="abrir o conjunto ${esc(c.nome)}">
+        <span class="path"><b>${esc(c.nome)}</b> <span class="mute small">${esc(tag)}</span></span>
+        <span class="small ${open ? 'bad' : 'mute'}">${open ? `${open} já aberto${open > 1 ? 's' : ''}` : ''}</span>
+        <span class="sbtns"><button class="ghost" data-dl="${esc(c.id)}" title="baixar o JSON">⬇</button><button class="ghost" data-del="${esc(c.id)}" title="apagar o conjunto">✕</button></span>
+        ${c.descricao ? `<span class="ttl">${esc(c.descricao)}</span>` : ''}</div>`;
+    })
+    .join('');
+  $('plist').innerHTML =
+    `<div class="prow stools"><button id="setup">📄 enviar JSON</button><button id="setsnap">📷 salvar abas abertas</button><span class="mute small">pasta: <code>${esc(s.dir)}</code></span></div>` +
+    (rows || '<div class="mute">nenhum conjunto salvo. Envie um JSON pronto ou fotografe as abas abertas.</div>');
+  $('setup').onclick = uploadSet;
+  $('setsnap').onclick = snapshotSet;
+  $('plist').querySelectorAll('.setp').forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.dataset.dl) return downloadSet(e.target.dataset.dl);
+      if (e.target.dataset.del) return deleteSet(e.target.dataset.del, el);
+      openSet(el.dataset.id);
+    };
+  });
+}
+async function openSet(id) {
+  const j = await setApi(id, 'open', {});
+  if (j.err) return; // o api() já mostrou o motivo (inclusive "já aberto: …")
+  $('picker').hidden = true;
+  SETS.seen[id] = 'abrindo';
+  toast(`⊞ ${j.nome}: abrindo ${j.agentes.map((a) => `${a.label.split('@')[0]} (${LAB[a.acc] || a.acc})`).join(', ')}…`);
+}
+const SET_STEPS = { abrindo: 'abrindo os agentes…', vínculos: 'vinculando os executores…', professor: 'subindo o professor…', tarefas: 'enviando as tarefas…' };
+function setsProgress(jobs) {
+  for (const j of jobs || []) {
+    const prev = SETS.seen[j.id];
+    if (prev === j.etapa) continue;
+    SETS.seen[j.id] = j.etapa;
+    if (prev === undefined && j.etapa === 'pronto') continue; // terminou antes de esta página existir
+    if (j.etapa !== 'pronto') {
+      toast(`⊞ ${j.nome}: ${SET_STEPS[j.etapa] || j.etapa}`);
+      continue;
+    }
+    const errs = Object.entries(j.erros || {});
+    const n = j.labels.length;
+    toast(
+      `⊞ ${j.nome}: ${j.feitos.length} de ${n} agente${n === 1 ? '' : 's'} no ar${j.top ? ', com professor' : ''}${
+        errs.length ? `; ${errs.length} problema${errs.length > 1 ? 's' : ''}: ${errs.map(([k, v]) => `${k}: ${v}`).join('; ').slice(0, 240)}` : ''
+      }`,
+    );
+    const first = j.feitos.includes(j.labels[0]) ? j.labels[0] : j.feitos[0];
+    if (first && agentOf(first)) show(first);
+  }
+}
+async function downloadSet(id) {
+  const j = await setApi(id);
+  if (j.err) return;
+  const blob = new Blob([JSON.stringify(j.conjunto, null, 2) + '\n'], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${id}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function deleteSet(id, el) {
+  if (el._confirm) {
+    setApi(id, 'delete', {}).then((j) => {
+      if (j.err) return;
+      toast(`conjunto ${id} apagado`);
+      openSetsPicker();
+    });
+    return;
+  }
+  el._confirm = true;
+  toast(`clique no ✕ de novo para apagar o conjunto ${id}`);
+  setTimeout(() => (el._confirm = false), 4000);
+}
+function uploadSet() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.json,application/json';
+  inp.onchange = async () => {
+    const f = inp.files[0];
+    if (!f) return;
+    let data;
+    try {
+      data = JSON.parse(await f.text());
+    } catch (e) {
+      return toast(`${f.name}: JSON inválido (${e.message})`);
+    }
+    if (data && typeof data === 'object' && !data.nome) data.nome = f.name.replace(/\.json$/i, '');
+    const j = await api('/api/conjuntos', data);
+    if (j.err) return;
+    toast(`conjunto ${j.id} salvo`);
+    openSetsPicker();
+  };
+  inp.click();
+}
+async function snapshotSet() {
+  const j = await api('/api/conjuntos/snapshot', {});
+  if (j.err) return;
+  const c = j.conjunto;
+  $('phint').innerHTML =
+    'As abas abertas como conjunto: confira o JSON, dê um nome e salve. Só o primeiro professor entra como líder (os outros agentes viram executores dele); o prompt só aparece em agentes que subiram com um.';
+  $('plist').innerHTML = `<div class="prow"><input id="snapname" placeholder="nome do conjunto" value="${esc(c.nome || '')}"><button id="snapsave">salvar</button><button class="ghost" id="snapback">voltar</button></div>
+    ${(j.avisos || []).map((w) => `<div class="small bad">${esc(w)}</div>`).join('')}
+    <textarea id="snapjson" rows="18" spellcheck="false">${esc(JSON.stringify(c, null, 2))}</textarea>`;
+  $('snapback').onclick = openSetsPicker;
+  $('snapsave').onclick = async () => {
+    let data;
+    try {
+      data = JSON.parse($('snapjson').value);
+    } catch (e) {
+      return toast(`JSON inválido: ${e.message}`);
+    }
+    const nome = $('snapname').value.trim();
+    if (nome) data.nome = nome;
+    const r = await api('/api/conjuntos', data);
+    if (r.err) return;
+    toast(`conjunto ${r.id} salvo`);
+    openSetsPicker();
+  };
+  $('snapname').focus();
+}
 $('pclose').onclick = () => ($('picker').hidden = true);
 $('picker').onclick = (e) => e.target === $('picker') && ($('picker').hidden = true);
 $('popen').onclick = () => {
@@ -1302,6 +1443,7 @@ async function refresh() {
     }
     renderTabs();
     status();
+    setsProgress(s.conjuntos_abrindo);
   } catch (_) {
     /* servidor fora; tenta no próximo ciclo */
   }

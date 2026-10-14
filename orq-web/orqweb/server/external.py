@@ -287,6 +287,7 @@ class External:
         restart: bool = False,
         permission: Optional[str] = None,
         set_id: Optional[str] = None,
+        pipeline: Optional[str] = None,
     ) -> Optional[str]:
         """Sobe o supervisor na máquina. Devolve mensagem de erro ou None.
 
@@ -305,6 +306,8 @@ class External:
             args += ["--permission-mode", permission]
         if set_id:
             args += ["--set", set_id]
+        if pipeline:
+            args += ["--pipeline", pipeline]
         if restart:
             args.append("--restart")
         extra = {}

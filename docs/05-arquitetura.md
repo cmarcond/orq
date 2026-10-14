@@ -69,6 +69,7 @@ um resumo), `waiting` num `result`, `working` numa mensagem do usuário, `quota`
 | `assign.py` | escolha da conta pela folga no 7d (3.6) e o rótulo `pasta@máquina` |
 | `migrate.py` | troca de conta quando a cota acaba |
 | `pipelines.py` | receitas de níveis (TOML) e os papéis com os vizinhos resolvidos |
+| `sets.py` | conjuntos (⊞): formato JSON, validação, catálogo em `ORQ_SETS_DIR`, conflitos, plano (contas para o conjunto inteiro) e fotografia das abas abertas; quem abre é `handlers.open_set_job` |
 
 **StateCache**: `refresh_usage` a cada 150 s; `refresh_agents` a cada 15 s (todas as máquinas em
 paralelo, 12 threads, uma conexão ssh por máquina); projetos sob demanda com 60 s de validade; tudo
@@ -121,7 +122,7 @@ detecta reabertura pelo pid (troca de conta) para recriar a aba e avisar.
 ```
 ~/.cache/orq/<rótulo saneado>/        (ORQ_STATE_DIR)
 ├── agent.sock          socket do supervisor (0600)
-├── state.json          label, dir, account, pid, state, msg, sid, kind, sock, name, parent, level, retry, ts
+├── state.json          label, dir, account, pid, state, msg, sid, kind, sock, name, parent, level, permission, role, set, pipeline, retry, ts
 ├── events.jsonl        eventos numerados desta vida do agente (recomeça a cada reabertura)
 ├── supervisor.log      stderr do supervisor (o que ele diz ao sair)
 ├── role.txt            papel do nível (--role-file -), para o --restart reaproveitar
@@ -130,6 +131,7 @@ detecta reabertura pelo pid (troca de conta) para recriar a aba e avisar.
 ~/.config/claude-multiconta/accounts.json       as contas (cópia do install.sh)
 ~/.config/claude-multiconta/aliases.sh          gerado
 ~/.config/orq-web/{password,ssh_config,state/}  só no server0 (container)
+~/.config/orq-web/conjuntos/<id>.json           os conjuntos (⊞) salvos pela página (ORQ_SETS_DIR)
 <config_dir>/sessions/<pid>.json + <pid>.<hash>.key   registro de sessões do Claude Code (6.1)
 <projeto>/_inbox/, <projeto>/_outbox/                 anexos de ida e de volta
 ```
@@ -151,3 +153,12 @@ detecta reabertura pelo pid (troca de conta) para recriar a aba e avisar.
 **Subir níveis**: `POST /upgrade {pipeline}` → `plan_levels` (papéis com `{acima}`, `{abaixo}`, `{eu}`,
 `{executores}`) → `spawn` de baixo para cima com `--role-file - --parent --level` → provisórios → (receita
 multi) `orq-agent link` do nível de baixo com cada vinculado → página passa a falar com o topo.
+
+**Abrir um conjunto**: página `POST /api/conjuntos/<id>/open` → `sets.validate` → `sets.conflicts` (409 se
+algum `maquina:pasta` já tem agente vivo) → `sets.plan` (rótulos únicos, `assign` do conjunto inteiro) →
+resposta com o plano → thread `open_set_job`: `spawn --role-file - --permission-mode --set` por agente
+(threads por máquina; na mesma máquina em sequência, com `Pacer` espaçando as conexões ssh) e provisórios →
+com `lider`, `make_link` do primeiro com cada um dos outros (nota de vínculo aos dois) → `run_upgrade` do
+primeiro com a receita (papel substituído por `lider.prompt`) → `tarefa` de cada agente e do professor
+entregues por ponte passageira → `job.etapa = pronto`; a página lê `conjuntos_abrindo` no `/api/state` a
+cada 5 s e mostra cada etapa como toast.

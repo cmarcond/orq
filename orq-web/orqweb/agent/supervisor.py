@@ -54,6 +54,7 @@ class Supervisor:
         permission: Optional[str] = None,
         role: Optional[str] = None,
         set_id: Optional[str] = None,
+        pipeline: Optional[str] = None,
     ):
         self.label, self.folder, self.account = label, folder, account
         self.command, self.env, self.sid = command, env, sid
@@ -65,6 +66,7 @@ class Supervisor:
         self.permission = permission  # modo de permissão com que o claude subiu (--permission-mode)
         self.role = role  # prompt extra (papel de um nível, ou o prompt próprio de um agente de conjunto)
         self.set_id = set_id  # conjunto (orqweb/server/sets.py) de que este agente veio
+        self.pipeline = pipeline  # receita (orqweb/pipelines/*.toml) de que este nível veio
         self.dir = state_dir
         self.sock_path = state_dir / "agent.sock"
         self.state = StateFile(state_dir / "state.json")
@@ -102,6 +104,8 @@ class Supervisor:
             fields["role"] = self.role
         if self.set_id:
             fields["set"] = self.set_id
+        if self.pipeline:
+            fields["pipeline"] = self.pipeline
         if msg is not None:
             fields["msg"] = msg
         try:

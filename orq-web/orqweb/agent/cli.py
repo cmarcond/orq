@@ -3,13 +3,14 @@
 Uso:
   orq-agent spawn  --dir PASTA --account CONTA --label NOME [--mode resume|new]
                    [--role-file ARQ|-] [--parent RÓTULO] [--level NÍVEL]
-                   [--permission-mode MODO] [--set CONJUNTO]
+                   [--permission-mode MODO] [--set CONJUNTO] [--pipeline RECEITA]
         garante o supervisor rodando numa sessão tmux "orqs-<nome>" desta máquina (sem tmux: nohup).
         Um nível de cima (professor etc.) sobe com o papel (--role-file; "-" lê do stdin e guarda em
         ~/.cache/orq/<nome>/role.txt), o rótulo do agente logo abaixo (--parent) e o nome do nível.
         Sem --parent/--level, --role-file é só um prompt extra do agente (os conjuntos da página usam).
         --permission-mode troca o modo do accounts.json só para este agente; --set marca de que
-        conjunto ele veio. Tudo fica no state.json e vale de novo num --restart.
+        conjunto ele veio; --pipeline, de que receita veio um nível. Tudo fica no state.json e vale de
+        novo num --restart.
         --restart fecha o agente que já roda com esse rótulo e sobe de novo (ex.: para ganhar nome).
   orq-agent start  --dir PASTA --account CONTA --label NOME [--mode resume|new] [--role-file ARQ] …
         roda o supervisor em primeiro plano (é o que o spawn abre dentro do tmux). Todo agente sobe
@@ -106,6 +107,7 @@ def cmd_start(a: argparse.Namespace) -> int:
         permission=a.permission_mode or conf.permission_mode,
         role=role,
         set_id=a.set,
+        pipeline=a.pipeline,
     )
     try:
         sup.run()
@@ -128,7 +130,7 @@ def cmd_spawn(a: argparse.Namespace) -> int:
             print(err, file=sys.stderr)
             return 1
     role_file, parent, level = a.role_file, a.parent, a.level
-    permission, set_id = a.permission_mode, a.set
+    permission, set_id, pipeline = a.permission_mode, a.set, a.pipeline
     if a.restart and not (role_file or parent or level):
         # reabrindo (troca de conta, ganhar nome): mantém papel, parent, nível, modo de permissão e
         # conjunto que o agente já tinha
@@ -137,6 +139,7 @@ def cmd_spawn(a: argparse.Namespace) -> int:
         old = StateFile(config.state_dir(a.label) / "state.json").read()
         parent, level = old.get("parent"), old.get("level")
         permission, set_id = permission or old.get("permission"), set_id or old.get("set")
+        pipeline = pipeline or old.get("pipeline")
         rf = config.state_dir(a.label) / "role.txt"
         if rf.exists():
             role_file = str(rf)
@@ -159,6 +162,7 @@ def cmd_spawn(a: argparse.Namespace) -> int:
                 restart=a.restart,
                 permission=permission,
                 set_id=set_id,
+                pipeline=pipeline,
             )
         )
         print("pronto")
@@ -363,6 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--permission-mode", help="modo de permissão deste agente (padrão: o do accounts.json)"
         )
         p.add_argument("--set", help="conjunto da página de que este agente veio (fica no state.json)")
+        p.add_argument("--pipeline", help="receita de níveis de que este nível veio (fica no state.json)")
         p.set_defaults(fn=fn)
     p = sub.add_parser("attach")
     p.add_argument("label")
