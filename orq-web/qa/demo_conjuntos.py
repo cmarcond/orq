@@ -172,22 +172,26 @@ def main() -> int:
             raise SystemExit(f"{f} já existe: a demo começa com pastas vazias")
     url, started = server_up()
     ff = int(os.environ.get("DEMO_FFMPEG_PID") or 0)
-    with sync_playwright() as pw:
-        o = Orq.launch(pw, headed=True, video=False)
-        d = Demo(o)
-        try:
-            run(d, o)
-        finally:
-            if ff:
-                try:
-                    os.kill(ff, signal.SIGINT)  # fecha o vídeo antes da limpeza
-                except OSError:
-                    pass
-                time.sleep(3)
-            cleanup(o)
-            o.close()
-    if started:
-        server_down()
+    try:
+        with sync_playwright() as pw:
+            o = Orq.launch(pw, headed=True, video=False)
+            d = Demo(o)
+            try:
+                run(d, o)
+            finally:
+                if ff:
+                    try:
+                        os.kill(ff, signal.SIGINT)  # fecha o vídeo antes da limpeza
+                    except OSError:
+                        pass
+                    time.sleep(3)
+                cleanup(o)
+                o.close()
+    finally:
+        # o orq-web do QA sai sempre que foi a demo que o subiu, mesmo se ela falhar: senão ele fica de pé
+        # com pontes `attach` presas a agentes já encerrados, e a próxima demo o reaproveita sem desligar
+        if started:
+            server_down()
     return 0
 
 
