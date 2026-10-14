@@ -6,11 +6,13 @@ prompt) e um professor líder que recebe a tarefa e coordena: o programador escr
 com testes pytest e roda os testes; o professor repassa a API ao documentador, que escreve o README; no fim
 o professor resume. O roteiro abre a página, mostra o JSON e a lista, abre o conjunto, alterna entre as abas
 enquanto eles trabalham (aprovando permissões na tela, se houver), mostra os arquivos entregues na prévia da
-página e a fotografia das abas abertas. Legendas na própria página explicam cada passo.
+página e a fotografia das abas abertas. Legendas explicam cada passo: com DEMO_CAP_DIR, o roteiro escreve
+o texto em <dir>/t.txt e <dir>/s.txt e o ffmpeg o desenha na barra do navegador (drawtext com reload,
+filtro em qa/demo_legenda.ffmpeg); sem ele, num quadro dentro da página.
 
 Uso (no server0, num display virtual, gravando com ffmpeg):
   DISPLAY=:77 ORQ_QA_HEADED=1 ORQ_LOCAL_HOST=server0 ORQ_EXTRA_HOSTS=laptop \\
-    DEMO_FFMPEG_PID=<pid> .venv/bin/python qa/demo_conjuntos.py
+    DEMO_FFMPEG_PID=<pid> DEMO_CAP_DIR=<dir> .venv/bin/python qa/demo_conjuntos.py
 Com DEMO_FFMPEG_PID, a gravação é encerrada (SIGINT) antes da limpeza. Pastas da demo, descartáveis:
 server0:~/Projects/orq-demo-prog e ~/Projects/orq-demo-docs.
 """
@@ -108,14 +110,30 @@ JSON_JS = """(txt) => {
 }"""
 
 
+CAP_DIR = Path(os.environ["DEMO_CAP_DIR"]) if os.environ.get("DEMO_CAP_DIR") else None
+
+
+def plain(text: str) -> str:
+    """Sem emoji: o drawtext do ffmpeg não desenha emoji colorido (vira quadrado)."""
+    return "".join(ch for ch in text if ord(ch) < 0x2190 or ch in "·").strip()
+
+
 class Demo:
     def __init__(self, o: Orq):
         self.o, self.p = o, o.page
         self.view = None
 
     def cap(self, t: str, sub: str = "") -> None:
+        """Legenda. Com DEMO_CAP_DIR, vai para os arquivos t.txt e s.txt que o ffmpeg desenha por cima do
+        vídeo (drawtext com reload), na barra do navegador; sem ele, num quadro dentro da página."""
         print(f"[{time.strftime('%H:%M:%S')}] {t}", flush=True)
-        self.p.evaluate(CAPTION_JS, [t, sub])
+        if not CAP_DIR:
+            self.p.evaluate(CAPTION_JS, [t, sub])
+            return
+        for name, text in (("t.txt", t), ("s.txt", sub)):
+            tmp = CAP_DIR / f".{name}.tmp"
+            tmp.write_text(plain(text), encoding="utf-8")
+            os.replace(str(tmp), str(CAP_DIR / name))  # atômico: o ffmpeg nunca lê o arquivo pela metade
 
     def pause(self, s: float) -> None:
         self.p.wait_for_timeout(int(s * 1000))
@@ -148,7 +166,7 @@ class Demo:
             if ag.get(lab, {}).get("state") != "permission":
                 continue
             show()
-            self.cap(f"O {who} pediu permissão: aprovando na própria página", ag[lab].get("msg", "")[:90])
+            self.cap(f"O {who} pediu permissão: aprovando na própria página", ag[lab].get("msg", "")[:70])
             try:
                 self.p.wait_for_selector(".chat.on .perm:not(.done) .btns button[data-ok='1']", timeout=15000)
                 self.pause(1.5)
@@ -200,7 +218,7 @@ def run(d: Demo, o: Orq) -> None:
     assert o.save_set(CONJUNTO) == SID
     d.pause(1)
     d.cap(
-        "orq · conjuntos (⊞)",
+        "orq · conjuntos",
         "vários agentes de uma vez, cada um com o próprio prompt, com um professor líder",
     )
     d.pause(4)
@@ -214,8 +232,8 @@ def run(d: Demo, o: Orq) -> None:
     d.p.evaluate(JSON_JS, "")
 
     d.cap(
-        "2. ⊞ conjuntos: a lista dos salvos",
-        "clique abre; ⬇ baixa o JSON; ✕ apaga; 📄 envia um pronto; 📷 fotografa as abas",
+        "2. O botão conjuntos: a lista dos salvos",
+        "clique abre; também baixa o JSON, apaga, recebe um pronto e fotografa as abas",
     )
     o.open_sets()
     d.pause(6)
@@ -290,7 +308,9 @@ def run(d: Demo, o: Orq) -> None:
     d.pause(10)
 
     d.show_prog()
-    d.cap("6. O que o PROGRAMADOR entregou, na 📂 _outbox/", "a página lista os arquivos e mostra a prévia")
+    d.cap(
+        "6. O que o PROGRAMADOR entregou, na pasta _outbox/", "a página lista os arquivos e mostra a prévia"
+    )
     o.open_files()
     d.pause(3)
     for name in ("testes.txt", "conversor.py"):
@@ -307,7 +327,10 @@ def run(d: Demo, o: Orq) -> None:
         d.pause(10)
         o.close_preview()
 
-    d.cap("8. 📷 As abas abertas viram um conjunto novo", "o mesmo JSON, pronto para reabrir tudo outro dia")
+    d.cap(
+        "8. As abas abertas viram um conjunto novo",
+        "a fotografia gera o mesmo JSON, pronto para reabrir tudo outro dia",
+    )
     o.open_sets()
     d.p.click("#setsnap")
     d.p.wait_for_selector("#picker:not([hidden]) #snapjson", timeout=20000)
