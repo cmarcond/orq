@@ -7,13 +7,10 @@ import json
 from conftest import PROJECT, PROJECT2
 
 
-def cleanup(orq, labels):
-    """Pela API: desfaz níveis (senão o professor fica órfão e gruda no próximo agente de mesmo rótulo),
-    encerra os agentes e apaga os conjuntos do QA."""
-    for lab in labels:
-        orq.api(f"/api/agent/{lab}/downgrade", {})
-    for lab in labels:
-        orq.ensure_stopped(lab)
+def cleanup(orq):
+    """Desfaz o professor, encerra os agentes e apaga as pastas do QA (Orq.purge), e apaga os conjuntos."""
+    for spec in (PROJECT, PROJECT2):
+        orq.purge(spec)
     for sid in ("qa-conjunto", "qa-foto"):
         orq.api(f"/api/conjuntos/{sid}/delete", {})
 
@@ -23,11 +20,11 @@ def test_conjunto_com_professor(orq):
     host2, _, path2 = PROJECT2.partition(":")
     name, name2 = path.rstrip("/").split("/")[-1], path2.rstrip("/").split("/")[-1]
     label, label2 = f"{name}@{host}", f"{name2}@{host2}"
-    cleanup(orq, (label, label2))
+    cleanup(orq)
     try:
         _run(orq, host, path, host2, path2, name, name2, label, label2)
     finally:
-        cleanup(orq, (label, label2))
+        cleanup(orq)
 
 
 def _run(orq, host, path, host2, path2, name, name2, label, label2):

@@ -1,5 +1,10 @@
 """Fixtures do QA: um orq-web real só do QA (ou ORQ_QA_URL), uma aba no Chromium por teste, captura de
-tela e console gravados em qa/out/ no fim de cada teste (com -FALHOU no nome quando falha)."""
+tela e console gravados em qa/out/ no fim de cada teste (com -FALHOU no nome quando falha).
+
+Os agentes reais sobem em pastas descartáveis (ORQ_QA_PROJECT, ORQ_QA_PROJECT2), sempre com nome orq-qa… ou
+orq-demo…: antes e depois de cada teste, `Orq.purge` desfaz os níveis, encerra os agentes daquela pasta e
+apaga a pasta, o estado em ~/.cache/orq e as conversas do claude, na máquina do agente. Nada fica para trás,
+nem quando o teste falha."""
 
 import os
 
@@ -39,17 +44,25 @@ def orq(orq_server, request):
                 print(f"\nvídeo: {v}")
 
 
+def qa_agent(orq, spec):
+    """Abre um agente real em `spec` (pasta descartável, limpa antes) e, no fim, fecha a aba pelo ✕ e limpa
+    tudo de novo, mesmo se o teste falhou."""
+    orq.purge(spec)
+    label = orq.open_project(spec)
+    try:
+        yield label
+    finally:
+        try:
+            orq.stop(label)  # ✕ na aba, como a pessoa faria
+        except Exception:
+            pass  # a limpeza abaixo encerra pela API
+        orq.purge(spec)
+
+
 @pytest.fixture
 def agent(orq):
-    """Agente real (claude de verdade) na pasta descartável do QA; encerrado no fim do teste."""
-    host, _, path = PROJECT.partition(":")
-    orq.ensure_stopped(f"{path.rstrip('/').split('/')[-1]}@{host}")
-    label = orq.open_project(PROJECT)
-    yield label
-    try:
-        orq.stop(label)
-    except Exception:
-        orq.ensure_stopped(label)
+    """Agente real (claude de verdade) na pasta descartável do QA; fechado e apagado no fim do teste."""
+    yield from qa_agent(orq, PROJECT)
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
@@ -62,12 +75,6 @@ def pytest_runtest_makereport(item, call):
 @pytest.fixture
 def agent2(orq, agent):
     """Um segundo agente real, noutra pasta descartável, para os vínculos; a aba volta ao primeiro."""
-    host, _, path = PROJECT2.partition(":")
-    orq.ensure_stopped(f"{path.rstrip('/').split('/')[-1]}@{host}")
-    label = orq.open_project(PROJECT2)
-    orq.show(agent)
-    yield label
-    try:
-        orq.stop(label)
-    except Exception:
-        orq.ensure_stopped(label)
+    for label in qa_agent(orq, PROJECT2):
+        orq.show(agent)
+        yield label

@@ -13,8 +13,8 @@ filtro em qa/demo_legenda.ffmpeg); sem ele, num quadro dentro da página.
 Uso (no server0, num display virtual, gravando com ffmpeg):
   DISPLAY=:77 ORQ_QA_HEADED=1 ORQ_LOCAL_HOST=server0 ORQ_EXTRA_HOSTS=laptop \\
     DEMO_FFMPEG_PID=<pid> DEMO_CAP_DIR=<dir> .venv/bin/python qa/demo_conjuntos.py
-Com DEMO_FFMPEG_PID, a gravação é encerrada (SIGINT) antes da limpeza. Pastas da demo, descartáveis:
-server0:~/Projects/orq-demo-prog e ~/Projects/orq-demo-docs.
+Com DEMO_FFMPEG_PID, a gravação é encerrada (SIGINT) antes da limpeza. Pastas da demo, descartáveis e
+apagadas antes e depois (com o estado e as conversas): server0:~/Projects/orq-demo-prog e orq-demo-docs.
 """
 
 import json
@@ -185,15 +185,13 @@ class Demo:
 
 
 def main() -> int:
-    for f in FILES:
-        if f.exists():
-            raise SystemExit(f"{f} já existe: a demo começa com pastas vazias")
     url, started = server_up()
     ff = int(os.environ.get("DEMO_FFMPEG_PID") or 0)
     try:
         with sync_playwright() as pw:
             o = Orq.launch(pw, headed=True, video=False)
             d = Demo(o)
+            cleanup(o)  # começa do zero: sem agentes, pastas nem conversas de uma demo anterior
             try:
                 run(d, o)
             finally:
@@ -342,13 +340,15 @@ def run(d: Demo, o: Orq) -> None:
 
 
 def cleanup(o: Orq) -> None:
-    print("limpando: desfaz o professor, encerra os agentes, apaga o conjunto")
-    o.api(f"/api/agent/{L_PROG}/downgrade", {})
-    for lab in (L_PROG, L_DOCS):
+    """Desfaz o professor, encerra os agentes, apaga as pastas da demo com o estado e as conversas delas
+    (Orq.purge) e apaga o conjunto."""
+    print("limpando: agentes, pastas e conjunto da demo")
+    for spec in (f"{HOST}:{PROG}", f"{HOST}:{DOCS}"):
         try:
-            o.ensure_stopped(lab)
-        except Exception as e:  # noqa: BLE001
-            print("  não consegui encerrar", lab, e)
+            gone = o.purge(spec)
+            print(f"  {spec}: limpa" + (f" (encerrei {', '.join(gone)})" if gone else ""))
+        except Exception as e:  # noqa: BLE001 - limpa o que der; o resto aparece no log
+            print("  não consegui limpar", spec, e)
     o.api(f"/api/conjuntos/{SID}/delete", {})
 
 

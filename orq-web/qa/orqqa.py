@@ -18,6 +18,8 @@ e ver o resultado em captura de tela, console e estado:
   python qa/orqqa.py unlink rótulo        desfaz o vínculo
   python qa/orqqa.py wires                fios entre os níveis e os níveis do painel
   python qa/orqqa.py undo                 ↓ desfazer: encerra os níveis de cima
+  python qa/orqqa.py purge maquina:/pasta  limpa uma pasta de QA: desfaz níveis, encerra os agentes dela e
+                                          apaga a pasta, o estado em ~/.cache/orq e as conversas do claude
   python qa/orqqa.py sets                 ⊞ conjuntos: lista os salvos (nome, agentes, já abertos)
   python qa/orqqa.py set ID               abre o conjunto ID pelo seletor e espera o servidor terminar
   python qa/orqqa.py quota ["texto"]       força "sem cota" na aba atual e espera a troca de conta
@@ -36,6 +38,7 @@ import atexit
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -103,6 +106,49 @@ def server_up(port: int = PORT, wait: float = 30) -> Tuple[str, bool]:
             raise RuntimeError(f"orq-web saiu com {p.returncode}; veja {OUT / f'orq-web-{port}.log'}")
         time.sleep(0.3)
     raise RuntimeError(f"orq-web não respondeu em {wait:.0f} s na porta {port}")
+
+
+# ---------------------------------------------------------------- limpeza das pastas de QA
+# Só pastas com este nome são apagadas: uma ORQ_QA_PROJECT apontando para um projeto de verdade nunca o perde.
+QA_NAME = re.compile(r"^orq-(qa|demo)[A-Za-z0-9_-]*$")
+
+
+def local_host_name() -> str:
+    """Nome desta máquina na página do QA (o orq-web do `server_up` herda o mesmo ORQ_LOCAL_HOST)."""
+    return os.environ.get("ORQ_LOCAL_HOST") or "laptop"
+
+
+def qa_name(path: str) -> str:
+    name = path.rstrip("/").split("/")[-1]
+    if not QA_NAME.match(name):
+        raise ValueError(f"{path!r} não é uma pasta de QA (orq-qa… ou orq-demo…): não apago")
+    return name
+
+
+def purge_command(path: str) -> str:
+    """Linha de shell que apaga, na máquina do agente, o que uma rodada deixa de uma pasta de QA:
+    a pasta, o estado dos supervisores dela (o agente, os níveis e os vínculos, em ~/.cache/orq/<nome>-*)
+    e as conversas que o claude grava por pasta em cada conta (~/.claude*/projects/<pasta saneada>)."""
+    name = qa_name(path)
+    p = path.rstrip("/")
+    folder = '"$HOME"/' + shlex.quote(p[2:]) if p.startswith("~/") else shlex.quote(p)
+    state = os.environ.get("ORQ_QA_STATE_DIR", "~/.cache/orq")
+    return (
+        f"P={folder}; K=$(printf %s \"$P\" | sed 's|[^A-Za-z0-9]|-|g'); "
+        f'rm -rf "$P" {state}/{name}-*; '
+        'for d in ~/.claude ~/.claude-*; do [ -d "$d/projects" ] && rm -rf "$d/projects/$K"; done; true'
+    )
+
+
+def run_on(host: str, command: str, timeout: float = 60) -> None:
+    """Roda `command` nesta máquina ou, por ssh, na outra (uma conexão só: ver ssh-sequencial-falha)."""
+    if host == local_host_name():
+        cmd = ["sh", "-c", command]
+    else:
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12", host, command]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if r.returncode:
+        raise RuntimeError(f"limpeza em {host} falhou: {(r.stderr or r.stdout).strip()[-200:]}")
 
 
 def server_down(port: int = PORT, wait: float = 10) -> bool:
@@ -494,6 +540,33 @@ class Orq:
             time.sleep(1)
         raise RuntimeError(f"{label} não encerrou em {timeout:.0f} s")
 
+    def purge(self, spec: str, timeout: float = 60) -> List[str]:
+        """Deixa uma pasta de QA (`maquina:/caminho`) como se nunca tivesse sido usada.
+
+        Desfaz os níveis e encerra todo agente vivo naquela pasta (o rótulo base, um `-2` de outra rodada e
+        os níveis de cima), espera cada um sumir e apaga a pasta, o estado e as conversas na máquina dele.
+        Serve antes de um teste (começar do zero) e depois (não deixar nada para trás). Devolve os rótulos
+        que encerrou."""
+        host, _, path = spec.partition(":")
+        name = qa_name(path)
+
+        # rótulos desta pasta: `orq-qa@h`, `orq-qa-2@h` (outra rodada) e os níveis `orq-qa~professor@h`
+        own = re.compile(rf"^{re.escape(name)}(-\d+)?(~[^@]+)?@{re.escape(host)}$")
+
+        def mine(a: dict) -> bool:
+            return bool(own.match(a.get("label") or ""))
+
+        live = [a for a in self.state().get("agents", []) if a.get("state") != "closed" and mine(a)]
+        for a in live:
+            if not a.get("parent"):
+                self.api(f"/api/agent/{quote(a['label'], safe='')}/downgrade", {})
+        stopped = [a["label"] for a in live]
+        for lab in sorted(stopped, key=lambda x: "~" not in x):  # níveis primeiro (o downgrade já os fechou)
+            self.ensure_stopped(lab, timeout)
+        self.ensure_stopped(f"{name}@{host}", timeout)  # sobra de um servidor que ainda não a listou
+        run_on(host, purge_command(path))
+        return stopped
+
     # ---- troca automática de conta
     def account_of(self, label: str) -> Optional[str]:
         return next((a.get("account") for a in self.agents() if a.get("label") == label), None)
@@ -785,6 +858,10 @@ def main(argv: List[str]) -> int:
                 print(f"feitos: {', '.join(j['feitos']) or 'nenhum'}; professor: {j.get('top') or '-'}")
                 for k, v in j["erros"].items():
                     print(f"  problema {k}: {v}")
+            elif cmd == "purge":
+                for spec in args:
+                    gone = o.purge(spec)
+                    print(f"{spec}: limpa" + (f" (encerrei {', '.join(gone)})" if gone else ""))
             elif cmd == "undo":
                 o.downgrade()
                 print("níveis encerrados ·", o.cstate())

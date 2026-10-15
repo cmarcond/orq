@@ -18,9 +18,7 @@ TASK = (
 
 
 def test_professor_delega_hello_world(orq, agent):
-    folder = Path(os.path.expanduser(PROJECT.partition(":")[2]))
-    for f in ("hello.py", "test_hello.py"):
-        (folder / f).unlink(missing_ok=True)
+    folder = Path(os.path.expanduser(PROJECT.partition(":")[2]))  # a fixture a recriou vazia
 
     levels = orq.upgrade("professor-executor")
     assert levels == ["professor", "executor"], levels

@@ -142,6 +142,11 @@ cd orq-web && make test && make lint   # venv em .venv (uv, Python 3.12); node 2
   com `Orq.wait_fn`, que avalia pelo CDP a cada 300 ms; os testes de QA usam só ela. Para rodar o QA aqui:
   `ORQ_LOCAL_HOST=server0 ORQ_EXTRA_HOSTS=laptop ORQ_QA_PROJECT=server0:~/Projects/orq-qa
   ORQ_QA_PROJECT2=server0:~/Projects/orq-qa2 .venv/bin/python -m pytest qa/tests/test_conjuntos.py`.
+- O QA não deixa nada para trás: antes e depois de cada teste, `Orq.purge` (em `qa/orqqa.py`) desfaz os
+  níveis, encerra os agentes da pasta de teste (as abas fecham) e apaga, na máquina do agente, a pasta, o
+  estado dos supervisores em `~/.cache/orq/<nome>-*` e as conversas do claude em `~/.claude*/projects/`. Só
+  aceita pastas com nome `orq-qa…` ou `orq-demo…`, para uma `ORQ_QA_PROJECT` errada nunca apagar um projeto
+  de verdade. À mão: `.venv/bin/python qa/orqqa.py purge server0:~/Projects/orq-qa`.
 - A memória do Claude Code deste projeto foi copiada para cada conta do server0
   (`~/.claude*/projects/-home-user-Projects-claude-orq/memory/`). O clone do laptop ficou, mas não é mais usado.
 - Alternativa sem terminal: abrir `server0:~/Projects/claude-orq` pelo **+** na própria página e desenvolver
