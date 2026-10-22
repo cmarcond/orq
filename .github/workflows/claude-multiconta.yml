@@ -12,8 +12,10 @@ defaults:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # 24.04 fixo: a imagem ubuntu-latest (26.04) não tem Python 3.8 no setup-python
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         python: ["3.8", "3.12"]
     steps:
