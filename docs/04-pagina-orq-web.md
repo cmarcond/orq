@@ -14,6 +14,21 @@ deles, o cartão **TOTAL · semana**: a barra média da frota, "quando zera" ou 
 `% livre`. A cota é lida a cada 150 s (a API reclama de consultas frequentes) e só enquanto a página
 está aberta. O 🔔 pede permissão de notificação (ver 4.9).
 
+Com o histórico de uso no ar (o `usage-hist` do claude-multiconta, coletor a cada 5 min), a cota vem do banco
+dele e os cartões ganham mais duas linhas, lidas a cada 60 s (`usage-hist painel --json`, no `/api/state` como
+`history`):
+
+- **barras das últimas 24 h**: uma por hora, na cor da conta, com a mesma escala em todos os cartões; passar o
+  mouse numa barra mostra a hora e os pontos gastos nela (1 ponto = 1% da cota semanal da conta);
+- **resumo**: `hoje +N` (pontos da semana desde a meia-noite), o ritmo em pontos por hora nas últimas 6 h e
+  `100% em …` (quando a conta acaba nesse ritmo); em vermelho, com ⚠, se isso vem antes do reset. `*` marca o
+  que ainda é calculado desde o início da coleta.
+
+O cartão TOTAL mostra os pontos gastos pela frota em 24 h e avisa se a coleta parou há mais de 15 min. Os
+**alertas** do coletor (subida por script, subida sem consumo nas máquinas, cota que acaba antes do reset,
+coletor parado) aparecem como toast, cada um uma vez a cada 6 h. Sem o `usage-hist`, a página continua só com
+a cota.
+
 ## 4.2 Abas: uma linha por máquina
 
 Cada máquina tem uma linha com as abas dos agentes dela e um **+** para abrir um projeto ali. A aba

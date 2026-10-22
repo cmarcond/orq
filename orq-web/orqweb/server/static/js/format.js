@@ -67,3 +67,52 @@ export function fileKind(name) {
   const row = KINDS.find(([exts]) => exts.includes(ext));
   return row ? { icon: row[1], view: row[2], md: Boolean(row[3]) } : { icon: '📄', view: null, md: false };
 }
+
+// ---------------------------------------------------------------- histórico de uso (usage-hist painel --json)
+const pts = (x, d = 1) => (x == null ? '—' : x.toFixed(d).replace('.', ','));
+
+/** Duração curta em horas: 45min, 3h20, 2d4h. */
+export function hours(h) {
+  if (h == null) return '';
+  return left(Math.round(h * 3600));
+}
+
+/** Barras das últimas 24 h (uma por hora, pontos da semana), em SVG, com o valor de cada hora no tooltip.
+ *  `top` é a escala comum entre as contas; `t24` é o início da série (ISO), para rotular as horas. */
+export function sparkSvg(values, top, t24) {
+  const n = values.length || 1;
+  const max = top > 0 ? top : Math.max(0, ...values);
+  const w = 4;
+  const gap = 1;
+  const h = 16;
+  const start = t24 ? new Date(t24) : null;
+  const bars = values
+    .map((v, i) => {
+      const bh = max > 0 && v > 0.05 ? Math.max(2, Math.round((v / max) * h)) : 1;
+      const hour = start ? new Date(start.getTime() + i * 3600e3).getHours() : i;
+      const cls = v > 0.05 ? 'on' : 'off';
+      return `<rect class="${cls}" x="${i * (w + gap)}" y="${h - bh}" width="${w}" height="${bh}"><title>${hour}h: ${pts(v)} pts</title></rect>`;
+    })
+    .join('');
+  return `<svg class="spark" viewBox="0 0 ${n * (w + gap) - gap} ${h}" preserveAspectRatio="none" role="img" aria-label="consumo por hora nas últimas 24 h">${bars}</svg>`;
+}
+
+/** Linha curta de uma conta: hoje, ritmo e previsão. `warn` quando a semana acaba antes do reset. */
+export function histSummary(a) {
+  if (!a) return { text: '', warn: false };
+  const star = (p) => (p ? '*' : '');
+  const parts = [];
+  if (a.today_7d != null) parts.push(`hoje +${pts(a.today_7d)}${star(a.today_partial)}`);
+  if (a.rate_6h != null) parts.push(`${pts(a.rate_6h, 2)}/h${star(a.rate_partial)}`);
+  if (a.hours_to_100 != null) parts.push(a.before_reset ? `⚠ 100% em ${hours(a.hours_to_100)}` : `100% em ${hours(a.hours_to_100)}`);
+  return { text: parts.join(' · '), warn: Boolean(a.before_reset) };
+}
+
+/** Alertas novos (os com ⚠) que ainda não foram mostrados nas últimas `ttl` horas. `seen` é {texto: ms}. */
+export function freshAlerts(alerts, seen, now = Date.now(), ttl = 6) {
+  const keep = {};
+  for (const [k, t] of Object.entries(seen || {})) if (now - t < ttl * 3600e3) keep[k] = t;
+  const fresh = (alerts || []).filter((a) => a.startsWith('⚠') && !(a in keep));
+  for (const a of fresh) keep[a] = now;
+  return { fresh, seen: keep };
+}

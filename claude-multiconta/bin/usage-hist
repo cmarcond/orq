@@ -577,7 +577,8 @@ def painel(conn, now: dt.datetime, labels: Dict[str, str], only: Optional[List[s
             prev,
             spark(curves[a], top),
         ]])
-        data[a] = {"5h": w5, "7d": w7, "today_7d": today, "rate_6h": r6, "hours_to_100": h, "before_reset": before, "last_24h": curves[a]}
+        data[a] = {"5h": w5, "7d": w7, "today_7d": today, "today_partial": today_partial, "rate_6h": r6, "rate_partial": r_partial,
+                   "hours_to_100": h, "before_reset": before, "last_24h": curves[a]}
     head = "uso das contas · pontos da semana (1 pt = 1% da cota semanal de uma conta)"
     lines = [head, ""] + table(["conta", "5h agora", "7d agora", "hoje", "ritmo 6 h", "previsão 7d", "últimas 24 h, por hora"], rows, right=(3, 4))
     burn24 = used24 / 24
@@ -590,7 +591,9 @@ def painel(conn, now: dt.datetime, labels: Dict[str, str], only: Optional[List[s
     al = alerts(conn, now, labels)
     lines += al
     lines.append(source_line(conn, now))
-    return "\n".join(lines), {"accounts": data, "free": free, "used_24h": used24, "alerts": al}
+    last = last_collect(conn)
+    return "\n".join(lines), {"accounts": data, "free": free, "used_24h": used24, "alerts": al, "collected": iso(last) if last else None,
+                              "t24": iso(t24), "partial_since": iso(partial_since) if partial_since else None}
 
 
 def source_line(conn, now: dt.datetime) -> str:

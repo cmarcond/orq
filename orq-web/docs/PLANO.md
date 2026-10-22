@@ -413,11 +413,20 @@ Todos com `--json`. No laptop, sem banco local, os comandos rodam no node4 por s
 `usage-hist` nos dois lugares (`~/.local/bin`), `usage-all` e `usage-sessoes` novos; `usage_db_host: "node4"` no
 accounts.json (repositório e laptop); `usage-hist instalar` no node4 com a primeira coleta de 7 dias.
 
-### 6.8 Depois (não nesta rodada)
+### 6.8 A página do orq lendo o banco  ✅ feita em 2026-10-22
 
-Página do orq lendo o banco direto (gráfico de 24 h por conta, alertas como toast); a troca automática de conta
-usando a previsão para trocar *antes* de acabar; aviso por notificação (ntfy/e-mail) dos alertas; relatório
-semanal automático.
+O servidor roda `usage-hist painel --json` a cada 60 s com a página aberta (na máquina da cota, por ssh no
+container; `External.history`, `StateCache.refresh_history`) e manda o resultado no `/api/state` como `history`.
+Os cartões de conta ganham as barras das últimas 24 h (SVG, uma por hora, escala comum, tooltip por hora) e o
+resumo hoje · ritmo · previsão (vermelho com ⚠ quando acaba antes do reset); o TOTAL, os pontos de 24 h e o
+aviso de coleta parada; os alertas ⚠ viram toast, um a um a cada 6 h (lembrados no navegador). Funções puras em
+`format.js` (`sparkSvg`, `histSummary`, `freshAlerts`) com testes no Node. De quebra, no celular o botão de
+conjuntos deixou de cobrir o título do TOTAL.
+
+### 6.9 Depois (não nesta rodada)
+
+A troca automática de conta usando a previsão para trocar *antes* de acabar; aviso por notificação
+(ntfy/e-mail) dos alertas; relatório semanal automático; um gráfico maior por conta ao clicar no cartão.
 
 ---
 

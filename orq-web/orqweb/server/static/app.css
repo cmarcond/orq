@@ -22,6 +22,9 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .meter{position:relative;height:7px;background:var(--bar);border-radius:4px}
 .meter i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok)}
 .meter b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.8}
+.hrow{margin-top:5px;height:16px}.spark{display:block;width:100%;height:16px}
+.spark rect.on{fill:var(--acc,var(--ink));opacity:.8}.spark rect.off{fill:var(--mute);opacity:.35}.spark rect:hover{opacity:1}
+.hsum{font-size:10.5px;color:var(--mute);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hsum.bad{color:var(--bad);font-weight:600}
 .over i{background:var(--warn)}.far i{background:var(--bad)}.pct{text-align:right;color:var(--ink)}
 /* abas */
 .tabs{display:flex;flex-direction:column;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line);background:var(--bg)}

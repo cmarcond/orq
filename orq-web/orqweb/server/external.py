@@ -28,6 +28,9 @@ def usage_remote_cmd() -> str:
     return 'tmux run-shell "$HOME/.local/bin/usage-all --json" 2>/dev/null || ~/.local/bin/usage-all --json'
 
 
+HISTORY_REMOTE = "~/.local/bin/usage-hist painel --json"  # histórico de uso (claude-multiconta, fase 6)
+
+
 def ssh_cmd(host: str, remote: str, connect_timeout: int = 5, config: Optional[str] = None) -> List[str]:
     """ssh sem interação; `config` (ORQ_SSH_CONFIG) é um ssh_config próprio, usado no container."""
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}"]
@@ -96,6 +99,19 @@ class External:
             return json.loads(r.stdout)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return {}
+
+    def history(self, host: Optional[str] = None) -> Dict[str, Any]:
+        """`usage-hist painel --json`: por conta, hoje, ritmo, previsão e as 24 h por hora; alertas; idade da
+        coleta. {} se não houver usage-hist ou banco (a página segue só com a cota)."""
+        try:
+            if host is None or host == self.local:
+                r = self.run([str(self.bin / "usage-hist"), "painel", "--json"], 30)
+            else:
+                r = self.run(self.ssh(host, HISTORY_REMOTE), 45)
+            data = json.loads(r.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return {}
+        return data if isinstance(data, dict) and isinstance(data.get("accounts"), dict) else {}
 
     # ---- por máquina
     def _local_or_ssh(self, host: str, local: List[str], remote: str, timeout: float):

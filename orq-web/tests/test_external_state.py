@@ -461,3 +461,37 @@ def test_spawn_passes_permission_and_set():
     )
     assert "--permission-mode auto" in r.calls[-1][-1] and "--set artigo" in r.calls[-1][-1]
     assert "--pipeline x-y" in r.calls[-1][-1]
+
+
+def test_history_local_remote_and_failure():
+    body = json.dumps({"accounts": {"gmail": {"today_7d": 2.0}}, "alerts": []})
+    r = FakeRunner({"usage-hist": (0, body)})
+    ext = External(Path("/b"), r)
+    assert ext.history()["accounts"]["gmail"]["today_7d"] == 2.0
+    assert r.calls[-1] == ["/b/usage-hist", "painel", "--json"]
+    assert ext.history("node4")["accounts"] and r.calls[-1][0] == "ssh"
+    assert r.calls[-1][-1] == "~/.local/bin/usage-hist painel --json"
+    assert External(Path("/b"), FakeRunner({})).history() == {}  # sem usage-hist
+    assert External(Path("/b"), FakeRunner({"usage-hist": (0, "null")})).history() == {}  # sem coleta recente
+    assert External(Path("/b"), FakeRunner({"usage-hist": (0, "[1]")})).history() == {}
+
+
+def test_history_refreshes_only_with_the_page_open_and_goes_in_the_snapshot():
+    now = [1000.0]
+
+    class Ext:
+        calls = []
+
+        def history(self, host=None):
+            self.calls.append(host)
+            return {"accounts": {"gmail": {}}, "alerts": ["⚠ x"]}
+
+    conf = type("C", (), {"hosts": [], "accounts": {}, "labels": {}, "colors": {}})()
+    ext = Ext()
+    cache = S.StateCache(conf, ext, clock=lambda: now[0], usage_host="node4")
+    cache.refresh_history()
+    assert ext.calls == ["node4"] and cache.snapshot()["history"]["alerts"] == ["⚠ x"]
+    # sem history no External (servidor antigo, testes): fica vazio, sem quebrar
+    bare = S.StateCache(conf, object(), clock=lambda: now[0])
+    bare.refresh_history()
+    assert bare.snapshot()["history"] == {}

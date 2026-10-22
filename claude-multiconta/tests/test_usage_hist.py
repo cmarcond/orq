@@ -247,6 +247,8 @@ def test_painel(conn):
     assert any(line.startswith("frota: ") for line in lines)
     assert lines[-1] == "fonte: banco · última coleta há 2 min · sem resposta: node1"
     assert data["accounts"]["work3"]["rate_6h"] == pytest.approx(3.0, rel=0.05)
+    assert data["collected"] == H.iso(at(2)) and data["t24"] == H.iso(NOW - dt.timedelta(hours=24))
+    assert data["accounts"]["work3"]["rate_partial"] is False and len(data["accounts"]["work3"]["last_24h"]) == 24
 
 
 def test_painel_marks_partial_data(conn):

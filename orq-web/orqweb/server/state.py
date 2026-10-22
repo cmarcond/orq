@@ -1,7 +1,8 @@
 """Cache do que a página mostra: cota, agentes de todas as máquinas e projetos recentes.
 
-A cota é consultada a cada USAGE_EVERY s (a API reclama se for frequente); os agentes a cada
-AGENTS_EVERY s, e só enquanto a página está aberta (`touch()` marca que alguém pediu).
+A cota é consultada a cada USAGE_EVERY s (a API reclama se for frequente); o histórico de uso (banco
+do usage-hist: hoje, ritmo, previsão, 24 h, alertas) a cada HISTORY_EVERY s e os agentes a cada
+AGENTS_EVERY s, esses dois só enquanto a página está aberta (`touch()` marca que alguém pediu).
 """
 
 import threading
@@ -12,6 +13,7 @@ from ..config import Config
 from .external import External
 
 USAGE_EVERY = 150
+HISTORY_EVERY = 60  # o coletor grava a cada 5 min; ler o banco é barato (~0,2 s)
 AGENTS_EVERY = 15
 PROJECTS_TTL = 60
 OPEN_WINDOW = 60  # s desde o último pedido para considerar a página aberta
@@ -26,6 +28,8 @@ class StateCache:
         self.lock = threading.Lock()
         self.usage: Dict[str, Any] = {}
         self.usage_ts = 0.0
+        self.history: Dict[str, Any] = {}  # usage-hist painel --json; {} sem banco
+        self.history_ts = 0.0
         self.agents: List[dict] = []
         self.links: List[dict] = []  # vínculos entre agentes (orq-agent links), de todas as máquinas
         self.agents_ts = 0.0
@@ -44,6 +48,12 @@ class StateCache:
 
     def page_open(self) -> bool:
         return self.clock() - self.seen < OPEN_WINDOW
+
+    def refresh_history(self) -> None:
+        fn = getattr(self.ext, "history", None)
+        h = fn(self.usage_host) if fn else {}
+        with self.lock:
+            self.history, self.history_ts = h, self.clock()
 
     def refresh_usage(self) -> None:
         u = self.ext.usage(self.usage_host)
@@ -99,6 +109,7 @@ class StateCache:
             return {
                 "usage": self.usage,
                 "usage_ts": self.usage_ts,
+                "history": self.history,
                 "agents": list(self.agents),
                 "links": list(self.links),
                 "agents_ts": self.agents_ts,
@@ -158,6 +169,12 @@ class StateCache:
             self.refresh_usage()
             self._stop.wait(USAGE_EVERY)
 
+    def _history_loop(self) -> None:
+        while not self._stop.is_set():
+            if self.page_open():
+                self.refresh_history()
+            self._stop.wait(HISTORY_EVERY)
+
     def _agents_loop(self) -> None:
         while not self._stop.is_set():
             if self.page_open():
@@ -166,6 +183,7 @@ class StateCache:
 
     def start_background(self) -> None:
         threading.Thread(target=self._usage_loop, daemon=True).start()
+        threading.Thread(target=self._history_loop, daemon=True).start()
         threading.Thread(target=self._agents_loop, daemon=True).start()
 
     def stop(self) -> None:

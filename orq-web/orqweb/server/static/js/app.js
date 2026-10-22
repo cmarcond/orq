@@ -1,5 +1,5 @@
 // Estado da página, API e DOM. A lógica pura está em format.js, classify.js e events.js.
-import { esc, left, ago, md, withAttachments, fmtBytes, fileKind } from './format.js';
+import { esc, left, ago, md, withAttachments, fmtBytes, fileKind, sparkSvg, histSummary, freshAlerts } from './format.js';
 import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
 
@@ -123,7 +123,43 @@ function meter(u, k) {
     <i style="width:${Math.min(100, p)}%"></i><b style="left:${Math.min(99, m)}%"></b></div>
     <span class="pct">${Math.round(p)}%</span><span>${left(u[k + '_left'])}</span></div>`;
 }
-function totalCard(t) {
+// ---------------------------------------------------------------- histórico de uso (banco do usage-hist)
+// O servidor manda `history` no /api/state (usage-hist painel --json): por conta, hoje, ritmo, previsão e as
+// 24 h por hora; alertas; quando foi a coleta. Sem banco, vem {} e os cartões ficam só com a cota.
+function histBlock(h, name, top) {
+  const a = h && h.accounts && h.accounts[name];
+  if (!a) return '';
+  const s = histSummary(a);
+  return `<div class="hrow" title="pontos da semana gastos por hora nas últimas 24 h (passe o mouse numa barra)">${sparkSvg(a.last_24h || [], top, h.t24)}</div>
+    <div class="hsum ${s.warn ? 'bad' : ''}" title="hoje: pontos da semana gastos desde a meia-noite · ritmo: pontos por hora nas últimas 6 h · previsão: quando chega a 100% nesse ritmo (⚠ = antes do reset) · * = desde o início da coleta">${esc(s.text)}</div>`;
+}
+function histTotal(h) {
+  if (!h || !h.accounts) return '';
+  const age = h.collected ? (Date.now() - new Date(h.collected).getTime()) / 60e3 : null;
+  const stale = age != null && age > 15 ? ` · <span class="bad">coleta parada há ${left(Math.round(age * 60))}</span>` : '';
+  const used = h.used_24h != null ? `24 h: ${h.used_24h.toFixed(1).replace('.', ',')} pts gastos` : '';
+  return `<div class="small mute hsum" title="histórico do usage-hist (coletor a cada 5 min)">${used}${stale}</div>`;
+}
+let ALERTS_SEEN = null; // texto -> quando foi mostrado (ms), para não repetir o mesmo alerta a cada 5 s
+function showAlerts(h) {
+  if (!h || !Array.isArray(h.alerts)) return;
+  if (ALERTS_SEEN === null) {
+    try {
+      ALERTS_SEEN = JSON.parse(localStorage.getItem('orq.alertas') || '{}');
+    } catch (_) {
+      ALERTS_SEEN = {};
+    }
+  }
+  const r = freshAlerts(h.alerts, ALERTS_SEEN);
+  ALERTS_SEEN = r.seen;
+  try {
+    localStorage.setItem('orq.alertas', JSON.stringify(r.seen));
+  } catch (_) {
+    /* sem armazenamento: o alerta volta a aparecer ao recarregar */
+  }
+  if (r.fresh.length) toast(r.fresh.slice(0, 2).join('  ·  ') + (r.fresh.length > 2 ? `  (+${r.fresh.length - 2})` : ''));
+}
+function totalCard(t, h) {
   // consolidado da semana da frota (`_total` do usage-all), no formato das contas: barra do usado médio com
   // o ritmo médio; à direita, quando zera (∞ = com os resets, não zera nesta semana); queima 1,0× = no ritmo
   if (!t) return '';
@@ -134,18 +170,20 @@ function totalCard(t) {
   return `<div class="ucard total" title="semana da frota: barra = usado médio, ┃ = ritmo médio; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo das janelas"><div class="name"><span>TOTAL · semana</span><span class="burn ${bcls}">queima ${burn.toFixed(1).replace('.', ',')}×</span></div>
     <div class="urow"><span>7d</span><div class="meter ${d >= 15 ? 'far' : d > 0 ? 'over' : ''}"><i style="width:${Math.min(100, t['7d'])}%"></i><b style="left:${Math.min(99, t['7d_pace'])}%"></b></div>
     <span class="pct">${Math.round(t['7d'])}%</span><span>${runs}</span></div>
-    <div class="small mute">${Math.round(t['7d_free'])}% livre na média das ${t.accounts} contas</div></div>`;
+    <div class="small mute">${Math.round(t['7d_free'])}% livre na média das ${t.accounts} contas</div>${histTotal(h)}</div>`;
 }
-function renderUsage(us) {
+function renderUsage(us, hist) {
+  const h = hist && hist.accounts ? hist : null;
+  const top = h ? Math.max(0, ...Object.values(h.accounts).flatMap((a) => a.last_24h || [])) : 0;
   $('usage').innerHTML =
     `<span class="tools"><button id="sets" class="ghost" title="conjuntos: abrir vários agentes de uma vez (cada um com prompt próprio, com ou sem professor), salvar as abas abertas como conjunto ou enviar um JSON pronto">⊞ conjuntos</button><button id="bell" class="ghost" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button></span>` +
-    totalCard(us._total) +
+    totalCard(us._total, h) +
     Object.entries(us)
     .filter(([n]) => !n.startsWith('_'))
     .map(
       ([n, u]) => `<div class="ucard" style="--acc:${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
-      }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}</div>`,
+      }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}${histBlock(h, n, top)}</div>`,
     )
     .join('');
   $('bell').onclick = askNotify;
@@ -1392,7 +1430,8 @@ async function refresh() {
     if (s.err) return;
     LAB = s.labels;
     COL = s.colors || {};
-    renderUsage(s.usage);
+    renderUsage(s.usage, s.history);
+    showAlerts(s.history);
     agents = s.agents;
     links = s.links || [];
     for (const a of agents) {
