@@ -32,7 +32,7 @@
   "timezone": "America/Sao_Paulo",
   "tip_on_login": true,
   "orq_hosts": [
-    "server0",
+    "node4",
     "node0",
     "node1",
     "node2",
