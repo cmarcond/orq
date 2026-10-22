@@ -11,6 +11,7 @@
 | `claude-usage-<conta>` | `usage-all <conta>` |
 | `claude-whoami` | e-mail e plano de cada diretório; qual é o `claude` puro |
 | `usage-all [-v] [--json] [conta…]` | cota de todas as contas + TOTAL; `--json` para scripts |
+| `usage-sessoes [-v] [--horas N] [--conta C] [--maquinas a,b] [--json] [--tudo]` | quem gasta cada conta em todas as máquinas, com a cota ao lado: resumido por pasta e tipo; `-v` cada sessão e processo |
 | `codex-usage [-v]` | cota do Codex |
 | `claude-last [-a] [pasta]`, `--pick [N]`, `--as CONTA`, `--projects` | conversas por conta; cópia entre contas; lista de projetos da máquina |
 | `claude-resume [N]`, `claude-resume --as CONTA [N]` | retoma na conta certa, ou noutra |

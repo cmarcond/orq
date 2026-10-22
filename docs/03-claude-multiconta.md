@@ -94,6 +94,61 @@ Work      3% ░░░┃░░░░░░ 03h13   19% ██░┃░░░░
 O Codex tem comando próprio, `codex-usage` (`bin/codex-usage-fast`), com os mesmos modos; não entra
 no `usage-all`.
 
+### `usage-sessoes`: quem está gastando cada conta
+
+O `usage-all` diz quanto cada conta gastou; a API de cota não diz quem gastou (só porcentagens por conta e
+janela). O `usage-sessoes` responde a isso olhando as máquinas: em cada uma (o laptop e as `orq_hosts`, em
+paralelo, uma conexão ssh por máquina, com o próprio script indo pelo stdin) ele lê
+
+- os **processos do claude vivos**: a conta (pelo `CLAUDE_CONFIG_DIR` do processo), a pasta, o tipo
+  (`interativo`, `orq` para os agentes da página, `script` para um `claude -p` lançado por um programa,
+  `daemon` para o `claude daemon` e as reservas dele), a sessão tmux, quem lançou e há quanto tempo vive;
+- o **consumo de cada sessão** nas últimas 5 horas (`--horas N`), das conversas que o Claude Code grava em
+  `~/.claude*/projects/`: respostas, tokens de saída, cache novo e lido, modelos e, para sessões sem
+  terminal, o começo da primeira mensagem (é o que identifica um script). Subagentes somam na sessão-mãe.
+
+O padrão é o **resumido**: uma tabela com um bloco por conta. A primeira linha do bloco traz a cota do
+`usage-all` (5h · 7d); cada linha é uma máquina, pasta e tipo (`interativo`, `orq`, `script`), com as execuções
+de um mesmo script juntas (`n`), o horário, a parte no consumo da conta com uma barra, e `●` se houve resposta
+nos últimos 10 min. Processos vivos sem uso há mais de 1 hora (os esquecidos) entram como linhas `parado`.
+Daemon e auxiliares não aparecem.
+
+```
+últimas 5 h · sem resposta: node1, node2
+
+┌───────────┬─────────────┬─────────┬──────────────────────┬────────────┬────┬─────────────┬───────────────┬───┐
+│ conta     │ 5h · 7d     │ máquina │ pasta                │ tipo       │  n │ horário     │ parte         │ ● │
+├───────────┼─────────────┼─────────┼──────────────────────┼────────────┼────┼─────────────┼───────────────┼───┤
+│ Work 3 │  26% ·  19% │ laptop  │ claude-diario        │ script     │ 2× │ 18:26–18:40 │ ████████ 100% │   │
+│           │             │ node4 │ cluster │ parado     │    │ há 1 d 2 h  │               │   │
+├───────────┼─────────────┼─────────┼──────────────────────┼────────────┼────┼─────────────┼───────────────┼───┤
+│ Gmail     │  13% ·  13% │ node4 │ kubernetes_2026      │ interativo │    │ 17:51–18:17 │ ███░░░░░  41% │   │
+│           │             │ node4 │ claude-multiconta    │ interativo │    │ 18:37–22:50 │ ███░░░░░  37% │ ● │
+├───────────┼─────────────┼─────────┼──────────────────────┼────────────┼────┼─────────────┼───────────────┼───┤
+│ Work   │   0% ·  40% │         │ sem consumo          │            │    │             │               │   │
+└───────────┴─────────────┴─────────┴──────────────────────┴────────────┴────┴─────────────┴───────────────┴───┘
+parte: fatia de cada linha no consumo da conta na janela · ●: respondeu nos últimos 10 min · -v: detalhe
+```
+
+O **completo** (`-v`) mostra cada sessão: id, respostas, tokens de saída, estado (`● trabalhando`, `○ aberta`,
+`encerrada`), o processo ligado a ela (pelo `--resume` ou pela pasta da conversa) com tmux e quem lançou, o
+começo do prompt das sessões sem terminal, e todos os processos vivos sem consumo.
+
+```
+usage-sessoes                     # resumido, todas as máquinas, últimas 5 h
+usage-sessoes -v --conta work3 # cada sessão e processo dessa conta
+usage-sessoes --horas 24 --json   # um dia inteiro, para scripts
+```
+
+A coluna `parte` é a fatia de cada sessão no **peso** da conta: tokens ponderados pela proporção de preço
+da Anthropic (entrada 1, cache novo 1,25, cache lido 0,1, saída 5). É uma estimativa relativa, não a
+porcentagem exata da cota, que a Anthropic não detalha. Uso pelo claude.ai (navegador, celular) não grava
+nada nas máquinas e não aparece; máquina fora do ar aparece em "sem resposta".
+
+Caso real que motivou o script (2026-10-21): a Work 3 subiu 20% em minutos sem nenhuma sessão aberta
+nela. O `usage-sessoes` mostrou nove sessões `sdk/-p` no laptop, todas de um projeto que chamava o
+`claude -p` com `CLAUDE_CONTA` fixa na Work 3, lançadas por uma sessão interativa em outra conta.
+
 ## 3.5 `claude-last` e `claude-resume`: a conversa certa
 
 Cada conta guarda as conversas em `<config_dir>/projects/<pasta codificada>/<id>.jsonl`. O `--resume`

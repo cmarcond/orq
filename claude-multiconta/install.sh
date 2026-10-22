@@ -58,7 +58,7 @@ if [ "${1:-}" = "--uninstall" ]; then
   for f in $(rc_files); do
     grep -v "$MARK" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   done
-  rm -f "$BIN/codex-usage-fast" "$BIN/usage-all" "$BIN/claude-last" "$BIN/orq" "$BIN/orq-run" "$BIN/orq-hook" "$BIN/claude-login-url" "$BIN/claude-whoami"
+  rm -f "$BIN/codex-usage-fast" "$BIN/usage-all" "$BIN/claude-last" "$BIN/orq" "$BIN/orq-run" "$BIN/orq-hook" "$BIN/claude-login-url" "$BIN/claude-whoami" "$BIN/usage-sessoes"
   rm -rf "$CONF_DIR"
   echo "removido. As contas em ~/.claude* e ~/.codex ficaram intactas."
   exit 0
@@ -70,8 +70,8 @@ if [ "${1:-}" != "--no-install" ]; then
   ensure_claude || echo "aviso: claude não instalado; instale à mão e rode ./install.sh de novo"
   ensure_codex  || echo "aviso: codex não instalado; instale à mão e rode ./install.sh de novo"
 fi
-cp "$HERE"/bin/codex-usage-fast "$HERE"/bin/usage-all "$HERE"/bin/claude-last "$HERE"/bin/orq "$HERE"/bin/orq-run "$HERE"/bin/orq-hook "$HERE"/bin/claude-login-url "$HERE"/bin/claude-whoami "$BIN/"
-chmod +x "$BIN"/codex-usage-fast "$BIN"/usage-all "$BIN"/claude-last "$BIN"/orq "$BIN"/orq-run "$BIN"/orq-hook "$BIN"/claude-login-url "$BIN"/claude-whoami
+cp "$HERE"/bin/codex-usage-fast "$HERE"/bin/usage-all "$HERE"/bin/claude-last "$HERE"/bin/orq "$HERE"/bin/orq-run "$HERE"/bin/orq-hook "$HERE"/bin/claude-login-url "$HERE"/bin/claude-whoami "$HERE"/bin/usage-sessoes "$BIN/"
+chmod +x "$BIN"/codex-usage-fast "$BIN"/usage-all "$BIN"/claude-last "$BIN"/orq "$BIN"/orq-run "$BIN"/orq-hook "$BIN"/claude-login-url "$BIN"/claude-whoami "$BIN"/usage-sessoes
 cp "$HERE/accounts.json" "$CONF_DIR/accounts.json"
 
 # gera aliases.sh a partir de accounts.json (funciona em bash e zsh)
