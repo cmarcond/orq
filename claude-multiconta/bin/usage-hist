@@ -1,0 +1,898 @@
+#!/usr/bin/env python3
+"""usage-hist: histórico de uso das contas do Claude Code, coletado a cada 5 min num banco SQLite.
+
+Uso: usage-hist [painel | dia [AAAA-MM-DD] | semana | calibrar | alertas | estado] [--conta C] [--json]
+     usage-hist coletar [--desde-horas N]      uma coleta agora (o timer faz isso a cada 5 min)
+     usage-hist instalar | remover             timer do systemd de usuário (usage-coletor.timer)
+
+A API de cota só diz a % de agora de cada janela. O coletor guarda, a cada 5 min:
+  - a cota de cada conta (cada janela: 5h, 7d, 7d por modelo), pela mesma API do usage-all;
+  - cada resposta do claude em todas as máquinas (laptop + orq_hosts), lida das conversas em
+    ~/.claude*/projects/ pelo agente do usage-sessoes (por ssh, só o que é novo desde a última coleta);
+  - o retrato dos processos do claude vivos (14 dias).
+Sobre isso os relatórios calculam: quanto cada conta gastou hoje e na semana, o ritmo (pontos/h), quando
+acaba, o consumo por hora, os projetos e sessões que mais gastaram em pontos estimados (calibração tokens →
+pontos), e alertas (subida por script, subida sem consumo visto nas máquinas, acaba antes do reset, processo
+esquecido, coletor parado). O usage-all e o usage-sessoes leem daqui quando o banco tem menos de 10 min.
+
+Banco: ~/.local/share/claude-multiconta/usage.db (USAGE_DB). Numa máquina sem banco (o laptop), os comandos
+rodam por ssh na máquina de `usage_db_host` do accounts.json (ou USAGE_DB_HOST).
+
+Pontos: "7d" é a % da cota semanal; 1 ponto = 1% da semana de uma conta. Os pontos estimados de uma sessão
+dividem o peso dos tokens dela (entrada 1, cache novo 1,25, cache lido 0,1, saída 5) pelos tokens por ponto
+que a conta mostrou nos últimos 7 dias: é uma estimativa, a Anthropic não detalha a conta.
+"""
+
+import argparse
+import datetime as dt
+import importlib.machinery
+import importlib.util
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+from typing import Dict, List, Optional, Tuple
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DB_DEFAULT = "~/.local/share/claude-multiconta/usage.db"
+SCHEMA_VERSION = "1"
+FRESH_MIN = 10  # o banco vale como "agora" se a última coleta tem menos que isso
+BACKFILL_H = 168  # primeira coleta de uma máquina: 7 dias para trás
+OVERLAP_MIN = 15  # cada coleta relê desde a última bem-sucedida menos isso (a chave deduplica)
+KEEP_PROC_DAYS = 14
+BACKOFF_MIN, BACKOFF_MAX = 10, 30  # cota com 429: pula as próximas rodadas por esse tempo (dobra até o máximo)
+UNIT = "usage-coletor"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS quota(ts TEXT, account TEXT, kind TEXT, scope TEXT, pct REAL, resets_at TEXT,
+  severity TEXT, PRIMARY KEY(ts, account, kind, scope));
+CREATE INDEX IF NOT EXISTS quota_acc ON quota(account, kind, scope, ts);
+CREATE TABLE IF NOT EXISTS quota_err(ts TEXT, account TEXT, err TEXT);
+CREATE TABLE IF NOT EXISTS messages(key TEXT PRIMARY KEY, ts TEXT, host TEXT, account TEXT, session TEXT,
+  project TEXT, cwd TEXT, entrypoint TEXT, model TEXT, input INTEGER, output INTEGER, cache_new INTEGER,
+  cache_read INTEGER, sub INTEGER);
+CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts);
+CREATE INDEX IF NOT EXISTS messages_acc ON messages(account, ts);
+CREATE TABLE IF NOT EXISTS sessions(account TEXT, session TEXT, host TEXT, project TEXT, cwd TEXT,
+  entrypoint TEXT, prompt TEXT, PRIMARY KEY(account, session));
+CREATE TABLE IF NOT EXISTS processes(ts TEXT, host TEXT, pid INTEGER, account TEXT, kind TEXT, cwd TEXT,
+  project TEXT, tmux TEXT, parent TEXT, session_arg TEXT, seconds INTEGER, last_activity TEXT, args TEXT);
+CREATE INDEX IF NOT EXISTS processes_ts ON processes(host, ts);
+CREATE TABLE IF NOT EXISTS runs(ts TEXT, host TEXT, ok INTEGER, err TEXT, seconds REAL, messages INTEGER);
+CREATE INDEX IF NOT EXISTS runs_host ON runs(host, ts);
+"""
+
+_mods: Dict[str, object] = {}
+
+
+def sibling(name: str):
+    """Carrega um script irmão (usage-all, usage-sessoes) como módulo, uma vez."""
+    if name not in _mods:
+        path = os.path.join(HERE, name)
+        loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), path)
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        _mods[name] = mod
+    return _mods[name]
+
+
+# ================================================================ tempo
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def iso(t: dt.datetime) -> str:
+    return t.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def parse(s: Optional[str]) -> Optional[dt.datetime]:
+    if not s:
+        return None
+    try:
+        t = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+
+def local_midnight(now: dt.datetime, days_ago: int = 0) -> dt.datetime:
+    loc = now.astimezone()
+    d = (loc - dt.timedelta(days=days_ago)).date()
+    return dt.datetime(d.year, d.month, d.day, tzinfo=loc.tzinfo).astimezone(dt.timezone.utc)
+
+
+def dur(hours: Optional[float]) -> str:
+    if hours is None:
+        return "—"
+    m = int(round(hours * 60))
+    if m < 60:
+        return f"{m} min"
+    if m < 24 * 60:
+        return f"{m // 60} h {m % 60:02d}"
+    return f"{m // 1440} d {m % 1440 // 60} h"
+
+
+def num(x: float, d: int = 1) -> str:
+    return f"{x:.{d}f}".replace(".", ",")
+
+
+# ================================================================ banco
+def db_path() -> str:
+    return os.path.expanduser(os.environ.get("USAGE_DB") or DB_DEFAULT)
+
+
+def connect(path: Optional[str] = None) -> sqlite3.Connection:
+    path = path or db_path()
+    if path != ":memory:":
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    if path != ":memory:":
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(SCHEMA)
+    conn.execute("INSERT OR IGNORE INTO meta VALUES('schema', ?)", (SCHEMA_VERSION,))
+    conn.commit()
+    return conn
+
+
+def meta_get(conn, key: str) -> Optional[str]:
+    r = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return r[0] if r else None
+
+
+def meta_set(conn, key: str, value: Optional[str]) -> None:
+    if value is None:
+        conn.execute("DELETE FROM meta WHERE key=?", (key,))
+    else:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES(?, ?)", (key, value))
+
+
+def store_quota(conn, ts: str, account: str, windows: List[dict], err: Optional[str]) -> None:
+    if err:
+        conn.execute("INSERT INTO quota_err VALUES(?,?,?)", (ts, account, err[:300]))
+        return
+    for w in windows:
+        conn.execute(
+            "INSERT OR REPLACE INTO quota VALUES(?,?,?,?,?,?,?)",
+            (ts, account, w["kind"], w.get("scope") or "", float(w["pct"]), w.get("resets_at"), w.get("severity") or ""),
+        )
+
+
+def store_host(conn, ts: str, host: str, data: Optional[dict], err: Optional[str], seconds: float) -> int:
+    """Grava o que o agente de uma máquina devolveu; devolve quantas mensagens novas entraram."""
+    if err or data is None:
+        conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)", (ts, host, 0, (err or "?")[:300], seconds, 0))
+        return 0
+    before = conn.total_changes
+    for m in data.get("messages") or []:
+        conn.execute(
+            "INSERT OR IGNORE INTO messages VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (m["key"], m["ts"], host, m["account"], m["session"], m.get("project", ""), m.get("cwd", ""), m.get("entrypoint", ""),
+             m.get("model", ""), m.get("input", 0), m.get("output", 0), m.get("cache_new", 0), m.get("cache_read", 0), m.get("sub", 0)),
+        )
+    new = conn.total_changes - before
+    for s in (data.get("session_info") or {}).values():
+        conn.execute(
+            """INSERT INTO sessions VALUES(?,?,?,?,?,?,?) ON CONFLICT(account, session) DO UPDATE SET
+               host=excluded.host, project=COALESCE(NULLIF(excluded.project,''), sessions.project),
+               cwd=COALESCE(NULLIF(sessions.cwd,''), excluded.cwd),
+               entrypoint=COALESCE(NULLIF(sessions.entrypoint,''), excluded.entrypoint),
+               prompt=COALESCE(NULLIF(sessions.prompt,''), excluded.prompt)""",
+            (s["account"], s["session"], host, s.get("project", ""), s.get("cwd", ""), s.get("entrypoint", ""), s.get("prompt", "")),
+        )
+    for p in data.get("processes") or []:
+        conn.execute(
+            "INSERT INTO processes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ts, host, p["pid"], p["account"], p["kind"], p.get("cwd", ""), p.get("project", ""), p.get("tmux", ""), p.get("parent", ""),
+             p.get("session_arg"), p.get("seconds", 0), p.get("last_activity"), p.get("args", "")),
+        )
+    conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)", (ts, host, 1, None, seconds, new))
+    return new
+
+
+def last_ok(conn, host: str) -> Optional[dt.datetime]:
+    r = conn.execute("SELECT MAX(ts) FROM runs WHERE host=? AND ok=1", (host,)).fetchone()
+    return parse(r[0]) if r and r[0] else None
+
+
+# ================================================================ coleta
+def hosts_to_visit() -> List[str]:
+    S = sibling("usage-sessoes")
+    _, _, orq_hosts = S.load_accounts()
+    hosts = ["laptop"] + [h for h in orq_hosts if h != "laptop"]
+    me = S.local_name()
+    if me not in hosts:
+        hosts.insert(0, me)
+    return hosts
+
+
+def quota_windows(acc) -> Tuple[List[dict], Optional[str]]:
+    U = sibling("usage-all")
+    windows, err = U.get_windows(acc, live=True)
+    return [{"kind": w.kind, "scope": w.scope, "pct": w.percent, "resets_at": w.resets_at, "severity": w.severity} for w in windows], err
+
+
+def coletar(conn=None, desde_horas: float = BACKFILL_H, now: Optional[dt.datetime] = None, quota_fn=None, gather_fn=None, hosts: Optional[List[str]] = None) -> dict:
+    """Uma rodada: cota de cada conta, mensagens e processos de cada máquina. Uma de cada vez (trava)."""
+    conn = conn or connect()
+    now = now or utcnow()
+    ts = iso(now)
+    lock = None
+    if conn.execute("PRAGMA database_list").fetchone()[2]:  # banco em arquivo: trava ao lado dele
+        import fcntl
+
+        lock = open(db_path() + ".lock", "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"skip": "outra coleta em andamento"}
+    summary: dict = {"ts": ts, "quota": {}, "hosts": {}}
+    # ---- cota
+    U = sibling("usage-all")
+    conf = U.load_conf()
+    accounts = [U.Account.from_conf(a) for a in conf.get("accounts", [])]
+    backoff_until = parse(meta_get(conn, "quota_backoff_until"))
+    if backoff_until and now < backoff_until:
+        summary["quota"] = {"skip": f"API limitou; próxima tentativa {backoff_until.astimezone().strftime('%H:%M')}"}
+    else:
+        fn = quota_fn or quota_windows
+        res: Dict[str, Tuple[List[dict], Optional[str]]] = {}
+        threads = [threading.Thread(target=lambda a=a: res.__setitem__(a.name, fn(a))) for a in accounts]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        limited = False
+        for a in accounts:
+            windows, err = res.get(a.name, ([], "sem resposta"))
+            store_quota(conn, ts, a.name, windows, err)
+            summary["quota"][a.name] = err or "ok"
+            limited = limited or bool(err and "429" in err)
+        if limited:
+            prev = float(meta_get(conn, "quota_backoff_min") or 0)
+            wait = min(BACKOFF_MAX, max(BACKOFF_MIN, prev * 2 if prev else BACKOFF_MIN))
+            meta_set(conn, "quota_backoff_min", str(wait))
+            meta_set(conn, "quota_backoff_until", iso(now + dt.timedelta(minutes=wait)))
+        else:
+            meta_set(conn, "quota_backoff_min", None)
+            meta_set(conn, "quota_backoff_until", None)
+    conn.commit()
+    # ---- mensagens e processos de cada máquina
+    S = sibling("usage-sessoes")
+    hosts = hosts or hosts_to_visit()
+
+    def args_for(h: str) -> List[str]:
+        last = last_ok(conn, h)
+        since = (last - dt.timedelta(minutes=OVERLAP_MIN)) if last else now - dt.timedelta(hours=desde_horas)
+        return ["--mensagens", "--desde", iso(since)]
+
+    started = time.time()
+    plans = {h: args_for(h) for h in hosts}
+    machines, errs = (gather_fn or S.gather)(hosts, 5, timeout=150, per_host_args=lambda h: plans[h])
+    took = time.time() - started
+    for h in hosts:
+        if h in machines:
+            summary["hosts"][h] = f"+{store_host(conn, ts, h, machines[h], None, took)} mensagens"
+        elif h in errs:
+            store_host(conn, ts, h, None, errs[h], took)
+            summary["hosts"][h] = errs[h]
+        else:  # mesma máquina sob dois nomes: entrou pelo outro
+            summary["hosts"][h] = "mesma máquina de outro nome"
+    conn.execute("DELETE FROM processes WHERE ts < ?", (iso(now - dt.timedelta(days=KEEP_PROC_DAYS)),))
+    meta_set(conn, "last_collect", ts)
+    conn.commit()
+    if lock:
+        lock.close()
+    return summary
+
+
+# ================================================================ leitura e cálculos
+def last_collect(conn) -> Optional[dt.datetime]:
+    return parse(meta_get(conn, "last_collect"))
+
+
+def latest_quota(conn, now: Optional[dt.datetime] = None, max_age_min: float = 60) -> Dict[str, dict]:
+    """Por conta, a amostra válida mais recente (até `max_age_min`): {'ts', 'windows': [...]}, ou {'err'} se só
+    houver erro recente."""
+    now = now or utcnow()
+    floor = iso(now - dt.timedelta(minutes=max_age_min))
+    out: Dict[str, dict] = {}
+    for r in conn.execute("SELECT account, MAX(ts) AS ts FROM quota WHERE ts >= ? GROUP BY account", (floor,)):
+        rows = conn.execute("SELECT * FROM quota WHERE account=? AND ts=?", (r["account"], r["ts"])).fetchall()
+        out[r["account"]] = {
+            "ts": r["ts"],
+            "windows": [{"kind": x["kind"], "scope": x["scope"] or None, "pct": x["pct"], "resets_at": x["resets_at"], "severity": x["severity"]} for x in rows],
+        }
+    for r in conn.execute("SELECT account, MAX(ts) AS ts, err FROM quota_err WHERE ts >= ? GROUP BY account", (floor,)):
+        if r["account"] not in out:
+            out[r["account"]] = {"ts": r["ts"], "err": r["err"]}
+    return out
+
+
+def window_of(q: dict, kind: str, scope: str = "") -> Optional[dict]:
+    return next((w for w in q.get("windows") or [] if w["kind"] == kind and (w["scope"] or "") == scope), None)
+
+
+def series(conn, account: str, kind: str, t0: dt.datetime, t1: dt.datetime, scope: str = "") -> List[Tuple[dt.datetime, float, Optional[dt.datetime]]]:
+    """Amostras da janela entre t0 e t1, mais a última antes de t0 (a base para a primeira subida)."""
+    base = conn.execute(
+        "SELECT ts, pct, resets_at FROM quota WHERE account=? AND kind=? AND scope=? AND ts < ? ORDER BY ts DESC LIMIT 1",
+        (account, kind, scope, iso(t0)),
+    ).fetchall()
+    rows = conn.execute(
+        "SELECT ts, pct, resets_at FROM quota WHERE account=? AND kind=? AND scope=? AND ts >= ? AND ts <= ? ORDER BY ts",
+        (account, kind, scope, iso(t0), iso(t1)),
+    ).fetchall()
+    return [(parse(r["ts"]), r["pct"], parse(r["resets_at"])) for r in list(base) + list(rows)]
+
+
+MIN_CAL_POINTS = 3  # pontos da semana vistos para calibrar (confiança baixa até 10, boa a partir de 20)
+RESET_TOLERANCE = 600  # s: o resets_at da API oscila um pouco entre amostras da mesma janela
+
+
+def same_window(a: Optional[dt.datetime], b: Optional[dt.datetime]) -> bool:
+    if a is None or b is None:
+        return a is None and b is None
+    return abs((a - b).total_seconds()) <= RESET_TOLERANCE
+
+
+def consumed(points: List[Tuple[dt.datetime, float, Optional[dt.datetime]]]) -> float:
+    """Pontos gastos ao longo das amostras: as subidas dentro da mesma janela; num reset (resets_at mudou, ou a
+    % caiu), a % nova conta inteira, a partir de zero."""
+    total = 0.0
+    for (_, pa, ra), (_, pb, rb) in zip(points, points[1:]):
+        if same_window(ra, rb) and pb >= pa - 0.5:
+            total += max(0.0, pb - pa)
+        elif ra is None and rb is not None and pa <= 0.5:  # a janela começou
+            total += pb
+        else:  # reset
+            total += pb
+    return total
+
+
+def consumed_between(conn, account: str, kind: str, t0: dt.datetime, t1: dt.datetime, scope: str = "") -> Optional[float]:
+    pts = series(conn, account, kind, t0, t1, scope)
+    return consumed(pts) if len(pts) >= 2 else None
+
+
+def rate(conn, account: str, kind: str, now: dt.datetime, hours: float) -> Optional[float]:
+    """Pontos por hora nas últimas `hours`; None se as amostras cobrem menos da metade do intervalo."""
+    t0 = now - dt.timedelta(hours=hours)
+    pts = series(conn, account, kind, t0, now)
+    if len(pts) < 2 or (pts[-1][0] - pts[0][0]).total_seconds() < hours * 1800:
+        return None
+    return consumed(pts) / ((pts[-1][0] - pts[0][0]).total_seconds() / 3600)
+
+
+def rate_best(conn, account: str, kind: str, now: dt.datetime, hours: float) -> Tuple[Optional[float], bool]:
+    """Ritmo nas últimas `hours`; sem amostras para isso, o ritmo desde o início da coleta (10+ min),
+    marcado como parcial."""
+    r = rate(conn, account, kind, now, hours)
+    if r is not None:
+        return r, False
+    pts = series(conn, account, kind, now - dt.timedelta(hours=hours), now)
+    span = (pts[-1][0] - pts[0][0]).total_seconds() if len(pts) >= 2 else 0
+    if span < 600:
+        return None, False
+    return consumed(pts) / (span / 3600), True
+
+
+def first_sample(conn, account: str, kind: str = "weekly_all") -> Optional[dt.datetime]:
+    r = conn.execute("SELECT MIN(ts) FROM quota WHERE account=? AND kind=?", (account, kind)).fetchone()
+    return parse(r[0]) if r and r[0] else None
+
+
+def forecast(pct: float, per_hour: Optional[float], resets_at: Optional[dt.datetime], now: dt.datetime) -> Tuple[Optional[float], bool]:
+    """(horas até 100% no ritmo dado, se isso acontece antes do reset)."""
+    if per_hour is None or per_hour < 0.05 or pct >= 100:
+        return (0.0, True) if pct >= 100 else (None, False)
+    hours = (100 - pct) / per_hour
+    before = resets_at is not None and now + dt.timedelta(hours=hours) < resets_at
+    return hours, before
+
+
+def hourly(conn, account: str, kind: str, t0: dt.datetime, hours: int) -> List[float]:
+    out = []
+    for i in range(hours):
+        a, b = t0 + dt.timedelta(hours=i), t0 + dt.timedelta(hours=i + 1)
+        out.append(consumed_between(conn, account, kind, a, b) or 0.0)
+    return out
+
+
+WEIGHT_SQL = "SUM(input * 1.0 + cache_new * 1.25 + cache_read * 0.1 + output * 5.0)"
+
+
+def weight_between(conn, account: str, t0: dt.datetime, t1: dt.datetime, where: str = "", params: tuple = ()) -> float:
+    r = conn.execute(f"SELECT {WEIGHT_SQL} FROM messages WHERE account=? AND ts >= ? AND ts < ? {where}", (account, iso(t0), iso(t1)) + params).fetchone()
+    return float(r[0] or 0)
+
+
+def calibrate(conn, account: str, now: dt.datetime, days: int = 7) -> dict:
+    """Tokens (ponderados) por ponto de cota semanal, nos últimos `days`. Só vale com MIN_CAL_POINTS+ pontos."""
+    t0 = now - dt.timedelta(days=days)
+    pts = series(conn, account, "weekly_all", t0, now)
+    points = consumed(pts) if len(pts) >= 2 else 0.0
+    start = pts[0][0] if pts else now
+    w = weight_between(conn, account, start, now)
+    tpp = w / points if points >= MIN_CAL_POINTS and w > 0 else None
+    return {"points": points, "weight": w, "tokens_per_point": tpp, "since": iso(start)}
+
+
+def tpp_all(conn, now: dt.datetime) -> Dict[str, Optional[float]]:
+    accs = [r[0] for r in conn.execute("SELECT DISTINCT account FROM quota")]
+    return {a: calibrate(conn, a, now)["tokens_per_point"] for a in accs}
+
+
+def sessions_window(conn, now: dt.datetime, hours: float) -> Tuple[Dict[str, dict], Dict[str, str]]:
+    """As máquinas no formato do agente do usage-sessoes (sessões agregadas + processos do último retrato),
+    para ele montar a mesma tabela a partir do banco. Erros: máquinas cuja última rodada falhou."""
+    t0 = iso(now - dt.timedelta(hours=hours))
+    machines: Dict[str, dict] = {}
+    q = f"""SELECT m.host, m.account, m.session, MIN(m.ts) AS first, MAX(m.ts) AS last, COUNT(*) AS n,
+              SUM(m.sub) AS nsub, SUM(m.input) AS i, SUM(m.output) AS o, SUM(m.cache_new) AS cn, SUM(m.cache_read) AS cr,
+              GROUP_CONCAT(DISTINCT m.model) AS models, COALESCE(NULLIF(s.cwd,''), MIN(m.cwd)) AS cwd,
+              COALESCE(NULLIF(s.project,''), MIN(m.project)) AS project, COALESCE(NULLIF(s.entrypoint,''), MIN(m.entrypoint)) AS entrypoint, s.prompt
+            FROM messages m LEFT JOIN sessions s ON s.account=m.account AND s.session=m.session
+            WHERE m.ts >= ? GROUP BY m.host, m.account, m.session"""
+    for r in conn.execute(q, (t0,)):
+        tok = {"input": r["i"] or 0, "output": r["o"] or 0, "cache_new": r["cn"] or 0, "cache_read": r["cr"] or 0}
+        machines.setdefault(r["host"], {"sessions": [], "processes": []})["sessions"].append(
+            {
+                "account": r["account"], "session": r["session"], "project": r["project"] or "", "cwd": r["cwd"] or "",
+                "entrypoint": r["entrypoint"] or "", "first": r["first"], "last": r["last"], "responses": r["n"],
+                "subagent_responses": r["nsub"] or 0, "tokens": tok, "models": sorted(set((r["models"] or "").split(",")) - {""}),
+                "prompt": r["prompt"] or "", "weight": tok["input"] + tok["cache_new"] * 1.25 + tok["cache_read"] * 0.1 + tok["output"] * 5,
+            }
+        )
+    errs: Dict[str, str] = {}
+    fresh = iso(now - dt.timedelta(minutes=FRESH_MIN))
+    for r in conn.execute("SELECT host, MAX(ts) AS ts FROM runs GROUP BY host"):
+        run = conn.execute("SELECT * FROM runs WHERE host=? AND ts=?", (r["host"], r["ts"])).fetchone()
+        if not run["ok"]:
+            errs[r["host"]] = run["err"]
+            continue
+        machines.setdefault(r["host"], {"sessions": [], "processes": []})
+        if run["ts"] >= fresh:
+            for p in conn.execute("SELECT * FROM processes WHERE host=? AND ts=?", (r["host"], run["ts"])):
+                machines[r["host"]]["processes"].append({k: p[k] for k in p.keys() if k != "ts"})
+    return machines, errs
+
+
+# ================================================================ alertas
+def alerts(conn, now: dt.datetime, labels: Dict[str, str]) -> List[str]:
+    out: List[str] = []
+    lab = lambda a: labels.get(a, a)  # noqa: E731
+    q = latest_quota(conn, now)
+    tpp = tpp_all(conn, now)
+    for acc, qq in sorted(q.items()):
+        if "windows" not in qq:
+            continue
+        # subida da janela de 5h nos últimos 30 min, e de onde veio
+        up = consumed_between(conn, acc, "session", now - dt.timedelta(minutes=30), now) or 0.0
+        if up >= 5:
+            t0 = now - dt.timedelta(minutes=35)
+            total = weight_between(conn, acc, t0, now)
+            script = weight_between(conn, acc, t0, now, "AND entrypoint != 'cli'")
+            if total > 0 and script / total >= 0.8:
+                top = conn.execute(
+                    f"SELECT host, cwd, {WEIGHT_SQL} AS w FROM messages WHERE account=? AND ts >= ? AND entrypoint != 'cli' GROUP BY host, cwd ORDER BY w DESC LIMIT 1",
+                    (acc, iso(t0)),
+                ).fetchone()
+                where = f" ({top['host']} {os.path.basename(top['cwd'] or '?')})" if top else ""
+                out.append(f"⚠ {lab(acc)}: +{num(up, 0)} pts de 5h em 30 min, {script / total * 100:.0f}% de scripts{where}")
+        # subida da semana sem tokens que a expliquem
+        up7 = consumed_between(conn, acc, "weekly_all", now - dt.timedelta(hours=1), now) or 0.0
+        if up7 >= 2 and tpp.get(acc):
+            seen = weight_between(conn, acc, now - dt.timedelta(minutes=70), now) / tpp[acc]
+            if seen < 0.2 * up7:
+                out.append(f"⚠ {lab(acc)}: +{num(up7)} pts na semana em 1 h sem consumo nas máquinas (claude.ai, celular ou máquina sem resposta)")
+        # acaba antes do reset
+        for kind, name, hours in (("weekly_all", "semana", 6), ("session", "5h", 1)):
+            w = window_of(qq, kind)
+            if not w:
+                continue
+            h, before = forecast(w["pct"], rate(conn, acc, kind, now, hours), parse(w["resets_at"]), now)
+            if before and h is not None and (kind == "weekly_all" or h < 2):
+                out.append(f"⚠ {lab(acc)}: a cota de {name} acaba em {dur(h)} no ritmo atual, antes do reset ({dur((parse(w['resets_at']) - now).total_seconds() / 3600)})")
+    # processos esquecidos (último retrato de cada máquina)
+    for r in conn.execute("SELECT host, MAX(ts) AS ts FROM processes GROUP BY host"):
+        if parse(r["ts"]) < now - dt.timedelta(minutes=FRESH_MIN):
+            continue
+        for p in conn.execute("SELECT * FROM processes WHERE host=? AND ts=? AND kind IN ('interativo','script','orq')", (r["host"], r["ts"])):
+            la = parse(p["last_activity"])
+            if la and now - la > dt.timedelta(days=1):
+                out.append(f"· {lab(p['account'])}: processo parado há {dur((now - la).total_seconds() / 3600)} em {p['host']} {os.path.basename(p['cwd'] or '?')} (pid {p['pid']})")
+    # coletor
+    last = last_collect(conn)
+    if last is None or now - last > dt.timedelta(minutes=15):
+        out.append(f"⚠ coletor parado: última coleta {'nunca' if last is None else 'há ' + dur((now - last).total_seconds() / 3600)}")
+    for r in conn.execute("SELECT host, MAX(ts) AS ts FROM runs WHERE ok=1 GROUP BY host"):
+        ok_at = parse(r["ts"])
+        failing = conn.execute("SELECT COUNT(*) FROM runs WHERE host=? AND ts > ? AND ok=0", (r["host"], r["ts"])).fetchone()[0]
+        if failing and now - ok_at > dt.timedelta(hours=1) and now - ok_at < dt.timedelta(days=1):
+            out.append(f"⚠ {r['host']} sem resposta há {dur((now - ok_at).total_seconds() / 3600)}")
+    return out
+
+
+# ================================================================ relatórios
+BLOCKS = " ▁▂▃▄▅▆▇█"
+
+
+def spark(values: List[float], top: Optional[float] = None) -> str:
+    top = top or max(values + [0.0])
+    if top <= 0:
+        return "·" * len(values)
+    return "".join("·" if v <= 0.05 else BLOCKS[max(1, min(8, int(round(v / top * 8))))] for v in values)
+
+
+def labels_of() -> Dict[str, str]:
+    S = sibling("usage-sessoes")
+    return S.load_accounts()[1]
+
+
+def table(headers: List[str], groups: List[List[List[str]]], right: Tuple[int, ...] = ()) -> List[str]:
+    return sibling("usage-sessoes").box(headers, groups, right)
+
+
+def painel(conn, now: dt.datetime, labels: Dict[str, str], only: Optional[List[str]] = None) -> Tuple[str, dict]:
+    q = latest_quota(conn, now)
+    accs = [a for a in (list(labels) or sorted(q)) if (not only or a in only)]
+    accs += [a for a in sorted(q) if a not in accs and (not only or a in only)]
+    t24 = now - dt.timedelta(hours=24)
+    curves = {a: hourly(conn, a, "weekly_all", t24, 24) for a in accs}
+    top = max([max(c) for c in curves.values()] + [0.0])
+    rows, data = [], {}
+    free = used24 = 0.0
+    partial_since: Optional[dt.datetime] = None
+    for a in accs:
+        qq = q.get(a, {})
+        w5, w7 = window_of(qq, "session"), window_of(qq, "weekly_all")
+        midnight = local_midnight(now)
+        today = consumed_between(conn, a, "weekly_all", midnight, now)
+        fs = first_sample(conn, a)
+        today_partial = fs is not None and fs > midnight
+        r6, r_partial = rate_best(conn, a, "weekly_all", now, 6)
+        if (today_partial and today is not None) or r_partial:
+            partial_since = min(partial_since or fs, fs) if fs else partial_since
+        h, before = forecast(w7["pct"], r6, parse(w7["resets_at"]), now) if w7 else (None, False)
+        if w7:
+            free += 100 - w7["pct"]
+            used24 += sum(curves[a])
+        reset = lambda w: f" ↺{dur((parse(w['resets_at']) - now).total_seconds() / 3600)}" if w and w.get("resets_at") else ""  # noqa: E731
+        prev = "—" if h is None else (f"⚠ 100% em {dur(h)}" if before else ("ok até o reset" if w7 and w7.get("resets_at") else f"100% em {dur(h)}"))
+        if qq.get("err") and not w7:
+            prev = "cota indisponível"
+        rows.append([[
+            labels.get(a, a),
+            f"{w5['pct']:>3.0f}%{reset(w5)}" if w5 else "  ?",
+            f"{w7['pct']:>3.0f}%{reset(w7)}" if w7 else "  ?",
+            (f"+{num(today)}" + ("*" if today_partial else "")) if today is not None else "—",
+            (f"{num(r6, 2)}/h" + ("*" if r_partial else "")) if r6 is not None else "—",
+            prev,
+            spark(curves[a], top),
+        ]])
+        data[a] = {"5h": w5, "7d": w7, "today_7d": today, "rate_6h": r6, "hours_to_100": h, "before_reset": before, "last_24h": curves[a]}
+    head = "uso das contas · pontos da semana (1 pt = 1% da cota semanal de uma conta)"
+    lines = [head, ""] + table(["conta", "5h agora", "7d agora", "hoje", "ritmo 6 h", "previsão 7d", "últimas 24 h, por hora"], rows, right=(3, 4))
+    burn24 = used24 / 24
+    fleet = f"frota: {num(free, 0)} pts livres"
+    if burn24 > 0.05:
+        fleet += f" · gastou {num(used24)} pts em 24 h ({num(burn24, 2)}/h) · nesse ritmo, dura {dur(free / burn24)} sem contar os resets"
+    lines.append(fleet)
+    if partial_since:
+        lines.append(f"* desde o início da coleta ({partial_since.astimezone().strftime('%d/%m %H:%M')}): ainda sem o dia inteiro ou sem 6 h de amostras")
+    al = alerts(conn, now, labels)
+    lines += al
+    lines.append(source_line(conn, now))
+    return "\n".join(lines), {"accounts": data, "free": free, "used_24h": used24, "alerts": al}
+
+
+def source_line(conn, now: dt.datetime) -> str:
+    last = last_collect(conn)
+    s = "fonte: banco" + (f" · última coleta há {dur((now - last).total_seconds() / 3600)}" if last else " · nenhuma coleta ainda")
+    down = [r["host"] for r in conn.execute("SELECT host, MAX(ts) AS ts, ok FROM runs GROUP BY host") if not r["ok"]]
+    if down:
+        s += " · sem resposta: " + ", ".join(sorted(down))
+    return s
+
+
+def project_rows(conn, t0: dt.datetime, t1: dt.datetime, tpp: Dict[str, Optional[float]], labels: Dict[str, str], limit: int = 12) -> List[List[str]]:
+    q = f"""SELECT m.account, m.host, m.cwd AS cwd, CASE WHEN m.entrypoint='cli' THEN 'interativo' ELSE 'script' END AS kind,
+              COUNT(DISTINCT m.session) AS ns, {WEIGHT_SQL} AS w
+            FROM messages m WHERE m.ts >= ? AND m.ts < ? GROUP BY m.account, m.host, m.cwd, kind ORDER BY w DESC LIMIT ?"""
+    rows = []
+    for r in conn.execute(q, (iso(t0), iso(t1), limit)):
+        t = tpp.get(r["account"])
+        rows.append([labels.get(r["account"], r["account"]), r["host"], os.path.basename(r["cwd"] or "?")[:24], r["kind"], str(r["ns"]),
+                     f"≈{num(r['w'] / t)}" if t else "?"])
+    return rows
+
+
+def dia(conn, now: dt.datetime, labels: Dict[str, str], day: Optional[str] = None) -> Tuple[str, dict]:
+    if day:
+        d = dt.date.fromisoformat(day)
+        loc = now.astimezone()
+        t0 = dt.datetime(d.year, d.month, d.day, tzinfo=loc.tzinfo).astimezone(dt.timezone.utc)
+    else:
+        t0 = local_midnight(now)
+    t1 = min(now, t0 + dt.timedelta(days=1))
+    hours = max(1, int((t1 - t0).total_seconds() // 3600) + (1 if (t1 - t0).total_seconds() % 3600 else 0))
+    accs = sorted({r[0] for r in conn.execute("SELECT DISTINCT account FROM quota")}, key=lambda a: list(labels).index(a) if a in labels else 99)
+    curves = {a: hourly(conn, a, "weekly_all", t0, hours) for a in accs}
+    top = max([max(c) for c in curves.values()] + [0.0])
+    rows, data = [], {}
+    for a in accs:
+        p7 = consumed_between(conn, a, "weekly_all", t0, t1)
+        p5 = consumed_between(conn, a, "session", t0, t1)
+        rows.append([[labels.get(a, a), num(p7) if p7 is not None else "—", num(p5, 0) if p5 is not None else "—", spark(curves[a], top)]])
+        data[a] = {"7d": p7, "5h": p5, "hourly": curves[a]}
+    title = f"dia {t0.astimezone().strftime('%d/%m/%Y')} · pontos consumidos"
+    lines = [title, ""] + table(["conta", "semana (pts)", "5h (pts)", "por hora, 0h → " + str(hours - 1) + "h"], rows, right=(1, 2))
+    tpp = tpp_all(conn, now)
+    proj = project_rows(conn, t0, t1, tpp, labels)
+    if proj:
+        lines += ["", "o que mais gastou (pontos da semana estimados pelos tokens)", ""]
+        lines += table(["conta", "máquina", "pasta", "tipo", "sessões", "≈pts"], [[r] for r in proj], right=(4, 5))
+    data["projects"] = proj
+    return "\n".join(lines), data
+
+
+def semana(conn, now: dt.datetime, labels: Dict[str, str]) -> Tuple[str, dict]:
+    accs = sorted({r[0] for r in conn.execute("SELECT DISTINCT account FROM quota")}, key=lambda a: list(labels).index(a) if a in labels else 99)
+    days = [local_midnight(now, i) for i in range(6, -1, -1)]
+    rows, data = [], {}
+    names = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
+    for d0 in days:
+        d1 = min(now, d0 + dt.timedelta(days=1))
+        vals = [consumed_between(conn, a, "weekly_all", d0, d1) for a in accs]
+        tot = sum(v for v in vals if v)
+        loc = d0.astimezone()
+        rows.append([f"{names[loc.weekday()]} {loc.strftime('%d/%m')}"] + [num(v) if v is not None else "—" for v in vals] + [num(tot)])
+        data[loc.strftime("%Y-%m-%d")] = dict(zip(accs, vals))
+    lines = ["últimos 7 dias · pontos da semana consumidos por dia", ""]
+    lines += table(["dia"] + [labels.get(a, a) for a in accs] + ["total"], [rows], right=tuple(range(1, len(accs) + 2)))
+    # perfil por hora do dia (local), somando as contas
+    prof = [0.0] * 24
+    t0 = now - dt.timedelta(days=7)
+    for a in accs:
+        for i, v in enumerate(hourly(conn, a, "weekly_all", t0.replace(minute=0, second=0, microsecond=0), 7 * 24)):
+            h = (t0.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=i)).astimezone().hour
+            prof[h] += v
+    lines += ["", "quando você usa (soma da semana por hora do dia, 0h → 23h)", "  " + spark(prof), "  0     6     12    18    23"]
+    data["profile"] = prof
+    return "\n".join(lines), data
+
+
+def calibrar_txt(conn, now: dt.datetime, labels: Dict[str, str]) -> Tuple[str, dict]:
+    rows, data = [], {}
+    for a in sorted({r[0] for r in conn.execute("SELECT DISTINCT account FROM quota")}, key=lambda a: list(labels).index(a) if a in labels else 99):
+        c = calibrate(conn, a, now)
+        t = c["tokens_per_point"]
+        conf = "—" if t is None else ("boa" if c["points"] >= 20 else "média" if c["points"] >= 10 else "baixa")
+        rows.append([labels.get(a, a), num(c["points"]), f"{c['weight'] / 1e6:.2f}M".replace(".", ","), f"{t / 1e6:.2f}M".replace(".", ",") if t else "amostra pequena", conf])
+        data[a] = c
+    lines = ["calibração: quantos tokens (ponderados) valem 1 ponto da semana, nos últimos 7 dias", ""]
+    lines += table(["conta", "pontos vistos", "peso dos tokens", "tokens por ponto", "confiança"], [rows], right=(1, 2, 3))
+    return "\n".join(lines), data
+
+
+def short_err(err: Optional[str]) -> str:
+    e = err or "erro"
+    for pat, short in (("No route to host", "fora da rede"), ("Could not resolve", "nome não resolve"), ("timed out", "tempo esgotado"),
+                       ("sem resposta em", "sem resposta"), ("Permission denied", "ssh recusou a chave")):
+        if pat in e:
+            return short
+    return e[:40]
+
+
+def estado(conn, now: dt.datetime) -> Tuple[str, dict]:
+    timer = "?"
+    if shutil.which("systemctl"):
+        r = subprocess.run(["systemctl", "--user", "is-active", f"{UNIT}.timer"], capture_output=True, text=True)
+        timer = r.stdout.strip() or r.stderr.strip()[:60]
+    last = last_collect(conn)
+    rows = []
+    for r in conn.execute("SELECT host, MAX(ts) AS ts FROM runs GROUP BY host ORDER BY host"):
+        run = conn.execute("SELECT * FROM runs WHERE host=? AND ts=?", (r["host"], r["ts"])).fetchone()
+        ok_at = conn.execute("SELECT MAX(ts) FROM runs WHERE host=? AND ok=1", (r["host"],)).fetchone()[0]
+        n = conn.execute("SELECT COUNT(*) FROM messages WHERE host=?", (r["host"],)).fetchone()[0]
+        rows.append([r["host"], "ok" if run["ok"] else short_err(run["err"]), dur((now - parse(ok_at)).total_seconds() / 3600) if ok_at else "nunca", str(n)])
+    counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("quota", "quota_err", "messages", "sessions", "processes", "runs")}
+    size = os.path.getsize(db_path()) if os.path.exists(db_path()) else 0
+    lines = [f"coletor: timer {UNIT}.timer {timer} · última coleta " + (f"há {dur((now - last).total_seconds() / 3600)}" if last else "nunca"),
+             f"banco: {db_path()} · {size / 1e6:.1f} MB · " + " · ".join(f"{k} {v}" for k, v in counts.items())]
+    bo = parse(meta_get(conn, "quota_backoff_until"))
+    if bo and bo > now:
+        lines.append(f"cota: a API limitou as consultas; a próxima tentativa é às {bo.astimezone().strftime('%H:%M')}")
+    lines += [""] + table(["máquina", "última rodada", "último ok há", "mensagens no banco"], [rows], right=(3,))
+    return "\n".join(lines), {"timer": timer, "last_collect": iso(last) if last else None, "counts": counts, "size": size}
+
+
+# ================================================================ banco remoto (o laptop consulta o node4)
+def remote_host() -> Optional[str]:
+    """Máquina do banco, quando ele não está aqui: USAGE_DB_HOST ou `usage_db_host` do accounts.json."""
+    if os.path.exists(db_path()) and not os.environ.get("USAGE_DB_HOST"):
+        return None
+    host = os.environ.get("USAGE_DB_HOST")
+    if not host:
+        try:
+            S = sibling("usage-sessoes")
+            host = json.load(open(S.CONF)).get("usage_db_host")
+        except (OSError, ValueError):
+            host = None
+    if not host or host == sibling("usage-sessoes").local_name():
+        return None
+    return host
+
+
+def remote_json(host: str, args: List[str], timeout: float = 12) -> Optional[dict]:
+    import shlex
+
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, "~/.local/bin/usage-hist " + shlex.join(args)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def quota_snapshot(max_age_min: float = FRESH_MIN) -> Optional[dict]:
+    """Para o usage-all: {'ts', 'accounts': {conta: {'windows': [...]}}} se o banco tem coleta recente."""
+    host = remote_host()
+    if host:
+        return remote_json(host, ["cota-json", "--idade", str(max_age_min)], timeout=8)
+    if not os.path.exists(db_path()):
+        return None
+    conn = connect()
+    now = utcnow()
+    last = last_collect(conn)
+    if last is None or now - last > dt.timedelta(minutes=max_age_min):
+        return None
+    return {"ts": iso(last), "accounts": {a: v for a, v in latest_quota(conn, now, 60).items() if "windows" in v}}
+
+
+def sessions_snapshot(hours: float, max_age_min: float = FRESH_MIN) -> Optional[dict]:
+    """Para o usage-sessoes: as máquinas no formato do agente, os erros e os tokens por ponto."""
+    host = remote_host()
+    if host:
+        return remote_json(host, ["sessoes-json", "--horas", f"{hours:g}", "--idade", str(max_age_min)], timeout=15)
+    if not os.path.exists(db_path()):
+        return None
+    conn = connect()
+    now = utcnow()
+    last = last_collect(conn)
+    if last is None or now - last > dt.timedelta(minutes=max_age_min):
+        return None
+    machines, errs = sessions_window(conn, now, hours)
+    return {"ts": iso(last), "machines": machines, "errors": errs, "tpp": tpp_all(conn, now)}
+
+
+# ================================================================ timer do systemd
+def unit_texts(python: str, script: str) -> Tuple[str, str]:
+    service = f"""[Unit]
+Description=Coleta o uso das contas do Claude Code (usage-hist)
+
+[Service]
+Type=oneshot
+Environment=PATH={os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin
+ExecStart={python} {script} coletar
+Nice=10
+"""
+    timer = f"""[Unit]
+Description=Coleta o uso das contas do Claude Code a cada 5 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    return service, timer
+
+
+def instalar() -> int:
+    if not shutil.which("systemctl"):
+        print("sem systemctl: use um cron com `*/5 * * * * usage-hist coletar`")
+        return 1
+    d = os.path.expanduser("~/.config/systemd/user")
+    os.makedirs(d, exist_ok=True)
+    service, timer = unit_texts(sys.executable, os.path.abspath(__file__))
+    open(os.path.join(d, f"{UNIT}.service"), "w").write(service)
+    open(os.path.join(d, f"{UNIT}.timer"), "w").write(timer)
+    for cmd in (["daemon-reload"], ["enable", "--now", f"{UNIT}.timer"]):
+        r = subprocess.run(["systemctl", "--user"] + cmd, capture_output=True, text=True)
+        if r.returncode:
+            print(f"systemctl --user {' '.join(cmd)} falhou: {r.stderr.strip()}")
+            return 1
+    linger = subprocess.run(["loginctl", "show-user", os.environ.get("USER", ""), "-p", "Linger"], capture_output=True, text=True).stdout.strip()
+    print(f"timer {UNIT}.timer ativo (a cada 5 min); unidades em {d}")
+    if linger != "Linger=yes":
+        r = subprocess.run(["loginctl", "enable-linger"], capture_output=True, text=True)
+        print("linger ligado: o timer roda mesmo sem sessão aberta" if r.returncode == 0 else
+              f"aviso: sem linger o timer para quando você sai da máquina; rode: sudo loginctl enable-linger {os.environ.get('USER', '')}")
+    print("primeira coleta (até 7 dias para trás; pode levar um minuto)…")
+    s = coletar()
+    print(json.dumps(s, ensure_ascii=False, indent=1))
+    return 0
+
+
+def remover() -> int:
+    d = os.path.expanduser("~/.config/systemd/user")
+    subprocess.run(["systemctl", "--user", "disable", "--now", f"{UNIT}.timer"], capture_output=True)
+    for f in (f"{UNIT}.service", f"{UNIT}.timer"):
+        try:
+            os.remove(os.path.join(d, f))
+        except OSError:
+            pass
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    print(f"timer removido; o banco ficou em {db_path()}")
+    return 0
+
+
+# ================================================================ cli
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    ap = argparse.ArgumentParser(prog="usage-hist", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("cmd", nargs="?", default="painel",
+                    choices=["painel", "dia", "semana", "calibrar", "alertas", "estado", "coletar", "instalar", "remover", "cota-json", "sessoes-json"])
+    ap.add_argument("data", nargs="?", help="dia AAAA-MM-DD (com `dia`)")
+    ap.add_argument("--conta", action="append")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--desde-horas", type=float, default=BACKFILL_H)
+    ap.add_argument("--horas", type=float, default=5.0)
+    ap.add_argument("--idade", type=float, default=FRESH_MIN)
+    a = ap.parse_args(argv)
+    if a.cmd in ("instalar", "remover"):
+        return instalar() if a.cmd == "instalar" else remover()
+    host = remote_host()
+    if host and a.cmd not in ("coletar",):  # sem banco aqui: roda lá e repassa a saída
+        import shlex
+
+        return subprocess.call(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host, "~/.local/bin/usage-hist " + shlex.join(argv)])
+    now = utcnow()
+    if a.cmd == "coletar":
+        print(json.dumps(coletar(desde_horas=a.desde_horas), ensure_ascii=False))
+        return 0
+    conn = connect()
+    if a.cmd == "cota-json":
+        last = last_collect(conn)
+        if last is None or now - last > dt.timedelta(minutes=a.idade):
+            print("null")
+            return 0
+        print(json.dumps({"ts": iso(last), "accounts": {k: v for k, v in latest_quota(conn, now, 60).items() if "windows" in v}}))
+        return 0
+    if a.cmd == "sessoes-json":
+        last = last_collect(conn)
+        if last is None or now - last > dt.timedelta(minutes=a.idade):
+            print("null")
+            return 0
+        machines, errs = sessions_window(conn, now, a.horas)
+        print(json.dumps({"ts": iso(last), "machines": machines, "errors": errs, "tpp": tpp_all(conn, now)}, ensure_ascii=False))
+        return 0
+    labels = labels_of()
+    if a.cmd == "alertas":
+        al = alerts(conn, now, labels)
+        print(json.dumps(al, ensure_ascii=False) if a.json else ("\n".join(al) or "nenhum alerta"))
+        return 0
+    text, data = {
+        "painel": lambda: painel(conn, now, labels, a.conta),
+        "dia": lambda: dia(conn, now, labels, a.data),
+        "semana": lambda: semana(conn, now, labels),
+        "calibrar": lambda: calibrar_txt(conn, now, labels),
+        "estado": lambda: estado(conn, now),
+    }[a.cmd]()
+    print(json.dumps(data, ensure_ascii=False, default=str, indent=1) if a.json else text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

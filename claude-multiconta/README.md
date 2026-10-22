@@ -18,6 +18,7 @@ com um marcador de ritmo. Feito para levar de máquina em máquina: Mac (zsh) e 
 | `usage-all` | uso de todas as contas do Claude, **resumido**: uma linha por conta e, por janela, % usado, mini-barra com marcador de ritmo e tempo até o reset |
 | `usage-all -v` | o mesmo, **completo**: barra por janela, marcador de ritmo e horário do reset |
 | `usage-all gmail` | só as contas citadas (nomes do `accounts.json`); combina com `-v` |
+| `usage-hist` | **histórico**: por conta, hoje, ritmo, previsão de 100%, barras das últimas 24 h e alertas; `dia`, `semana`, `calibrar`, `estado`; o coletor roda a cada 5 min no node4 |
 | `usage-sessoes` | **quem está gastando cada conta**, em todas as máquinas: por conta, a cota e uma linha por pasta e tipo (as execuções de um script juntas), com a parte de cada uma no peso da conta e os processos abertos parados há mais de 1 h; `-v` mostra cada sessão com processo, tmux, quem lançou e prompt; `--horas N`, `--conta C`, `--json` |
 | `TOTAL` (última linha) | consolidado da semana entre as contas: % livre, o equivalente em contas inteiras, ritmo, em quanto tempo acaba tudo no ritmo atual e o próximo reset semanal; no `--json` vem na chave `_total` |
 | `orq` | **orquestrador**: escolhe até 4 projetos de qualquer máquina e abre uma janela com 4 painéis, cada um no ssh, no tmux e na conta certa |
@@ -373,6 +374,7 @@ o próprio login.
 | `add-account.sh` | adiciona/remove uma conta no `accounts.json`, cria o diretório e reroda o `install.sh` |
 | `bin/usage-all` | uso do Claude por conta, direto na API OAuth: resumido, `-v` com barras e `--json` |
 | `bin/codex-usage-fast` | o mesmo para o Codex (alias `codex-usage`); separado do `usage-all` |
+| `bin/usage-hist` | histórico de uso num SQLite (coletor a cada 5 min por timer do systemd), com painel, dia, semana, calibração tokens → pontos e alertas; o `usage-all` e o `usage-sessoes` leem dele |
 | `bin/usage-sessoes` | sessões e consumo por conta em todas as máquinas: lê as conversas em `~/.claude*/projects/` e os processos vivos, por ssh (o próprio script vai pelo stdin, não precisa estar instalado lá) |
 | `bin/orq` | orquestrador: lista projetos de todas as máquinas e monta a grade tmux; `orq web` chama o `orq-web` |
 | `bin/orq-run` | roda em cada painel: abre o claude na conta certa, troca de conta quando a cota acaba |

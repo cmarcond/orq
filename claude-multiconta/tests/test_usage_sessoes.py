@@ -6,6 +6,8 @@ import importlib.util
 import json
 import pathlib
 
+import pytest
+
 HERE = pathlib.Path(__file__).resolve().parent.parent
 loader = importlib.machinery.SourceFileLoader("usage_sessoes", str(HERE / "bin" / "usage-sessoes"))
 spec = importlib.util.spec_from_loader("usage_sessoes", loader)
@@ -13,6 +15,12 @@ S = importlib.util.module_from_spec(spec)
 loader.exec_module(S)
 
 NOW = dt.datetime.now(dt.timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def no_database(monkeypatch):
+    """Os testes daqui são da varredura e da formatação: nunca o banco do usage-hist da máquina."""
+    monkeypatch.setattr(S, "from_database", lambda hours: None)
 
 
 def iso(minutes_ago):
@@ -177,7 +185,7 @@ def test_render_shows_quota_state_and_idle_processes():
 
 
 def test_gather_dedupes_the_same_machine_under_two_names(monkeypatch):
-    def fake(host, hours, me):
+    def fake(host, hours, me, args=None, timeout=None):
         return host, {"machine_id": "same" if host in ("a", "b") else host, "sessions": [], "processes": []}, None
 
     monkeypatch.setattr(S, "fetch", fake)

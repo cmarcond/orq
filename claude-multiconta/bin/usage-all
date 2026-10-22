@@ -19,6 +19,8 @@ impresso. Python 3.8+.
 import argparse
 import datetime
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import re
 import os
@@ -222,8 +224,47 @@ def parse_windows(data: dict) -> List[Window]:
     return sorted(out, key=lambda w: ORDER.get(w.kind, 9))
 
 
-def get_windows(acc: Account) -> Tuple[List[Window], Optional[str]]:
-    """Janelas da conta, ou (None, erro curto)."""
+# ---- banco do usage-hist: a última amostra do coletor, quando tem menos de 10 min (sem API, sem 429)
+SNAP: Optional[dict] = None  # {'ts': ISO, 'accounts': {conta: {'windows': [...]}}}
+
+
+def load_snapshot() -> Optional[dict]:
+    """Lê o banco do usage-hist (aqui, ou por ssh na máquina do banco). None se não houver ou estiver velho."""
+    here = pathlib.Path(__file__).resolve().parent / "usage-hist"
+    if not here.exists():
+        return None
+    try:
+        loader = importlib.machinery.SourceFileLoader("usage_hist", str(here))
+        spec = importlib.util.spec_from_loader("usage_hist", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return mod.quota_snapshot()
+    except Exception:  # noqa: BLE001 - sem banco, o usage-all segue pela API
+        return None
+
+
+def from_snapshot(acc: Account) -> Optional[List[Window]]:
+    entry = ((SNAP or {}).get("accounts") or {}).get(acc.name)
+    if not entry or "windows" not in entry:
+        return None
+    ws = [Window(kind=w["kind"], percent=float(w["pct"]), resets_at=w.get("resets_at"), scope=w.get("scope") or None, severity=w.get("severity") or "normal") for w in entry["windows"]]
+    return sorted(ws, key=lambda w: ORDER.get(w.kind, 9))
+
+
+def source_note() -> str:
+    if not SNAP:
+        return "ao vivo (API)"
+    t = datetime.datetime.fromisoformat(SNAP["ts"].replace("Z", "+00:00"))
+    mins = int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() // 60)
+    return f"do banco · coleta há {mins} min · --ao-vivo consulta a API"
+
+
+def get_windows(acc: Account, live: bool = False) -> Tuple[List[Window], Optional[str]]:
+    """Janelas da conta, ou (None, erro curto). Do banco quando há amostra recente; `live` força a API."""
+    if not live:
+        ws = from_snapshot(acc)
+        if ws is not None:
+            return ws, None
     cred = load_cred(acc)
     if not cred:
         return [], f"sem credencial em {acc.config_dir}. Rode: claude-{acc.name}-login"
@@ -473,6 +514,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("-v", "--verbose", action="store_true", help="completo: barra por janela, horário do reset")
     ap.add_argument("--json", action="store_true", help="saída para scripts")
     ap.add_argument("-b", "--brief", action="store_true", help=argparse.SUPPRESS)  # sinônimo antigo do padrão
+    ap.add_argument("--ao-vivo", action="store_true", help="consulta a API agora, mesmo com o banco do usage-hist fresco")
     ap.add_argument("names", nargs="*", metavar="conta")
     a = ap.parse_args(argv)
 
@@ -484,19 +526,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     if bad:
         die(f"conta desconhecida: {', '.join(bad)}. Disponíveis: {', '.join(accounts)}")
     chosen = [accounts[n] for n in a.names] if a.names else list(accounts.values())
+    global SNAP
+    SNAP = None if a.ao_vivo else load_snapshot()
 
     if a.json:
         with ThreadPoolExecutor(max_workers=8) as ex:
             per = dict(zip((x.name for x in chosen), ex.map(usage_json, chosen)))
         per["_total"] = total_json(per)  # consolidado da semana (orq-web mostra; quem lê por conta ignora)
+        per["_fonte"] = {"banco": SNAP["ts"]} if SNAP else {"api": True}
         print(json.dumps(per))
         return 0
     if a.verbose:
         tz = timezone(conf)
         results = [show_verbose(x, tz) for x in chosen]
         print(fmt_total(total_json({x.name: r[1] for x, r in zip(chosen, results)}), {x.name: x.label for x in chosen}))
+        print(c("2", source_note()))
         return 0 if all(r[0] for r in results) else 2
-    return 0 if show_brief(chosen) else 2
+    ok = show_brief(chosen)
+    print(c("2", source_note()))
+    return 0 if ok else 2
 
 
 if __name__ == "__main__":

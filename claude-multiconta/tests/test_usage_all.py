@@ -7,6 +7,8 @@ import io
 import json
 import pathlib
 import sys
+
+import pytest
 from contextlib import redirect_stdout
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
@@ -22,6 +24,12 @@ def iso_in(seconds):
 
 def acc(name="gmail", label="Gmail (g@x)"):
     return U.Account(name=name, config_dir=pathlib.Path("/tmp/x"), label=label.split(" (")[0], full_label=label, email="g@x")
+
+
+@pytest.fixture(autouse=True)
+def no_database(monkeypatch):
+    """Os testes daqui são da API e da formatação: nunca o banco do usage-hist da máquina."""
+    monkeypatch.setattr(U, "load_snapshot", lambda: None)
 
 
 # ---------------------------------------------------------------- modelo
@@ -166,7 +174,7 @@ def test_main_json_and_unknown_account(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(5))
     assert U.main(["--json"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert list(out) == ["gmail", "_total"] and out["gmail"]["7d"] == 5
+    assert list(out) == ["gmail", "_total", "_fonte"] and out["gmail"]["7d"] == 5 and out["_fonte"] == {"api": True}
     try:
         U.main(["nada"])
     except SystemExit as e:

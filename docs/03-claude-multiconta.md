@@ -149,6 +149,46 @@ Caso real que motivou o script (2026-10-21): a Work 3 subiu 20% em minutos sem n
 nela. O `usage-sessoes` mostrou nove sessões `sdk/-p` no laptop, todas de um projeto que chamava o
 `claude -p` com `CLAUDE_CONTA` fixa na Work 3, lançadas por uma sessão interativa em outra conta.
 
+### `usage-hist`: histórico, ritmo, previsão e alertas
+
+A API de cota só diz a porcentagem de agora. O `usage-hist` guarda amostras num banco SQLite
+(`~/.local/share/claude-multiconta/usage.db` no node4, `USAGE_DB`) e calcula sobre elas. Um timer do systemd
+de usuário (`usage-coletor.timer`, instalado com `usage-hist instalar`) roda `usage-hist coletar` a cada 5 min:
+
+- a **cota** de cada conta e janela, pela mesma API do `usage-all` (com 429, espera 10 min e dobra até 30);
+- cada **resposta do claude** em todas as máquinas, pelo agente do `usage-sessoes` por ssh, só o que é novo
+  desde a última coleta daquela máquina (a primeira volta 7 dias; uma máquina que ficou fora recupera o
+  buraco na volta, porque as conversas ficam gravadas nela; a cota perdida não se recupera);
+- o retrato dos **processos** vivos (guardado por 14 dias).
+
+```
+usage-hist                 # painel: por conta, 5h e 7d agora, hoje, ritmo, previsão, barras das últimas 24 h; frota; alertas
+usage-hist dia [AAAA-MM-DD] # pontos do dia por conta, por hora, e os projetos que mais gastaram (≈pts)
+usage-hist semana          # 7 dias × contas e o perfil por hora do dia
+usage-hist calibrar        # tokens por ponto de cada conta
+usage-hist alertas         # só os alertas
+usage-hist estado          # timer, última coleta, máquinas, tamanho do banco
+usage-hist instalar | remover | coletar
+```
+
+**Pontos**: 1 ponto = 1% da cota semanal de uma conta. "Hoje" soma as subidas da janela de 7 dias desde a
+meia-noite (um reset conta a % nova a partir de zero). O ritmo é em pontos por hora nas últimas 6 h; a
+previsão diz quando a conta chega a 100% nesse ritmo e avisa se isso vem antes do reset. Até haver 6 h (ou o
+dia inteiro) de amostras, os valores saem com `*`, calculados desde o início da coleta.
+
+**Calibração**: o peso dos tokens (entrada 1, cache novo 1,25, cache lido 0,1, saída 5) dividido pelos pontos
+de 7d da conta nos últimos 7 dias dá os tokens por ponto. Com isso o `dia` e o `usage-sessoes` mostram
+**≈pts** por projeto e por sessão. Só vale a partir de 3 pontos vistos (confiança baixa até 10).
+
+**Alertas**: subida de 5h por script (5+ pontos em 30 min, 80%+ de sessões `sdk/-p`); subida da semana sem
+tokens nas máquinas que a expliquem (claude.ai, celular ou máquina sem resposta); cota que acaba antes do
+reset; processo do claude parado há mais de 1 dia; coletor parado; máquina sem resposta há mais de 1 h.
+
+**Os outros comandos leem o banco**: o `usage-all` e o `usage-sessoes` usam a última coleta quando ela tem
+menos de 10 min (instantâneos e sem 429; rodapé "do banco · coleta há N min"); `--ao-vivo` volta à API e à
+varredura. A página do orq recebe a cota do `usage-all --json`, então também passa a vir do banco. Numa
+máquina sem banco (o laptop), os três comandos rodam por ssh na máquina de `usage_db_host` do accounts.json.
+
 ## 3.5 `claude-last` e `claude-resume`: a conversa certa
 
 Cada conta guarda as conversas em `<config_dir>/projects/<pasta codificada>/<id>.jsonl`. O `--resume`
@@ -236,6 +276,7 @@ tracejada com **⇄ converter**.
 | `codex` | `install.sh` | instalar o Codex e criar `codex-login`/`codex-usage` |
 | `timezone` | `usage-all`, `codex-usage` | fuso dos horários de reset |
 | `orq_hosts` | `orq`, página, `deploy.sh` | máquinas remotas; o laptop entra sempre |
+| `usage_db_host` | `usage-hist`, `usage-all`, `usage-sessoes` | máquina do banco de uso (node4); numa máquina sem banco, os comandos rodam lá por ssh |
 | `permission_mode` | página | modo dos agentes: `auto`, `manual`, `acceptEdits`, `plan` |
 | `auto_switch` | página | trocar de conta sozinho quando a cota acaba (padrão `true`) |
 

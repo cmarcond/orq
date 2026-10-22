@@ -38,5 +38,6 @@
     "node2",
     "node3"
   ],
-  "permission_mode": "auto"
+  "permission_mode": "auto",
+  "usage_db_host": "node4"
 }

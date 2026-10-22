@@ -10,7 +10,8 @@
 | `claude-<conta>-login` | login sem navegador (imprime a URL; cole o código) |
 | `claude-usage-<conta>` | `usage-all <conta>` |
 | `claude-whoami` | e-mail e plano de cada diretório; qual é o `claude` puro |
-| `usage-all [-v] [--json] [conta…]` | cota de todas as contas + TOTAL; `--json` para scripts |
+| `usage-all [-v] [--json] [--ao-vivo] [conta…]` | cota de todas as contas + TOTAL, do banco do `usage-hist` quando fresco (`--ao-vivo` = API); `--json` para scripts |
+| `usage-hist [painel\|dia [data]\|semana\|calibrar\|alertas\|estado\|coletar\|instalar\|remover] [--conta C] [--json]` | histórico de uso no SQLite do node4: hoje, ritmo, previsão, por hora, por projeto (≈pts), alertas; `coletar` é o que o timer roda a cada 5 min |
 | `usage-sessoes [-v] [--horas N] [--conta C] [--maquinas a,b] [--json] [--tudo]` | quem gasta cada conta em todas as máquinas, com a cota ao lado: resumido por pasta e tipo; `-v` cada sessão e processo |
 | `codex-usage [-v]` | cota do Codex |
 | `claude-last [-a] [pasta]`, `--pick [N]`, `--as CONTA`, `--projects` | conversas por conta; cópia entre contas; lista de projetos da máquina |

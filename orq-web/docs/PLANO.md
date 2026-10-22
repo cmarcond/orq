@@ -313,6 +313,112 @@ numa prévia editável e só salva ao confirmar.
 Tamanho estimado: ~900 linhas (sets.py ~200, handlers ~150, supervisor ~60, app.js ~200, testes ~300), mais docs.
 Ordem sugerida: supervisor (5.2) → sets.py e rotas sem líder → página → líder e tarefas → snapshot → QA e docs.
 
+## Fase 6 — histórico de uso: coletor a cada 5 min, banco SQLite e comandos que calculam sobre ele  ✅ feita em 2026-10-22
+
+**Por quê.** A API de cota (`/api/oauth/usage`, não documentada) só diz a porcentagem *de agora* de cada janela. Sem
+guardar amostras não existe "quanto gastei hoje", "a que ritmo", "quando acaba" nem "quanto um ponto de cota vale
+em tokens". E o `usage-all`, a página do orq e a troca automática de conta consultam a API cada um por si, o que
+leva a 429 (`rate_limit_error`) em rajadas. Um coletor só, a cada 5 minutos, resolve as duas coisas.
+
+Decisões (2026-10-22, padrões assumidos; o autor revisa depois de usar): banco **só no node4** (sempre ligado; o
+laptop consulta por ssh); guarda **tudo** (mensagens e cota; retratos de processos por 14 dias); a página do orq
+continua lendo o `usage-all --json`, que passa a vir do banco (integração própria fica para 6.8).
+
+### 6.1 Peças
+
+| peça | onde | o que faz |
+|---|---|---|
+| `bin/usage-hist` (novo, claude-multiconta) | node4 | coletor (`coletar`), instalador do timer (`instalar`/`remover`/`estado`) e todos os relatórios (`painel`, `dia`, `semana`, `calibrar`, `alertas`); também a biblioteca de banco e cálculos que o `usage-all` e o `usage-sessoes` carregam |
+| `usage-coletor.timer` (systemd de usuário) | node4 | roda `usage-hist coletar` a cada 5 min, sobrevive a reboot (linger), log no journal |
+| `~/.local/share/claude-multiconta/usage.db` (`USAGE_DB`) | node4 | SQLite em WAL; um escritor (o coletor, com trava), vários leitores |
+| `usage-sessoes --agente --desde T` | cada máquina | modo do agente que devolve as respostas (uma linha por mensagem) desde T, mais prompts e processos |
+| `usage-all`, `usage-sessoes` | qualquer máquina | leem o banco quando ele tem menos de 10 min (`--ao-vivo` força a API/varredura); do laptop, por ssh ao node4 (`usage_db_host` no accounts.json) |
+
+### 6.2 Coleta (a cada 5 min)
+
+1. **Cota**: `get_windows` do `usage-all` para cada conta, em paralelo; cada janela (`session`, `weekly_all`,
+   `weekly_scoped` por modelo) vira uma amostra `(ts, conta, tipo, escopo, %, resets_at)`. Erro (429, token) vai
+   para `quota_err` e não interrompe as outras contas. Com 429, a próxima rodada espera em dobro (até 30 min).
+2. **Consumo**: em todas as máquinas, em paralelo, uma conexão ssh cada (o script vai pelo stdin, como o
+   `usage-sessoes`), o agente devolve as respostas desde a última coleta bem-sucedida daquela máquina menos 15 min
+   (sem estado na máquina: a sobreposição é deduplicada pela chave da mensagem). Primeira coleta: 7 dias para
+   trás (`--desde-horas`), para a calibração já ter dados. Máquina fora do ar: na volta, a janela cobre o buraco,
+   porque as conversas ficam gravadas nela. A cota, ao contrário, não se recupera: buraco de cota fica marcado.
+3. **Processos**: o retrato dos processos do claude vivos em cada máquina (conta, pasta, tipo, tmux, quem lançou).
+4. **Saúde**: uma linha por máquina por rodada (`runs`: ok/erro, duração), para o `estado` e os alertas.
+
+### 6.3 Esquema
+
+```
+quota(ts, account, kind, scope, pct, resets_at, severity)        PK (ts, account, kind, scope)
+quota_err(ts, account, err)
+messages(key PK, ts, host, account, session, project, cwd, entrypoint, model,
+         input, output, cache_new, cache_read, sub)              key = id da mensagem | requestId
+sessions(account, session PK, host, project, cwd, entrypoint, prompt, first_ts, last_ts)
+processes(ts, host, pid, account, kind, cwd, tmux, parent, session_arg, seconds, last_activity)
+runs(ts, host, ok, err, seconds)
+meta(key PK, value)                                              versão do esquema, último 429
+```
+Sem texto das conversas: só números, sessão, pasta, modelo e o começo do prompt das sessões (o que identifica um
+script). Tamanho esperado: poucos MB por mês.
+
+### 6.4 Cálculos
+
+- **Consumo no intervalo** (`consumed`): soma das subidas entre amostras consecutivas da mesma janela; se o
+  `resets_at` mudou ou a % caiu, houve reset e conta a % nova a partir de zero. Vale para 5h e 7d.
+- **Hoje** por conta: pontos da semana (7d) consumidos desde a meia-noite local, e pontos da janela de 5h.
+- **Ritmo**: pontos/h na última hora e nas últimas 6 h; **previsão**: horas até 100% no ritmo de 6 h, comparada ao
+  reset ("acaba antes do reset" vira alerta); **frota**: pontos livres somados e em quantos dias acabam no ritmo
+  de 24 h.
+- **Calibração tokens → pontos**: por conta, nos últimos 7 dias, `peso dos tokens / pontos de 7d consumidos`
+  (o peso pondera entrada 1, cache novo 1,25, cache lido 0,1, saída 5). Com isso o `usage-sessoes` e o `dia`
+  mostram **pontos estimados por sessão e por projeto**, não só a fatia relativa. Só com 5+ pontos de amostra.
+- **Perfil**: consumo por hora do dia e por dia da semana (quando você usa).
+- **Alertas** (`usage-hist alertas` e no painel):
+  - *subiu por script*: 5+ pontos de 5h em 30 min, 80%+ vindos de sessões `sdk/-p` (o caso do `claude-diario`);
+  - *subiu sem consumo nas máquinas*: a cota subiu e os tokens vistos explicam menos de 20% (claude.ai, celular
+    ou máquina fora do ar);
+  - *acaba antes do reset*: previsão de 7d ou 5h antes do horário de reset;
+  - *processo esquecido*: processo do claude parado há mais de 1 dia;
+  - *coletor parado*: última coleta há mais de 15 min, ou máquina sem resposta há mais de 1 h.
+
+### 6.5 Comandos
+
+| comando | o que mostra |
+|---|---|
+| `usage-hist` | painel: por conta, 5h e 7d agora, **hoje**, ritmo, previsão, **barras das últimas 24 h**; frota; alertas; idade da última coleta |
+| `usage-hist dia [AAAA-MM-DD]` | o dia: pontos por conta, por hora (barras) e os projetos/sessões que mais gastaram, em pontos estimados |
+| `usage-hist semana` | 7 dias × contas em pontos, total por dia, perfil por hora do dia |
+| `usage-hist calibrar` | tokens por ponto de cada conta e o tamanho da amostra |
+| `usage-hist alertas` | só os alertas (para um cron de aviso, depois) |
+| `usage-hist coletar` / `instalar` / `remover` / `estado` | coleta uma vez; instala/remove o timer; saúde do coletor e do banco |
+| `usage-all` | o de sempre, agora do banco (instantâneo, sem 429), com "do banco · há N min" no rodapé; `--ao-vivo` |
+| `usage-sessoes` | o de sempre, agora do banco, com **pontos estimados** por linha; `--ao-vivo` |
+
+Todos com `--json`. No laptop, sem banco local, os comandos rodam no node4 por ssh (`usage_db_host`), e o
+`usage-all` cai na API se o ssh não responder em 8 s.
+
+### 6.6 Testes
+
+- **Unidade** (`tests/test_usage_hist.py`): esquema e inserção idempotente; `consumed` com subidas, reset por
+  `resets_at` e queda de %; hoje com fuso local; ritmo, previsão e frota; calibração; cada alerta; agente
+  `--desde` (janela, dedupe, subagente, prompt).
+- **Interface**: cada relatório (`painel`, `dia`, `semana`, `calibrar`, `alertas`, `estado`) gerado sobre um banco
+  de exemplo, conferindo as linhas da tabela; `coletar` ponta a ponta com a API e o ssh falsos; `usage-all` e
+  `usage-sessoes` lendo o banco fresco, caindo para ao vivo com banco velho, e com `--ao-vivo`.
+- **Real**: timer instalado no node4, 3 rodadas, comandos no node4 e no laptop.
+
+### 6.7 Deploy
+
+`usage-hist` nos dois lugares (`~/.local/bin`), `usage-all` e `usage-sessoes` novos; `usage_db_host: "node4"` no
+accounts.json (repositório e laptop); `usage-hist instalar` no node4 com a primeira coleta de 7 dias.
+
+### 6.8 Depois (não nesta rodada)
+
+Página do orq lendo o banco direto (gráfico de 24 h por conta, alertas como toast); a troca automática de conta
+usando a previsão para trocar *antes* de acabar; aviso por notificação (ntfy/e-mail) dos alertas; relatório
+semanal automático.
+
 ---
 
 ## Estimativa e ordem
