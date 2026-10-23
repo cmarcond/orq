@@ -14,6 +14,7 @@ from .external import External
 
 USAGE_EVERY = 150
 HISTORY_EVERY = 60  # o coletor grava a cada 5 min; ler o banco é barato (~0,2 s)
+ACCOUNT_TTL = 30  # s: o painel de uma conta, pedido sob demanda, vale por isso
 AGENTS_EVERY = 15
 PROJECTS_TTL = 60
 OPEN_WINDOW = 60  # s desde o último pedido para considerar a página aberta
@@ -30,6 +31,7 @@ class StateCache:
         self.usage_ts = 0.0
         self.history: Dict[str, Any] = {}  # usage-hist painel --json; {} sem banco
         self.history_ts = 0.0
+        self.account_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # conta -> (quando, painel)
         self.agents: List[dict] = []
         self.links: List[dict] = []  # vínculos entre agentes (orq-agent links), de todas as máquinas
         self.agents_ts = 0.0
@@ -54,6 +56,19 @@ class StateCache:
         h = fn(self.usage_host) if fn else {}
         with self.lock:
             self.history, self.history_ts = h, self.clock()
+
+    def account_detail(self, name: str) -> Dict[str, Any]:
+        """O painel de uma conta (usage-hist conta), com cache curto: abrir e fechar não refaz a consulta."""
+        with self.lock:
+            hit = self.account_cache.get(name)
+        if hit and self.clock() - hit[0] < ACCOUNT_TTL:
+            return hit[1]
+        fn = getattr(self.ext, "account", None)
+        data = fn(self.usage_host, name) if fn else {}
+        if data:
+            with self.lock:
+                self.account_cache[name] = (self.clock(), data)
+        return data
 
     def refresh_usage(self) -> None:
         u = self.ext.usage(self.usage_host)

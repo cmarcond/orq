@@ -370,3 +370,18 @@ def test_agent_messages_since(tmp_path):
     assert sorted(m["key"] for m in msgs) == ["m1|rm1", "m2|rm2", "m9|rm9"]
     assert next(m for m in msgs if m["key"] == "m9|rm9")["sub"] == 1 and all(m["session"] == "s1" for m in msgs)
     assert info["work3|s1"]["prompt"] == "Você vai auditar" and info["work3|s1"]["entrypoint"] == "sdk-cli"
+
+
+def test_conta_panel_data_and_text(conn):
+    busy_db(conn)
+    text, d = H.conta(conn, NOW, LABELS, "work3")
+    assert d["account"] == "work3" and d["label"] == "Work 3" and d["7d"]["pct"] == pytest.approx(34.75)
+    assert len(d["hourly_24h"]) == 24 and len(d["days_7"]) == 7 and d["days_7"][-1]["pts"] is not None
+    assert d["week"]["end"] == H.iso(R7) and d["week"]["start"] == H.iso(R7 - dt.timedelta(days=7))
+    assert d["week"]["series"] and all(len(s) == 2 for s in d["week"]["series"])
+    assert len(d["week"]["series"]) <= 10  # uma amostra por hora (100 amostras a cada 5 min = ~8 h)
+    assert {p["folder"] for p in d["projects_7d"]} == {"claude-diario", "orq"} and all(p["account"] == "work3" for p in d["projects_7d"])
+    assert d["rate_6h"] == pytest.approx(3.0, rel=0.05)
+    assert text.startswith("Work 3 · semana 35% · reset em 3 d 0 h") and "últimas 24 h" in text and "o que mais gastou em 7 dias" in text
+    empty_text, empty = H.conta(H.connect(":memory:"), NOW, LABELS, "gmail")
+    assert empty["7d"] is None and empty["week"]["series"] == [] and empty_text.startswith("Gmail")

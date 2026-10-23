@@ -29,6 +29,19 @@ O cartão TOTAL mostra os pontos gastos pela frota em 24 h e avisa se a coleta p
 coletor parado) aparecem como toast, cada um uma vez a cada 6 h. Sem o `usage-hist`, a página continua só com
 a cota.
 
+**Clicar no cartão de uma conta** abre o painel dela (na janela da prévia de arquivos; Esc ou ✕ fecha):
+
+- cinco números: % da semana e da janela de 5 h com o tempo até o reset, `hoje`, ritmo e a previsão (o tempo
+  até 100%, em vermelho quando vem antes do reset);
+- **semana até o reset**: a % usada desde o início da janela semanal (linha cheia), o ritmo ideal da janela
+  (tracejado cinza, de 0% no início a 100% no reset), a marca de agora e a projeção no ritmo atual (tracejado
+  na cor da conta, até o reset ou, em vermelho, até onde bate 100%);
+- **últimas 24 h** (pontos por hora) e **últimos 7 dias** (pontos por dia, com o valor em cima);
+- **o que mais gastou**, em 24 h ou 7 dias: máquina, pasta, tipo, sessões e ≈pts;
+- os alertas da conta e a calibração (quantos tokens valem 1 ponto).
+
+Os dados vêm de `GET /api/conta/<nome>` (`usage-hist conta NOME --json`, com cache de 30 s).
+
 ## 4.2 Abas: uma linha por máquina
 
 Cada máquina tem uma linha com as abas dos agentes dela e um **+** para abrir um projeto ali. A aba

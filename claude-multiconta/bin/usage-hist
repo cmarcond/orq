@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """usage-hist: histórico de uso das contas do Claude Code, coletado a cada 5 min num banco SQLite.
 
-Uso: usage-hist [painel | dia [AAAA-MM-DD] | semana | calibrar | alertas | estado] [--conta C] [--json]
+Uso: usage-hist [painel | conta NOME | dia [AAAA-MM-DD] | semana | calibrar | alertas | estado] [--conta C] [--json]
      usage-hist coletar [--desde-horas N]      uma coleta agora (o timer faz isso a cada 5 min)
      usage-hist instalar | remover             timer do systemd de usuário (usage-coletor.timer)
 
@@ -605,16 +605,83 @@ def source_line(conn, now: dt.datetime) -> str:
     return s
 
 
-def project_rows(conn, t0: dt.datetime, t1: dt.datetime, tpp: Dict[str, Optional[float]], labels: Dict[str, str], limit: int = 12) -> List[List[str]]:
+def project_data(conn, t0: dt.datetime, t1: dt.datetime, tpp: Dict[str, Optional[float]], account: Optional[str] = None, limit: int = 12) -> List[dict]:
+    """O que mais gastou no intervalo: por conta, máquina, pasta e tipo, com sessões, peso e ≈pts."""
+    where, params = ("AND m.account = ?", (account,)) if account else ("", ())
     q = f"""SELECT m.account, m.host, m.cwd AS cwd, CASE WHEN m.entrypoint='cli' THEN 'interativo' ELSE 'script' END AS kind,
               COUNT(DISTINCT m.session) AS ns, {WEIGHT_SQL} AS w
-            FROM messages m WHERE m.ts >= ? AND m.ts < ? GROUP BY m.account, m.host, m.cwd, kind ORDER BY w DESC LIMIT ?"""
-    rows = []
-    for r in conn.execute(q, (iso(t0), iso(t1), limit)):
-        t = tpp.get(r["account"])
-        rows.append([labels.get(r["account"], r["account"]), r["host"], os.path.basename(r["cwd"] or "?")[:24], r["kind"], str(r["ns"]),
-                     f"≈{num(r['w'] / t)}" if t else "?"])
-    return rows
+            FROM messages m WHERE m.ts >= ? AND m.ts < ? {where} GROUP BY m.account, m.host, m.cwd, kind ORDER BY w DESC LIMIT ?"""
+    out = []
+    for r in conn.execute(q, (iso(t0), iso(t1)) + params + (limit,)):
+        k = tpp.get(r["account"])
+        out.append({"account": r["account"], "host": r["host"], "folder": os.path.basename(r["cwd"] or "?"), "kind": r["kind"],
+                    "sessions": r["ns"], "weight": r["w"] or 0.0, "pts": (r["w"] / k) if k else None})
+    return out
+
+
+def project_rows(conn, t0: dt.datetime, t1: dt.datetime, tpp: Dict[str, Optional[float]], labels: Dict[str, str], limit: int = 12) -> List[List[str]]:
+    return [[labels.get(r["account"], r["account"]), r["host"], r["folder"][:24], r["kind"], str(r["sessions"]),
+             f"≈{num(r['pts'])}" if r["pts"] is not None else "?"] for r in project_data(conn, t0, t1, tpp, limit=limit)]
+
+
+def week_series(conn, account: str, t0: dt.datetime, t1: dt.datetime) -> List[Tuple[str, float]]:
+    """A % da semana entre t0 e t1, uma amostra por hora (a última de cada hora), para o gráfico."""
+    out: Dict[str, Tuple[str, float]] = {}
+    for r in conn.execute("SELECT ts, pct FROM quota WHERE account=? AND kind='weekly_all' AND scope='' AND ts >= ? AND ts <= ? ORDER BY ts",
+                          (account, iso(t0), iso(t1))):
+        out[r["ts"][:13]] = (r["ts"], r["pct"])
+    return list(out.values())
+
+
+def conta(conn, now: dt.datetime, labels: Dict[str, str], account: str) -> Tuple[str, dict]:
+    """Tudo de uma conta, para o painel da página e para o terminal: agora, hoje, ritmo, previsão, as 24 h por
+    hora, os 7 dias, a curva da semana (com o reset) e o que mais gastou em 24 h e em 7 dias."""
+    q = latest_quota(conn, now).get(account, {})
+    w5, w7 = window_of(q, "session"), window_of(q, "weekly_all")
+    reset = parse(w7["resets_at"]) if w7 else None
+    start = (reset - dt.timedelta(days=7)) if reset else now - dt.timedelta(days=7)
+    end = reset or now
+    t24 = now - dt.timedelta(hours=24)
+    today = consumed_between(conn, account, "weekly_all", local_midnight(now), now)
+    fs = first_sample(conn, account)
+    r6, r_partial = rate_best(conn, account, "weekly_all", now, 6)
+    h, before = forecast(w7["pct"], r6, reset, now) if w7 else (None, False)
+    names = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
+    days = []
+    for i in range(6, -1, -1):
+        d0 = local_midnight(now, i)
+        loc = d0.astimezone()
+        days.append({"day": loc.strftime("%Y-%m-%d"), "label": f"{names[loc.weekday()]} {loc.strftime('%d/%m')}",
+                     "pts": consumed_between(conn, account, "weekly_all", d0, min(now, d0 + dt.timedelta(days=1)))})
+    cal = calibrate(conn, account, now)
+    tpp = {account: cal["tokens_per_point"]}
+    label = labels.get(account, account)
+    data = {
+        "account": account, "label": label, "now": iso(now), "5h": w5, "7d": w7,
+        "today_7d": today, "today_partial": bool(fs and fs > local_midnight(now)), "rate_6h": r6, "rate_partial": r_partial,
+        "hours_to_100": h, "before_reset": before,
+        "hourly_24h": hourly(conn, account, "weekly_all", t24, 24), "t24": iso(t24),
+        "days_7": days,
+        "week": {"start": iso(start), "end": iso(end), "reset_at": iso(reset) if reset else None, "series": week_series(conn, account, start, now)},
+        "calibration": cal,
+        "projects_24h": project_data(conn, t24, now, tpp, account, limit=8),
+        "projects_7d": project_data(conn, now - dt.timedelta(days=7), now, tpp, account, limit=8),
+        "alerts": [a for a in alerts(conn, now, labels) if f" {label}:" in a],
+        "first_sample": iso(fs) if fs else None,
+    }
+    lines = [f"{label} · semana {w7['pct']:.0f}%" if w7 else label]
+    if w7 and reset:
+        lines[0] += f" · reset em {dur((reset - now).total_seconds() / 3600)}"
+    s = [f"hoje +{num(today)}" if today is not None else "hoje —", f"ritmo {num(r6, 2)}/h" if r6 is not None else "ritmo —"]
+    if h is not None:
+        s.append(("⚠ " if before else "") + f"100% em {dur(h)}")
+    lines += ["  " + " · ".join(s), "", "  últimas 24 h  " + spark(data["hourly_24h"]),
+              "  7 dias       " + "  ".join(f"{d['label'][:3]} {num(d['pts']) if d['pts'] is not None else '—'}" for d in days), ""]
+    rows = [[r["host"], r["folder"][:24], r["kind"], str(r["sessions"]), f"≈{num(r['pts'])}" if r["pts"] is not None else "?"] for r in data["projects_7d"]]
+    if rows:
+        lines += ["  o que mais gastou em 7 dias"] + ["  " + l for l in table(["máquina", "pasta", "tipo", "sessões", "≈pts"], [rows], right=(3, 4))]
+    lines += ["  " + a for a in data["alerts"]]
+    return "\n".join(lines), data
 
 
 def dia(conn, now: dt.datetime, labels: Dict[str, str], day: Optional[str] = None) -> Tuple[str, dict]:
@@ -846,8 +913,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     ap = argparse.ArgumentParser(prog="usage-hist", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", nargs="?", default="painel",
-                    choices=["painel", "dia", "semana", "calibrar", "alertas", "estado", "coletar", "instalar", "remover", "cota-json", "sessoes-json"])
-    ap.add_argument("data", nargs="?", help="dia AAAA-MM-DD (com `dia`)")
+                    choices=["painel", "conta", "dia", "semana", "calibrar", "alertas", "estado", "coletar", "instalar", "remover", "cota-json", "sessoes-json"])
+    ap.add_argument("data", nargs="?", help="dia AAAA-MM-DD (com `dia`) ou a conta (com `conta`)")
     ap.add_argument("--conta", action="append")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--desde-horas", type=float, default=BACKFILL_H)
@@ -892,6 +959,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "semana": lambda: semana(conn, now, labels),
         "calibrar": lambda: calibrar_txt(conn, now, labels),
         "estado": lambda: estado(conn, now),
+        "conta": lambda: conta(conn, now, labels, a.data or ""),
     }[a.cmd]()
     print(json.dumps(data, ensure_ascii=False, default=str, indent=1) if a.json else text)
     return 0

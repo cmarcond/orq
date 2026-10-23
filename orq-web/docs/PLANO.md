@@ -423,10 +423,19 @@ aviso de coleta parada; os alertas ⚠ viram toast, um a um a cada 6 h (lembrado
 `format.js` (`sparkSvg`, `histSummary`, `freshAlerts`) com testes no Node. De quebra, no celular o botão de
 conjuntos deixou de cobrir o título do TOTAL.
 
-### 6.9 Depois (não nesta rodada)
+### 6.9 Painel da conta  ✅ feito em 2026-10-23
 
-A troca automática de conta usando a previsão para trocar *antes* de acabar; aviso por notificação
-(ntfy/e-mail) dos alertas; relatório semanal automático; um gráfico maior por conta ao clicar no cartão.
+Clicar no cartão de uma conta abre o painel dela: cinco números (semana, 5 h, hoje, ritmo, previsão), a curva da
+semana até o reset com o ritmo ideal e a projeção no ritmo atual, as 24 h por hora, os 7 dias e o que mais gastou
+(24 h ou 7 dias, com ≈pts). `usage-hist conta NOME [--json]`, `GET /api/conta/<nome>` (cache de 30 s), gráficos em
+`static/js/charts.js` (SVG puro, testes no Node). De quebra: o servidor ignora um segundo SIGTERM durante o
+encerramento (o `uv run` repassa o seu, e a segunda interrupção caía no meio da limpeza).
+
+### 6.10 Depois (não nesta rodada)
+
+Selo de alerta no cartão da conta (hoje só toast); aba "uso" com a tabela do `usage-sessoes`; a troca automática
+de conta usando a previsão para trocar *antes* de acabar; aviso por notificação (ntfy/e-mail) dos alertas;
+relatório semanal automático.
 
 ---
 

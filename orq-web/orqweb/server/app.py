@@ -153,6 +153,9 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
     open_browser(url)
 
     def on_term(*_):
+        # um segundo SIGTERM (o `uv run` repassa o seu) cairia no meio da limpeza abaixo: ignora os próximos
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, on_term)

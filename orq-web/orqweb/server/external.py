@@ -113,6 +113,23 @@ class External:
             return {}
         return data if isinstance(data, dict) and isinstance(data.get("accounts"), dict) else {}
 
+    def account(self, host: Optional[str], name: str) -> Dict[str, Any]:
+        """`usage-hist conta NOME --json`: o painel de uma conta (24 h, 7 dias, curva da semana, projetos).
+        {} se não houver usage-hist ou banco."""
+        import shlex
+
+        try:
+            if host is None or host == self.local:
+                r = self.run([str(self.bin / "usage-hist"), "conta", name, "--json"], 30)
+            else:
+                r = self.run(
+                    self.ssh(host, "~/.local/bin/usage-hist conta " + shlex.quote(name) + " --json"), 45
+                )
+            data = json.loads(r.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return {}
+        return data if isinstance(data, dict) and data.get("account") == name else {}
+
     # ---- por máquina
     def _local_or_ssh(self, host: str, local: List[str], remote: str, timeout: float):
         return self.run(local, timeout) if host == self.local else self.run(self.ssh(host, remote), timeout)

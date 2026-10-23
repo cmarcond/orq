@@ -1259,3 +1259,16 @@ def test_opening_a_label_closes_orphan_levels_from_a_previous_life(server, sets_
     j = wait_job(port, "y")
     assert j["erros"] == {} and j["top"] == "y~professor@laptop", j
     assert [s[1] for s in ext.spawned] == ["x@laptop", "y@laptop", "y~professor@laptop"]
+
+
+def test_account_panel_route(server):
+    port, ext, state = server
+    ext.account = lambda host, name: {"account": name, "hourly_24h": [1] * 24}
+    status, body, _ = req(port, "GET", "/api/conta/gmail")
+    assert status == 200 and body["account"] == "gmail"
+    assert req(port, "GET", "/api/conta/ninguem")[0] == 404
+    state.account_cache.clear()
+    ext.account = lambda host, name: {}
+    status, body, _ = req(port, "GET", "/api/conta/gmail")
+    assert status == 503 and "sem histórico" in body["err"]
+    assert req(port, "GET", "/api/conta/gmail", token="errado")[0] == 403

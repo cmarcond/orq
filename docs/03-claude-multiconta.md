@@ -163,6 +163,7 @@ de usuário (`usage-coletor.timer`, instalado com `usage-hist instalar`) roda `u
 
 ```
 usage-hist                 # painel: por conta, 5h e 7d agora, hoje, ritmo, previsão, barras das últimas 24 h; frota; alertas
+usage-hist conta NOME       # uma conta: agora, hoje, ritmo, previsão, 24 h, 7 dias e o que mais gastou
 usage-hist dia [AAAA-MM-DD] # pontos do dia por conta, por hora, e os projetos que mais gastaram (≈pts)
 usage-hist semana          # 7 dias × contas e o perfil por hora do dia
 usage-hist calibrar        # tokens por ponto de cada conta

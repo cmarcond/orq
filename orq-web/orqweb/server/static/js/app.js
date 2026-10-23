@@ -2,6 +2,7 @@
 import { esc, left, ago, md, withAttachments, fmtBytes, fileKind, sparkSvg, histSummary, freshAlerts } from './format.js';
 import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
+import { weekChart, hourChart, dayChart } from './charts.js';
 
 const T = new URLSearchParams(location.search).get('t') || '';
 const H = { 'X-Orq-Token': T, 'Content-Type': 'application/json' };
@@ -181,13 +182,14 @@ function renderUsage(us, hist) {
     Object.entries(us)
     .filter(([n]) => !n.startsWith('_'))
     .map(
-      ([n, u]) => `<div class="ucard" style="--acc:${colorOf(n)}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
+      ([n, u]) => `<div class="ucard${h && h.accounts && h.accounts[n] ? ' clickable' : ''}" data-acc="${esc(n)}" style="--acc:${colorOf(n)}" title="${h ? 'clique: painel da conta (24 h, 7 dias, semana até o reset, o que mais gastou)' : ''}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
       }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}${histBlock(h, n, top)}</div>`,
     )
     .join('');
   $('bell').onclick = askNotify;
   $('sets').onclick = openSetsPicker;
+  $('usage').querySelectorAll('.ucard.clickable').forEach((el) => (el.onclick = () => openAccountPanel(el.dataset.acc)));
   const tot = $('usage').querySelector('.ucard.total');
   if (tot) tot.onclick = () => $('usage').classList.toggle('open');
 }
@@ -716,6 +718,7 @@ function openView(base, f) {
   v.querySelector('.vname').textContent = f.name;
   v.querySelector('.vsize').textContent = fmtBytes(f.size);
   v.querySelector('.vdl').href = fileUrl(base, f.name, true);
+  v.querySelector('.vdl').hidden = false;
   const body = v.querySelector('.vbody');
   if (k.view === 'image') body.innerHTML = `<img src="${url}" alt="${esc(f.name)}">`;
   else if (k.view === 'pdf') body.innerHTML = `<iframe src="${url}" title="${esc(f.name)}"></iframe>`;
@@ -736,6 +739,72 @@ function openView(base, f) {
       })
       .catch(() => (body.innerHTML = '<p class="small bad">não consegui ler o arquivo</p>'));
   }
+}
+// ---------------------------------------------------------------- painel de uma conta (histórico de uso)
+// Clicar no cartão de uma conta abre, na mesma janela da prévia de arquivos, o usage-hist da conta: a semana até o
+// reset (com o ritmo ideal e a projeção), as últimas 24 h por hora, os 7 dias e o que mais gastou.
+const ptsTxt = (x, d = 1) => (x == null ? '—' : x.toFixed(d).replace('.', ','));
+async function openAccountPanel(name) {
+  const v = $('view');
+  v.hidden = false;
+  v.querySelector('.vname').textContent = `Painel · ${LAB[name] || name}`;
+  v.querySelector('.vsize').textContent = '';
+  v.querySelector('.vdl').hidden = true;
+  const body = v.querySelector('.vbody');
+  body.innerHTML = '<div class="apanel"><div class="small mute">carregando…</div></div>';
+  const d = await api(`/api/conta/${encodeURIComponent(name)}`);
+  if (v.hidden || !v.querySelector('.vname').textContent.endsWith(LAB[name] || name)) return;
+  if (d.err) {
+    body.innerHTML = `<div class="apanel"><p class="small bad">${esc(d.err)}</p></div>`;
+    return;
+  }
+  body.innerHTML = `<div class="apanel" style="--acc:${colorOf(name)}">${accountPanelHtml(d)}</div>`;
+  body.querySelectorAll('.ptabs button').forEach(
+    (b) =>
+      (b.onclick = () => {
+        body.querySelectorAll('.ptabs button').forEach((x) => x.classList.toggle('on', x === b));
+        body.querySelectorAll('.ptable').forEach((x) => (x.hidden = x.dataset.p !== b.dataset.p));
+      }),
+  );
+}
+function accountPanelHtml(d) {
+  const w7 = d['7d'] || {};
+  const w5 = d['5h'] || {};
+  const star = (p) => (p ? '*' : '');
+  const resetIn = w7.resets_at ? left(Math.max(0, (new Date(w7.resets_at) - Date.now()) / 1e3)) : '';
+  const kpis = [
+    ['semana', `${ptsTxt(w7.pct, 0)}%`, resetIn ? `reset em ${resetIn}` : ''],
+    ['5 h', `${ptsTxt(w5.pct, 0)}%`, w5.resets_at ? `reset em ${left(Math.max(0, (new Date(w5.resets_at) - Date.now()) / 1e3))}` : 'janela não iniciada'],
+    ['hoje', `+${ptsTxt(d.today_7d)}${star(d.today_partial)}`, 'pontos da semana'],
+    ['ritmo', `${ptsTxt(d.rate_6h, 2)}${star(d.rate_partial)}`, 'pontos/h, últimas 6 h'],
+    ['previsão', d.hours_to_100 == null ? '—' : left(Math.round(d.hours_to_100 * 3600)), d.hours_to_100 == null ? 'ritmo baixo demais para prever' : d.before_reset ? '⚠ até 100%, antes do reset' : 'até 100%, depois do reset'],
+  ]
+    .map(([k, val, sub]) => `<div class="kpi${k === 'previsão' && d.before_reset ? ' bad' : ''}"><span class="k">${k}</span>${val ? `<b>${esc(val)}</b>` : ''}<span class="s">${esc(sub)}</span></div>`)
+    .join('');
+  const rows = (list) =>
+    (list || []).length
+      ? `<table><tr><th>máquina</th><th>pasta</th><th>tipo</th><th class="r">sessões</th><th class="r">≈pts</th></tr>${list
+          .map(
+            (r) =>
+              `<tr><td>${esc(r.host)}</td><td title="${esc(r.folder)}">${esc(r.folder)}</td><td>${esc(r.kind)}</td><td class="r">${r.sessions}</td><td class="r">${r.pts == null ? '?' : ptsTxt(r.pts)}</td></tr>`,
+          )
+          .join('')}</table>`
+      : '<p class="small mute">nada no período</p>';
+  const cal = d.calibration && d.calibration.tokens_per_point;
+  const notes = [
+    cal ? `1 ponto ≈ ${(cal / 1e6).toFixed(2).replace('.', ',')}M tokens ponderados (calibração com ${ptsTxt(d.calibration.points)} pontos em 7 dias)` : '≈pts aparece quando a calibração tiver 3 pontos de amostra',
+    d.first_sample ? `cota coletada desde ${new Date(d.first_sample).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}; * = desde o início da coleta` : '',
+  ].filter(Boolean);
+  return `<div class="kpis">${kpis}</div>
+    ${(d.alerts || []).map((a) => `<div class="palert">${esc(a)}</div>`).join('')}
+    <h4>semana até o reset <span class="mute small">— linha cheia: % usada · tracejado cinza: ritmo da janela · tracejado colorido: projeção no ritmo atual</span></h4>
+    ${weekChart(d.week, d.now, d.rate_6h, window.innerWidth < 600 ? { w: 360, h: 220 } : undefined)}
+    <div class="pcols"><div><h4>últimas 24 h <span class="mute small">pontos por hora</span></h4>${hourChart(d.hourly_24h || [], d.t24)}</div>
+      <div><h4>últimos 7 dias <span class="mute small">pontos por dia</span></h4>${dayChart(d.days_7 || [])}</div></div>
+    <h4>o que mais gastou</h4>
+    <div class="ptabs"><button class="ghost on" data-p="24">24 h</button><button class="ghost" data-p="7">7 dias</button></div>
+    <div class="ptable" data-p="24">${rows(d.projects_24h)}</div><div class="ptable" data-p="7" hidden>${rows(d.projects_7d)}</div>
+    ${notes.map((n) => `<p class="small mute">${esc(n)}</p>`).join('')}`;
 }
 function closeView() {
   const v = $('view');

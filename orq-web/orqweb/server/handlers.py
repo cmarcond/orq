@@ -40,6 +40,7 @@ AGENT_RE = re.compile(
     r"|link|unlink)$"
 )
 SETS_RE = re.compile(r"^/api/conjuntos/([^/]+)(?:/(open|delete))?$")
+ACCOUNT_RE = re.compile(r"^/api/conta/([^/]+)$")
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
 SSH_GAP = 4.0  # s entre duas conexões ssh seguidas à mesma máquina: a segunda, logo atrás, costuma cair
@@ -179,6 +180,9 @@ def make_handler(ctx: Context):
             if u.path == "/api/pipelines":
                 items = [p.summary() for p in pipelines.catalog().values()]
                 return self.reply(200, {"items": items, "default": pipelines.DEFAULT})
+            m = ACCOUNT_RE.match(u.path)
+            if m:
+                return self.account_panel(unquote(m.group(1)))
             if u.path == "/api/conjuntos":
                 return self.sets_list()
             m = SETS_RE.match(u.path)
@@ -499,6 +503,17 @@ def make_handler(ctx: Context):
             """Sobe os níveis de uma receita acima do agente da aba (mesma máquina, pasta e conta)."""
             status, out = run_upgrade(ctx, label, body.get("pipeline") or None)
             return self.reply(status, out)
+
+        # ---- painel de uma conta (histórico de uso)
+        def account_panel(self, name: str) -> None:
+            if name not in ctx.conf.accounts:
+                return self.reply(404, {"err": f"conta desconhecida: {name}"})
+            data = ctx.state.account_detail(name)
+            if not data:
+                return self.reply(
+                    503, {"err": "sem histórico de uso (o usage-hist não respondeu ou não há banco)"}
+                )
+            return self.reply(200, data)
 
         # ---- conjuntos
         def sets_list(self) -> None:

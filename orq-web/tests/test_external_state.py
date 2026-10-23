@@ -495,3 +495,36 @@ def test_history_refreshes_only_with_the_page_open_and_goes_in_the_snapshot():
     bare = S.StateCache(conf, object(), clock=lambda: now[0])
     bare.refresh_history()
     assert bare.snapshot()["history"] == {}
+
+
+def test_account_panel_command_and_cache():
+    body = json.dumps({"account": "gmail", "hourly_24h": [0] * 24})
+    r = FakeRunner({"usage-hist": (0, body)})
+    ext = External(Path("/b"), r)
+    assert ext.account(None, "gmail")["account"] == "gmail" and r.calls[-1] == [
+        "/b/usage-hist",
+        "conta",
+        "gmail",
+        "--json",
+    ]
+    assert ext.account("node4", "gmail") and r.calls[-1][-1] == "~/.local/bin/usage-hist conta gmail --json"
+    assert ext.account(None, "outra") == {}  # resposta de outra conta não vale
+    assert External(Path("/b"), FakeRunner({})).account(None, "gmail") == {}
+    now = [100.0]
+
+    class Ext:
+        n = 0
+
+        def account(self, host, name):
+            self.n += 1
+            return {"account": name}
+
+    conf = type("C", (), {"hosts": [], "accounts": {}, "labels": {}, "colors": {}})()
+    e = Ext()
+    cache = S.StateCache(conf, e, clock=lambda: now[0])
+    cache.account_detail("gmail")
+    cache.account_detail("gmail")
+    assert e.n == 1  # dentro do cache
+    now[0] += S.ACCOUNT_TTL + 1
+    cache.account_detail("gmail")
+    assert e.n == 2
