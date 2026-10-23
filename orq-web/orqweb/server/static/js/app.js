@@ -3,6 +3,7 @@ import { esc, left, ago, md, withAttachments, fmtBytes, fileKind, sparkSvg, hist
 import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
 import { weekChart, hourChart, dayChart } from './charts.js';
+import { usageTableHtml } from './usage.js';
 
 const T = new URLSearchParams(location.search).get('t') || '';
 const H = { 'X-Orq-Token': T, 'Content-Type': 'application/json' };
@@ -179,7 +180,7 @@ function renderUsage(us, hist) {
   const h = hist && hist.accounts ? hist : null;
   const top = h ? Math.max(0, ...Object.values(h.accounts).flatMap((a) => a.last_24h || [])) : 0;
   $('usage').innerHTML =
-    `<span class="tools"><button id="sets" class="ghost" title="conjuntos: abrir vários agentes de uma vez (cada um com prompt próprio, com ou sem professor), salvar as abas abertas como conjunto ou enviar um JSON pronto">⊞ conjuntos</button><button id="bell" class="ghost" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button></span>` +
+    `<span class="tools"><button id="uso" class="ghost" title="uso: quem está gastando cada conta agora, em todas as máquinas (do histórico do usage-hist)">📊 uso</button><button id="sets" class="ghost" title="conjuntos: abrir vários agentes de uma vez (cada um com prompt próprio, com ou sem professor), salvar as abas abertas como conjunto ou enviar um JSON pronto">⊞ conjuntos</button><button id="bell" class="ghost" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button></span>` +
     totalCard(us._total, h) +
     Object.entries(us)
     .filter(([n]) => !n.startsWith('_'))
@@ -191,6 +192,7 @@ function renderUsage(us, hist) {
     .join('');
   $('bell').onclick = askNotify;
   $('sets').onclick = openSetsPicker;
+  $('uso').onclick = () => openUsageView(5);
   $('usage').querySelectorAll('.ucard.clickable').forEach((el) => (el.onclick = () => openAccountPanel(el.dataset.acc)));
   const tot = $('usage').querySelector('.ucard.total');
   if (tot) tot.onclick = () => $('usage').classList.toggle('open');
@@ -766,6 +768,47 @@ async function openAccountPanel(name) {
       (b.onclick = () => {
         body.querySelectorAll('.ptabs button').forEach((x) => x.classList.toggle('on', x === b));
         body.querySelectorAll('.ptable').forEach((x) => (x.hidden = x.dataset.p !== b.dataset.p));
+      }),
+  );
+}
+// ---------------------------------------------------------------- aba "uso": quem está gastando cada conta
+// A tabela do usage-sessoes, a partir do banco do usage-hist (GET /api/uso?horas=5|24|168), na mesma janela do
+// painel. Uma linha de um agente aberto aqui leva à aba dele.
+const normDir = (d) => (d || '').replace(/\/+$/, '');
+const agentAt = (host, cwd) => {
+  const a = agents.find((x) => live(x) && !isLevel(x) && x.host === host && x.dir && normDir(x.dir) === normDir(cwd));
+  return a ? a.label : null;
+};
+async function openUsageView(hours) {
+  const v = $('view');
+  v.hidden = false;
+  v.querySelector('.vname').textContent = 'Uso · quem está gastando cada conta';
+  v.querySelector('.vsize').textContent = '';
+  v.querySelector('.vdl').hidden = true;
+  const body = v.querySelector('.vbody');
+  const tabs = [5, 24, 168].map((h) => `<button class="ghost ${h === hours ? 'on' : ''}" data-h="${h}">${h === 168 ? '7 dias' : `${h} h`}</button>`).join('');
+  body.innerHTML = `<div class="apanel"><div class="ptabs">${tabs}</div><div class="uwrap small mute">carregando…</div></div>`;
+  body.querySelectorAll('.ptabs button').forEach((b) => (b.onclick = () => openUsageView(Number(b.dataset.h))));
+  const d = await api(`/api/uso?horas=${hours}`);
+  if (v.hidden || !v.querySelector('.vname').textContent.startsWith('Uso')) return;
+  const wrap = body.querySelector('.uwrap');
+  if (!wrap) return;
+  if (d.err) {
+    wrap.innerHTML = `<p class="small bad">${esc(d.err)}</p>`;
+    return;
+  }
+  wrap.classList.remove('small', 'mute');
+  const down = Object.keys(d.errors || {});
+  const when = d.collected ? new Date(d.collected).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '?';
+  wrap.innerHTML =
+    usageTableHtml(d, { color: colorOf, agentFor: agentAt }) +
+    `<p class="small mute">parte: fatia de cada linha no consumo da conta na janela · ≈pts: pontos da semana estimados pelos tokens · ●: respondeu nos últimos 10 min · linhas em destaque: agentes abertos aqui (clique para ir à aba)</p>
+     <p class="small mute">coleta das ${esc(when)}${down.length ? ` · sem resposta: ${esc(down.join(', '))}` : ''}</p>`;
+  wrap.querySelectorAll('tr.go').forEach(
+    (tr) =>
+      (tr.onclick = () => {
+        closeView();
+        show(tr.dataset.l);
       }),
   );
 }

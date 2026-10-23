@@ -45,6 +45,18 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .ptabs{display:flex;gap:4px;margin-bottom:4px}.ptabs button.on{color:var(--ink);border-color:var(--line)}
 .apanel table{width:100%;border-collapse:collapse;font-size:12px}.apanel th{text-align:left;color:var(--mute);font-weight:500;border-bottom:1px solid var(--line);padding:4px 6px}
 .apanel td{padding:4px 6px;border-bottom:1px solid var(--line);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.apanel .r{text-align:right}
+/* aba "uso" */
+.usage-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.usage-table th,.usage-table td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.usage-table thead th{color:var(--mute);font-weight:500}
+.usage-table tr.acc th{padding-top:12px;font-size:13px;color:var(--acc);border-bottom:2px solid var(--acc)}.usage-table tr.acc .sw{margin-right:6px}
+.usage-table tr.acc .ah{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:2px 12px;white-space:normal}.usage-table tr.acc .q{color:var(--mute);font-weight:500;font-size:12px}
+.usage-table td.fold{max-width:220px;overflow:hidden;text-overflow:ellipsis}.usage-table .r{text-align:right}.usage-table td.now{color:var(--ok)}
+.usage-table tr.go{cursor:pointer;background:color-mix(in srgb,var(--ok) 7%,transparent)}.usage-table tr.go:hover{background:color-mix(in srgb,var(--ok) 15%,transparent)}
+.usage-table tr.stale td{color:var(--mute);font-style:italic}.usage-table tr.rest td{color:var(--mute)}
+.ubar{display:inline-block;width:60px;height:6px;background:var(--bar);border-radius:3px;vertical-align:middle;overflow:hidden}.ubar i{display:block;height:100%;background:var(--acc,var(--ok))}
+.usage-table tbody tr td .ubar i{background:var(--ink);opacity:.55}
+.uwrap{overflow-x:auto}
 .hrow{margin-top:5px;height:16px}.spark{display:block;width:100%;height:16px}
 .spark rect.on{fill:var(--acc,var(--ink));opacity:.8}.spark rect.off{fill:var(--mute);opacity:.35}.spark rect:hover{opacity:1}
 .hsum{font-size:10.5px;color:var(--mute);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hsum.bad{color:var(--bad);font-weight:600}

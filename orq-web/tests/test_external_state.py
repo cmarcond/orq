@@ -528,3 +528,39 @@ def test_account_panel_command_and_cache():
     now[0] += S.ACCOUNT_TTL + 1
     cache.account_detail("gmail")
     assert e.n == 2
+
+
+def test_usage_table_command_and_cache():
+    body = json.dumps({"hours": 24, "accounts": [{"account": "gmail", "groups": []}]})
+    r = FakeRunner({"usage-hist": (0, body)})
+    ext = External(Path("/b"), r)
+    assert ext.usage_table(None, 24)["hours"] == 24 and r.calls[-1] == [
+        "/b/usage-hist",
+        "uso",
+        "--horas",
+        "24",
+        "--json",
+    ]
+    assert ext.usage_table("node4", 5) and r.calls[-1][-1] == "~/.local/bin/usage-hist uso --horas 5 --json"
+    assert (
+        External(Path("/b"), FakeRunner({"usage-hist": (0, json.dumps({"accounts": {}}))})).usage_table(
+            None, 5
+        )
+        == {}
+    )
+    now = [0.0]
+
+    class Ext:
+        n = 0
+
+        def usage_table(self, host, hours):
+            self.n += 1
+            return {"hours": hours, "accounts": []}
+
+    conf = type("C", (), {"hosts": [], "accounts": {}, "labels": {}, "colors": {}})()
+    e = Ext()
+    cache = S.StateCache(conf, e, clock=lambda: now[0])
+    cache.usage_table(5)
+    cache.usage_table(5)
+    cache.usage_table(24)
+    assert e.n == 2  # 5 h do cache; 24 h é outra entrada

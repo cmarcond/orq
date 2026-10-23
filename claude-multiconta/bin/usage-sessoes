@@ -656,41 +656,68 @@ def box(headers: List[str], groups: List[List[List[str]]], right: Tuple[int, ...
     return out
 
 
-def render_brief(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hours: float, errs: Dict[str, str], now: dt.datetime, top: int = 5, tpp: Optional[Dict[str, Optional[float]]] = None, source: str = "") -> str:
-    """Resumido: uma tabela, um bloco por conta; uma linha por máquina + pasta + tipo (as execuções de um
-    script juntas) e os processos abertos parados há mais de IDLE_MIN minutos (os esquecidos)."""
-    head = f"últimas {hours:g} h"
-    if errs:
-        head += " · sem resposta: " + ", ".join(errs)
-    blocks = []
-    for acc in sorted(by, key=lambda a: (-(q.get(a, {}).get("5h") or 0), -by[a]["weight"])):
-        a = by[acc]
+def brief_groups(by: Dict[str, dict], now: dt.datetime, top: int = 5, tpp: Optional[Dict[str, Optional[float]]] = None) -> Dict[str, dict]:
+    """O resumido como dados, por conta: `groups` (uma por máquina + pasta + tipo, as execuções de um script
+    juntas, com parte, peso, ≈pts, se respondeu agora e os processos vivos), `rest` (o que passou de `top`) e
+    `stale` (processos abertos parados há mais de IDLE_MIN). É o que a tabela do terminal e a página mostram."""
+    out: Dict[str, dict] = {}
+    for acc, a in by.items():
         groups: Dict[Tuple[str, str, str], dict] = {}
         for s in a["sessions"]:
             key = (s["host"], os.path.basename(s["cwd"] or "?"), session_kind(s))
-            g = groups.setdefault(key, {"n": 0, "share": 0.0, "w": 0.0, "first": s["first"], "last": s["last"], "now": False})
+            g = groups.setdefault(key, {"host": key[0], "folder": key[1], "kind": key[2], "cwd": s["cwd"] or "", "n": 0, "share": 0.0, "w": 0.0,
+                                        "first": s["first"], "last": s["last"], "now": False, "live": []})
             g["n"] += 1
             g["share"] += s["share"]
             g["w"] += s["weight"]
             g["first"], g["last"] = min(g["first"], s["first"]), max(g["last"], s["last"])
             last = parse_ts(s["last"])
             g["now"] = g["now"] or (last is not None and (now - last).total_seconds() < ACTIVE_MIN * 60)
-        shown = [kv for kv in sorted(groups.items(), key=lambda kv: -kv[1]["share"]) if kv[1]["share"] >= 0.01]
+            g["live"] += [{"pid": p["pid"], "kind": p["kind"], "tmux": p.get("tmux") or "", "parent": p.get("parent") or ""} for p in s.get("live") or []]
         k = (tpp or {}).get(acc)
-        pts = (lambda w: f"≈{w / k:.1f}".replace(".", ",") if k else "?") if tpp is not None else None
-        rows = []
-        for (host, folder, kind), g in shown[:top]:
-            rows.append([host, folder[:24], kind, f"{g['n']}×" if g["n"] > 1 else "", f"{hhmm(g['first'])}–{hhmm(g['last'])}", f"{bar(g['share'])} {g['share'] * 100:>3.0f}%"] + ([pts(g["w"])] if pts else []) + ["●" if g["now"] else ""])
+        for g in groups.values():
+            g["pts"] = g["w"] / k if k else None
+        shown = [g for g in sorted(groups.values(), key=lambda g: -g["share"]) if g["share"] >= 0.01]
         rest = shown[top:]
-        if rest:
-            rows.append(["", f"… mais {len(rest)}", "", "", "", f"{bar(sum(g['share'] for _, g in rest))} {sum(g['share'] for _, g in rest) * 100:>3.0f}%"] + ([pts(sum(g["w"] for _, g in rest))] if pts else []) + [""])
+        stale = []
         for p_ in sorted(a["idle"], key=lambda p_: (p_["host"], p_["cwd"])):
             if p_["kind"] in ("chrome", "daemon"):
                 continue
             la = parse_ts(p_.get("last_activity") or "")
             idle_s = (now - la).total_seconds() if la else p_["seconds"]
             if idle_s >= IDLE_MIN * 60:
-                rows.append([p_["host"], os.path.basename(p_["cwd"] or "?")[:24], "parado", "", f"há {ago(idle_s)}", ""] + ([""] if pts else []) + [""])
+                stale.append({"host": p_["host"], "folder": os.path.basename(p_["cwd"] or "?"), "cwd": p_["cwd"] or "", "pid": p_["pid"],
+                              "kind": p_["kind"], "tmux": p_.get("tmux") or "", "idle_s": idle_s})
+        out[acc] = {
+            "groups": shown[:top],
+            "rest": {"n": len(rest), "share": sum(g["share"] for g in rest), "w": sum(g["w"] for g in rest),
+                     "pts": (sum(g["w"] for g in rest) / k) if k else None} if rest else None,
+            "stale": stale,
+            "weight": a["weight"],
+        }
+    return out
+
+
+def render_brief(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hours: float, errs: Dict[str, str], now: dt.datetime, top: int = 5, tpp: Optional[Dict[str, Optional[float]]] = None, source: str = "") -> str:
+    """Resumido: uma tabela, um bloco por conta; uma linha por máquina + pasta + tipo (as execuções de um
+    script juntas) e os processos abertos parados há mais de IDLE_MIN minutos (os esquecidos)."""
+    head = f"últimas {hours:g} h"
+    if errs:
+        head += " · sem resposta: " + ", ".join(errs)
+    data = brief_groups(by, now, top, tpp)
+    blocks = []
+    for acc in sorted(by, key=lambda a: (-(q.get(a, {}).get("5h") or 0), -by[a]["weight"])):
+        d = data[acc]
+        k = (tpp or {}).get(acc)
+        pts = (lambda w: f"≈{w / k:.1f}".replace(".", ",") if k else "?") if tpp is not None else None
+        rows = []
+        for g in d["groups"]:
+            rows.append([g["host"], g["folder"][:24], g["kind"], f"{g['n']}×" if g["n"] > 1 else "", f"{hhmm(g['first'])}–{hhmm(g['last'])}", f"{bar(g['share'])} {g['share'] * 100:>3.0f}%"] + ([pts(g["w"])] if pts else []) + ["●" if g["now"] else ""])
+        rest = d["rest"]
+        if rest:
+            rows.append(["", f"… mais {rest['n']}", "", "", "", f"{bar(rest['share'])} {rest['share'] * 100:>3.0f}%"] + ([pts(rest["w"])] if pts else []) + [""])
+        for p_ in d["stale"]:
+            rows.append([p_["host"], p_["folder"][:24], "parado", "", f"há {ago(p_['idle_s'])}", ""] + ([""] if pts else []) + [""])
         if not rows:
             rows.append(["", "sem consumo", "", "", "", ""] + ([""] if pts else []) + [""])
         rows[0] = [labels.get(acc, acc), quota_cells(q.get(acc, {}))] + rows[0]

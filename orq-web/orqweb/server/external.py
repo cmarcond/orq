@@ -130,6 +130,20 @@ class External:
             return {}
         return data if isinstance(data, dict) and data.get("account") == name else {}
 
+    def usage_table(self, host: Optional[str], hours: float) -> Dict[str, Any]:
+        """`usage-hist uso --horas N --json`: quem está gastando cada conta na janela (aba "uso" da página).
+        {} se não houver usage-hist ou banco."""
+        args = ["uso", "--horas", f"{hours:g}", "--json"]
+        try:
+            if host is None or host == self.local:
+                r = self.run([str(self.bin / "usage-hist")] + args, 30)
+            else:
+                r = self.run(self.ssh(host, "~/.local/bin/usage-hist " + " ".join(args)), 45)
+            data = json.loads(r.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return {}
+        return data if isinstance(data, dict) and isinstance(data.get("accounts"), list) else {}
+
     # ---- por máquina
     def _local_or_ssh(self, host: str, local: List[str], remote: str, timeout: float):
         return self.run(local, timeout) if host == self.local else self.run(self.ssh(host, remote), timeout)

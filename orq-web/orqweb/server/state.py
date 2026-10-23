@@ -32,6 +32,7 @@ class StateCache:
         self.history: Dict[str, Any] = {}  # usage-hist painel --json; {} sem banco
         self.history_ts = 0.0
         self.account_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # conta -> (quando, painel)
+        self.usage_table_cache: Dict[float, Tuple[float, Dict[str, Any]]] = {}  # horas -> (quando, aba uso)
         self.agents: List[dict] = []
         self.links: List[dict] = []  # vínculos entre agentes (orq-agent links), de todas as máquinas
         self.agents_ts = 0.0
@@ -68,6 +69,19 @@ class StateCache:
         if data:
             with self.lock:
                 self.account_cache[name] = (self.clock(), data)
+        return data
+
+    def usage_table(self, hours: float) -> Dict[str, Any]:
+        """A aba "uso" (usage-hist uso) da janela pedida, com o mesmo cache curto do painel da conta."""
+        with self.lock:
+            hit = self.usage_table_cache.get(hours)
+        if hit and self.clock() - hit[0] < ACCOUNT_TTL:
+            return hit[1]
+        fn = getattr(self.ext, "usage_table", None)
+        data = fn(self.usage_host, hours) if fn else {}
+        if data:
+            with self.lock:
+                self.usage_table_cache[hours] = (self.clock(), data)
         return data
 
     def refresh_usage(self) -> None:

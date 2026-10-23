@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """usage-hist: histórico de uso das contas do Claude Code, coletado a cada 5 min num banco SQLite.
 
-Uso: usage-hist [painel | conta NOME | dia [AAAA-MM-DD] | semana | calibrar | alertas | estado] [--conta C] [--json]
+Uso: usage-hist [painel | conta NOME | uso [--horas N] | dia [AAAA-MM-DD] | semana | calibrar | alertas | estado] [--conta C] [--json]
      usage-hist coletar [--desde-horas N]      uma coleta agora (o timer faz isso a cada 5 min)
      usage-hist instalar | remover             timer do systemd de usuário (usage-coletor.timer)
 
@@ -698,6 +698,31 @@ def conta(conn, now: dt.datetime, labels: Dict[str, str], account: str) -> Tuple
     return "\n".join(lines), data
 
 
+def uso(conn, now: dt.datetime, labels: Dict[str, str], hours: float = 5.0, top: int = 12) -> Tuple[str, dict]:
+    """Quem está gastando cada conta na janela (a tabela do usage-sessoes, a partir do banco): por conta, a cota e
+    uma linha por máquina + pasta + tipo, com parte, ≈pts, se respondeu agora e o processo vivo; e os processos
+    esquecidos. É a aba "uso" da página."""
+    S = sibling("usage-sessoes")
+    machines, errs = sessions_window(conn, now, hours)
+    by = S.build(machines)
+    tpp = tpp_all(conn, now)
+    groups = S.brief_groups(by, now, top, tpp)
+    q = latest_quota(conn, now)
+    order = sorted(set(by) | set(q), key=lambda a: (-(window_of(q.get(a, {}), "session") or {}).get("pct", 0), -(by.get(a) or {}).get("weight", 0)))
+    accounts = []
+    for acc in order:
+        qq = q.get(acc, {})
+        w5, w7 = window_of(qq, "session"), window_of(qq, "weekly_all")
+        g = groups.get(acc) or {"groups": [], "rest": None, "stale": [], "weight": 0.0}
+        accounts.append({"account": acc, "label": labels.get(acc, acc), "quota": {"5h": w5["pct"] if w5 else None, "7d": w7["pct"] if w7 else None},
+                         "tokens_per_point": tpp.get(acc), **g})
+    last = last_collect(conn)
+    data = {"hours": hours, "now": iso(now), "collected": iso(last) if last else None, "errors": errs, "accounts": accounts}
+    qflat = {a: {"5h": (window_of(v, "session") or {}).get("pct"), "7d": (window_of(v, "weekly_all") or {}).get("pct")} for a, v in q.items() if "windows" in v}
+    text = S.render_brief(by, qflat, labels, hours, errs, now, top=top, tpp=tpp, source=source_line(conn, now))
+    return text, data
+
+
 def dia(conn, now: dt.datetime, labels: Dict[str, str], day: Optional[str] = None) -> Tuple[str, dict]:
     if day:
         d = dt.date.fromisoformat(day)
@@ -927,7 +952,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     ap = argparse.ArgumentParser(prog="usage-hist", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", nargs="?", default="painel",
-                    choices=["painel", "conta", "dia", "semana", "calibrar", "alertas", "estado", "coletar", "instalar", "remover", "cota-json", "sessoes-json"])
+                    choices=["painel", "conta", "uso", "dia", "semana", "calibrar", "alertas", "estado", "coletar", "instalar", "remover", "cota-json", "sessoes-json"])
     ap.add_argument("data", nargs="?", help="dia AAAA-MM-DD (com `dia`) ou a conta (com `conta`)")
     ap.add_argument("--conta", action="append")
     ap.add_argument("--json", action="store_true")
@@ -974,6 +999,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "calibrar": lambda: calibrar_txt(conn, now, labels),
         "estado": lambda: estado(conn, now),
         "conta": lambda: conta(conn, now, labels, a.data or ""),
+        "uso": lambda: uso(conn, now, labels, a.horas),
     }[a.cmd]()
     print(json.dumps(data, ensure_ascii=False, default=str, indent=1) if a.json else text)
     return 0

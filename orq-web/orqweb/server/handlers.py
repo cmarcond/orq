@@ -183,6 +183,8 @@ def make_handler(ctx: Context):
             m = ACCOUNT_RE.match(u.path)
             if m:
                 return self.account_panel(unquote(m.group(1)))
+            if u.path == "/api/uso":
+                return self.usage_tab((q.get("horas") or ["5"])[0])
             if u.path == "/api/conjuntos":
                 return self.sets_list()
             m = SETS_RE.match(u.path)
@@ -509,6 +511,17 @@ def make_handler(ctx: Context):
             if name not in ctx.conf.accounts:
                 return self.reply(404, {"err": f"conta desconhecida: {name}"})
             data = ctx.state.account_detail(name)
+            if not data:
+                return self.reply(
+                    503, {"err": "sem histórico de uso (o usage-hist não respondeu ou não há banco)"}
+                )
+            return self.reply(200, data)
+
+        def usage_tab(self, hours: str) -> None:
+            """Aba "uso": quem está gastando cada conta nas últimas 5 h, 24 h ou 7 dias."""
+            if hours not in ("5", "24", "168"):
+                return self.reply(400, {"err": "horas: 5, 24 ou 168"})
+            data = ctx.state.usage_table(float(hours))
             if not data:
                 return self.reply(
                     503, {"err": "sem histórico de uso (o usage-hist não respondeu ou não há banco)"}

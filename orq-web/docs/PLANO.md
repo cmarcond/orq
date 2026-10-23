@@ -438,10 +438,17 @@ texto); a página põe um selo no cartão da conta enquanto o alerta durar (verm
 com o texto) e a contagem de ⚠ da frota no TOTAL. O toast continua. `badgeFor`/`fleetBadge` em `format.js`, com
 testes no Node.
 
-### 6.11 Depois (não nesta rodada)
+### 6.11 Aba "uso"  ✅ feita em 2026-10-23
 
-Aba "uso" com a tabela do `usage-sessoes`; a troca automática de conta usando a previsão para trocar *antes* de
-acabar; aviso por notificação (ntfy/e-mail) dos alertas; relatório semanal automático.
+📊 uso abre, na janela do painel, a tabela do `usage-sessoes` a partir do banco: 5 h, 24 h ou 7 dias; por conta, a
+cota e uma linha por máquina + pasta + tipo (parte, ≈pts, agora, processo vivo) e os processos esquecidos; linhas
+de agentes abertos levam à aba deles. O agrupamento saiu do `render_brief` para `usage-sessoes.brief_groups`, que o
+terminal e a página usam (`usage-hist uso`, `GET /api/uso`, `static/js/usage.js` com testes no Node).
+
+### 6.12 Depois (não nesta rodada)
+
+A troca automática de conta usando a previsão para trocar *antes* de acabar; aviso por notificação (ntfy/e-mail)
+dos alertas; relatório semanal automático.
 
 ---
 

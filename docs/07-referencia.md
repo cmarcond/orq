@@ -11,7 +11,7 @@
 | `claude-usage-<conta>` | `usage-all <conta>` |
 | `claude-whoami` | e-mail e plano de cada diretório; qual é o `claude` puro |
 | `usage-all [-v] [--json] [--ao-vivo] [conta…]` | cota de todas as contas + TOTAL, do banco do `usage-hist` quando fresco (`--ao-vivo` = API); `--json` para scripts |
-| `usage-hist [painel\|conta NOME\|dia [data]\|semana\|calibrar\|alertas\|estado\|coletar\|instalar\|remover] [--conta C] [--json]` | histórico de uso no SQLite do node4: hoje, ritmo, previsão, por hora, por projeto (≈pts), alertas; `coletar` é o que o timer roda a cada 5 min |
+| `usage-hist [painel\|conta NOME\|uso\|dia [data]\|semana\|calibrar\|alertas\|estado\|coletar\|instalar\|remover] [--conta C] [--json]` | histórico de uso no SQLite do node4: hoje, ritmo, previsão, por hora, por projeto (≈pts), alertas; `coletar` é o que o timer roda a cada 5 min |
 | `usage-sessoes [-v] [--horas N] [--conta C] [--maquinas a,b] [--json] [--tudo]` | quem gasta cada conta em todas as máquinas, com a cota ao lado: resumido por pasta e tipo; `-v` cada sessão e processo |
 | `codex-usage [-v]` | cota do Codex |
 | `claude-last [-a] [pasta]`, `--pick [N]`, `--as CONTA`, `--projects` | conversas por conta; cópia entre contas; lista de projetos da máquina |
@@ -63,6 +63,7 @@ vêm como `{"err": "texto"}` com 400/403/404/409/500.
 | `GET /api/projects` | | `{items: [{host, cwd, account, mtime, title, …}]}` |
 | `GET /api/pipelines` | | `{items: [{id, titulo, descricao, niveis, cores, multi}], default}` |
 | `GET /api/conta/<conta>` | | o painel da conta (`usage-hist conta --json`): agora, hoje, ritmo, previsão, `hourly_24h`, `days_7`, `week` (série da semana até o reset), projetos de 24 h e 7 dias, alertas, calibração; 404 conta desconhecida, 503 sem histórico |
+| `GET /api/uso?horas=5\|24\|168` | | a aba uso (`usage-hist uso --json`): por conta, a cota, `groups` (máquina, pasta, tipo, n, horário, parte, ≈pts, agora, processo vivo), `rest` e `stale`; 400 horas inválidas, 503 sem histórico |
 | `POST /api/agent/open` | `{host, cwd, account?, mode: "resume"\|"new"}` | `{label, acc, why, orphans_closed}`; 409 se há claude de terminal na pasta; níveis órfãos de uma vida anterior do rótulo são encerrados |
 | `POST /api/agent/convert` | `{label}` | `{label, how, msg}` |
 | `GET /api/agent/<L>/stream?since=N` | | SSE: um `data:` por evento do agente |

@@ -44,6 +44,14 @@ inteira (inclui coletor parado e máquina sem resposta). Sem o `usage-hist`, a p
 
 Os dados vêm de `GET /api/conta/<nome>` (`usage-hist conta NOME --json`, com cache de 30 s).
 
+**📊 uso**, ao lado de ⊞ conjuntos, abre a mesma janela com **quem está gastando cada conta** nas últimas 5 h, 24 h
+ou 7 dias, em todas as máquinas: um bloco por conta (com a cota) e uma linha por máquina, pasta e tipo, com as
+execuções de um script juntas (`n`), o horário, a parte no consumo da conta, ≈pts, `●` se respondeu nos últimos
+10 min e o processo vivo (sessão tmux ou pid); os processos esquecidos entram como `parado`. As linhas de agentes
+abertos na página ficam em destaque e levam à aba deles com um clique. É a tabela do `usage-sessoes`, montada a
+partir do banco (`GET /api/uso?horas=5|24|168`, `usage-hist uso --json`, cache de 30 s). No celular ficam máquina,
+pasta, parte, ≈pts e `●`.
+
 ## 4.2 Abas: uma linha por máquina
 
 Cada máquina tem uma linha com as abas dos agentes dela e um **+** para abrir um projeto ali. A aba

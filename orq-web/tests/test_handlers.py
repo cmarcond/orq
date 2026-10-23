@@ -1272,3 +1272,15 @@ def test_account_panel_route(server):
     status, body, _ = req(port, "GET", "/api/conta/gmail")
     assert status == 503 and "sem histórico" in body["err"]
     assert req(port, "GET", "/api/conta/gmail", token="errado")[0] == 403
+
+
+def test_usage_tab_route(server):
+    port, ext, state = server
+    ext.usage_table = lambda host, hours: {"hours": hours, "accounts": [{"account": "gmail", "groups": []}]}
+    status, body, _ = req(port, "GET", "/api/uso?horas=24")
+    assert status == 200 and body["hours"] == 24
+    assert req(port, "GET", "/api/uso")[1]["hours"] == 5
+    assert req(port, "GET", "/api/uso?horas=3")[0] == 400
+    state.usage_table_cache.clear()
+    ext.usage_table = lambda host, hours: {}
+    assert req(port, "GET", "/api/uso?horas=5")[0] == 503

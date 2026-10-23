@@ -406,3 +406,22 @@ def test_alert_items_say_account_kind_level_and_badge(conn):
     assert data["alert_items"] == items
     _, d = H.conta(conn, NOW, LABELS, "work3")
     assert d["alerts"] == [i["text"] for i in items if i["account"] == "work3"]
+
+
+
+def test_uso_groups_by_account_from_the_database(conn):
+    busy_db(conn)
+    H.store_host(conn, H.iso(NOW), "laptop", {"messages": [], "processes": [
+        {"pid": 3, "account": "work3", "kind": "interativo", "cwd": "/u/orq", "project": "-p-a", "seconds": 60, "last_activity": H.iso(at(1))},
+        {"pid": 4, "account": "gmail", "kind": "interativo", "cwd": "/u/velho", "project": "-u-velho", "seconds": 9e5, "last_activity": H.iso(NOW - dt.timedelta(days=3))}]}, None, 1)
+    text, d = H.uso(conn, NOW, LABELS, 5)
+    assert d["hours"] == 5 and d["errors"] == {"node1": "ssh: connect to host node1 port 22: No route to host"}
+    a3 = next(a for a in d["accounts"] if a["account"] == "work3")
+    assert a3["label"] == "Work 3" and a3["quota"]["7d"] == pytest.approx(34.75)
+    kinds = {(g["folder"], g["kind"]) for g in a3["groups"]}
+    assert kinds == {("claude-diario", "script"), ("orq", "interativo")}
+    orq = next(g for g in a3["groups"] if g["folder"] == "orq")
+    assert orq["live"] and orq["live"][0]["pid"] == 3 and orq["pts"] is not None and orq["now"] is True
+    gm = next(a for a in d["accounts"] if a["account"] == "gmail")
+    assert gm["groups"] == [] and gm["stale"][0]["folder"] == "velho" and gm["stale"][0]["idle_s"] > 2 * 86400
+    assert "Work 3" in text and "≈pts" in text and "fonte: banco" in text
