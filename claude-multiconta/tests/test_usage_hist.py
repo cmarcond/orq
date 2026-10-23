@@ -385,3 +385,24 @@ def test_conta_panel_data_and_text(conn):
     assert text.startswith("Work 3 · semana 35% · reset em 3 d 0 h") and "últimas 24 h" in text and "o que mais gastou em 7 dias" in text
     empty_text, empty = H.conta(H.connect(":memory:"), NOW, LABELS, "gmail")
     assert empty["7d"] is None and empty["week"]["series"] == [] and empty_text.startswith("Gmail")
+
+
+
+def test_alert_items_say_account_kind_level_and_badge(conn):
+    H.store_quota(conn, H.iso(at(40)), "work3", [w("session", 0, R5), w("weekly_all", 10, R7)], None)
+    H.store_quota(conn, H.iso(at(25)), "work3", [w("session", 4, R5), w("weekly_all", 11, R7)], None)
+    H.store_quota(conn, H.iso(NOW), "work3", [w("session", 12, R5), w("weekly_all", 12, R7)], None)
+    msgs = [msg(f"s|{i}", 10 + i, entry="sdk-cli", out=1000, cwd="/u/claude-diario", session=f"x{i}") for i in range(5)]
+    procs = [{"pid": 9, "account": "work3", "kind": "interativo", "cwd": "/u/x", "seconds": 9, "last_activity": H.iso(NOW - dt.timedelta(days=2))}]
+    H.store_host(conn, H.iso(NOW), "laptop", {"messages": msgs, "processes": procs}, None, 1)
+    H.meta_set(conn, "last_collect", H.iso(at(30)))
+    items = H.alert_items(conn, NOW, LABELS)
+    by = {(i["account"], i["kind"]): i for i in items}
+    assert by[("work3", "script")]["level"] == "warn" and by[("work3", "script")]["short"] == "script"
+    assert by[("work3", "processo")]["level"] == "info"
+    assert by[(None, "coletor")]["short"] == "coletor"
+    assert H.alerts(conn, NOW, LABELS) == [i["text"] for i in items]
+    text, data = H.painel(conn, NOW, LABELS)
+    assert data["alert_items"] == items
+    _, d = H.conta(conn, NOW, LABELS, "work3")
+    assert d["alerts"] == [i["text"] for i in items if i["account"] == "work3"]

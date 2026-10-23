@@ -22,6 +22,8 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .meter{position:relative;height:7px;background:var(--bar);border-radius:4px}
 .meter i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok)}
 .meter b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.8}
+.selo{display:inline-block;margin-left:4px;padding:0 6px;border-radius:9px;font-size:10px;font-weight:600;line-height:16px;vertical-align:1px;white-space:nowrap;cursor:help;filter:none}
+.selo.warn{background:var(--bad);color:#fff}.selo.info{background:var(--chip);color:var(--mute);border:1px solid var(--line);font-weight:500}
 .ucard.clickable{cursor:pointer}.ucard.clickable:hover{filter:brightness(.97)}
 /* painel de uma conta (na janela da prévia) */
 .vbody .apanel{align-self:flex-start;width:100%;min-height:100%;padding:14px 18px;background:var(--card);font-size:13px}

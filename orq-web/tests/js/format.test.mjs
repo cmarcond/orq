@@ -94,3 +94,27 @@ test('freshAlerts: só os ⚠, uma vez a cada ttl horas', () => {
   r = freshAlerts(a, r.seen, now + 7 * 3600e3);
   assert.deepEqual(r.fresh, ['⚠ Gmail: acaba']);
 });
+
+import { badgeFor, fleetBadge } from '../../orqweb/server/static/js/format.js';
+
+test('badgeFor: ⚠ com rótulo curto, contagem com vários, · para aviso, null sem nada', () => {
+  const items = [
+    { level: 'warn', account: 'gmail', kind: 'semana', short: 'semana', text: '⚠ Gmail: acaba antes do reset' },
+    { level: 'info', account: 'gmail', kind: 'processo', short: 'processo parado', text: '· Gmail: processo parado' },
+    { level: 'info', account: 'work2', kind: 'processo', short: 'processo parado', text: '· Work 2: processo parado' },
+    { level: 'warn', account: null, kind: 'coletor', short: 'coletor', text: '⚠ coletor parado' },
+  ];
+  assert.deepEqual(badgeFor(items, 'gmail'), { level: 'warn', label: '⚠ semana', title: '⚠ Gmail: acaba antes do reset\n· Gmail: processo parado' });
+  assert.deepEqual(badgeFor(items, 'work2'), { level: 'info', label: '· processo parado', title: '· Work 2: processo parado' });
+  assert.equal(badgeFor(items, 'work3'), null);
+  assert.equal(badgeFor(undefined, 'gmail'), null);
+  const two = [items[0], { ...items[0], kind: '5h', short: '5h' }];
+  assert.equal(badgeFor(two, 'gmail').label, '⚠ 2');
+});
+
+test('fleetBadge conta só os ⚠, de contas e da frota', () => {
+  assert.equal(fleetBadge([{ level: 'info', text: 'x' }]), null);
+  const b = fleetBadge([{ level: 'warn', text: 'a' }, { level: 'warn', text: 'b' }, { level: 'info', text: 'c' }]);
+  assert.deepEqual(b, { level: 'warn', label: '⚠ 2 alertas', title: 'a\nb' });
+  assert.equal(fleetBadge([{ level: 'warn', text: 'a' }]).label, '⚠ 1 alerta');
+});

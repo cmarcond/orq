@@ -1,5 +1,5 @@
 // Estado da página, API e DOM. A lógica pura está em format.js, classify.js e events.js.
-import { esc, left, ago, md, withAttachments, fmtBytes, fileKind, sparkSvg, histSummary, freshAlerts } from './format.js';
+import { esc, left, ago, md, withAttachments, fmtBytes, fileKind, sparkSvg, histSummary, freshAlerts, badgeFor, fleetBadge } from './format.js';
 import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
 import { weekChart, hourChart, dayChart } from './charts.js';
@@ -134,6 +134,8 @@ function histBlock(h, name, top) {
   return `<div class="hrow" title="pontos da semana gastos por hora nas últimas 24 h (passe o mouse numa barra)">${sparkSvg(a.last_24h || [], top, h.t24)}</div>
     <div class="hsum ${s.warn ? 'bad' : ''}" title="hoje: pontos da semana gastos desde a meia-noite · ritmo: pontos por hora nas últimas 6 h · previsão: quando chega a 100% nesse ritmo (⚠ = antes do reset) · * = desde o início da coleta">${esc(s.text)}</div>`;
 }
+// selo de alerta: fica no cartão enquanto o alerta existir (o toast só passa); o título traz o texto completo
+const seloHtml = (b) => (b ? `<span class="selo ${b.level}" title="${esc(b.title)}">${esc(b.label)}</span>` : '');
 function histTotal(h) {
   if (!h || !h.accounts) return '';
   const age = h.collected ? (Date.now() - new Date(h.collected).getTime()) / 60e3 : null;
@@ -168,7 +170,7 @@ function totalCard(t, h) {
   const burn = t['7d_burn'] ?? 0;
   const bcls = burn < 0.9 ? 'ok' : burn <= 1.15 ? 'warn' : 'bad';
   const runs = t['7d_runs_out'] != null ? left(t['7d_runs_out']) : '∞';
-  return `<div class="ucard total" title="semana da frota: barra = usado médio, ┃ = ritmo médio; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo das janelas"><div class="name"><span>TOTAL · semana</span><span class="burn ${bcls}">queima ${burn.toFixed(1).replace('.', ',')}×</span></div>
+  return `<div class="ucard total" title="semana da frota: barra = usado médio, ┃ = ritmo médio; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo das janelas"><div class="name"><span>TOTAL · semana ${seloHtml(h && fleetBadge(h.alert_items))}</span><span class="burn ${bcls}">queima ${burn.toFixed(1).replace('.', ',')}×</span></div>
     <div class="urow"><span>7d</span><div class="meter ${d >= 15 ? 'far' : d > 0 ? 'over' : ''}"><i style="width:${Math.min(100, t['7d'])}%"></i><b style="left:${Math.min(99, t['7d_pace'])}%"></b></div>
     <span class="pct">${Math.round(t['7d'])}%</span><span>${runs}</span></div>
     <div class="small mute">${Math.round(t['7d_free'])}% livre na média das ${t.accounts} contas</div>${histTotal(h)}</div>`;
@@ -182,7 +184,7 @@ function renderUsage(us, hist) {
     Object.entries(us)
     .filter(([n]) => !n.startsWith('_'))
     .map(
-      ([n, u]) => `<div class="ucard${h && h.accounts && h.accounts[n] ? ' clickable' : ''}" data-acc="${esc(n)}" style="--acc:${colorOf(n)}" title="${h ? 'clique: painel da conta (24 h, 7 dias, semana até o reset, o que mais gastou)' : ''}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)}</span>${
+      ([n, u]) => `<div class="ucard${h && h.accounts && h.accounts[n] ? ' clickable' : ''}" data-acc="${esc(n)}" style="--acc:${colorOf(n)}" title="${h ? 'clique: painel da conta (24 h, 7 dias, semana até o reset, o que mais gastou)' : ''}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)} ${seloHtml(h && badgeFor(h.alert_items, n))}</span>${
         u.err ? '<span class="small bad">erro</span>' : ''
       }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}${histBlock(h, n, top)}</div>`,
     )

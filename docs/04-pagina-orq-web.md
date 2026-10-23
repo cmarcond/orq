@@ -26,8 +26,10 @@ dele e os cartões ganham mais duas linhas, lidas a cada 60 s (`usage-hist paine
 
 O cartão TOTAL mostra os pontos gastos pela frota em 24 h e avisa se a coleta parou há mais de 15 min. Os
 **alertas** do coletor (subida por script, subida sem consumo nas máquinas, cota que acaba antes do reset,
-coletor parado) aparecem como toast, cada um uma vez a cada 6 h. Sem o `usage-hist`, a página continua só com
-a cota.
+coletor parado) aparecem como toast, cada um uma vez a cada 6 h, e também como **selo** no cartão enquanto
+durarem: `⚠ script`, `⚠ semana`, `⚠ 5h`, `⚠ fora das máquinas` em vermelho (`⚠ 2` com mais de um), e avisos como
+`· processo parado` em cinza; o título do selo traz o texto completo, e o TOTAL mostra `⚠ N alertas` da frota
+inteira (inclui coletor parado e máquina sem resposta). Sem o `usage-hist`, a página continua só com a cota.
 
 **Clicar no cartão de uma conta** abre o painel dela (na janela da prévia de arquivos; Esc ou ✕ fecha):
 

@@ -431,11 +431,17 @@ semana até o reset com o ritmo ideal e a projeção no ritmo atual, as 24 h por
 `static/js/charts.js` (SVG puro, testes no Node). De quebra: o servidor ignora um segundo SIGTERM durante o
 encerramento (o `uv run` repassa o seu, e a segunda interrupção caía no meio da limpeza).
 
-### 6.10 Depois (não nesta rodada)
+### 6.10 Selo de alerta no cartão  ✅ feito em 2026-10-23
 
-Selo de alerta no cartão da conta (hoje só toast); aba "uso" com a tabela do `usage-sessoes`; a troca automática
-de conta usando a previsão para trocar *antes* de acabar; aviso por notificação (ntfy/e-mail) dos alertas;
-relatório semanal automático.
+O `usage-hist` passa a entregar os alertas estruturados (`alert_items`: conta, tipo, `warn`/`info`, rótulo curto,
+texto); a página põe um selo no cartão da conta enquanto o alerta durar (vermelho para ⚠, cinza para aviso; título
+com o texto) e a contagem de ⚠ da frota no TOTAL. O toast continua. `badgeFor`/`fleetBadge` em `format.js`, com
+testes no Node.
+
+### 6.11 Depois (não nesta rodada)
+
+Aba "uso" com a tabela do `usage-sessoes`; a troca automática de conta usando a previsão para trocar *antes* de
+acabar; aviso por notificação (ntfy/e-mail) dos alertas; relatório semanal automático.
 
 ---
 

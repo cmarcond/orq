@@ -116,3 +116,26 @@ export function freshAlerts(alerts, seen, now = Date.now(), ttl = 6) {
   for (const a of fresh) keep[a] = now;
   return { fresh, seen: keep };
 }
+
+/** Selo do cartão de uma conta a partir dos alertas estruturados (`alert_items` do usage-hist): ⚠ em vermelho se
+ *  houver alerta, · em cinza se só houver aviso; um alerta mostra o rótulo curto, vários mostram a contagem; o
+ *  título (tooltip) traz o texto de todos. null sem nada para essa conta. */
+export function badgeFor(items, account) {
+  const mine = (items || []).filter((i) => i.account === account);
+  if (!mine.length) return null;
+  const warn = mine.filter((i) => i.level === 'warn');
+  const shown = warn.length ? warn : mine;
+  const sign = warn.length ? '⚠' : '·';
+  return {
+    level: warn.length ? 'warn' : 'info',
+    label: shown.length === 1 ? `${sign} ${shown[0].short}` : `${sign} ${shown.length}`,
+    title: mine.map((i) => i.text).join('\n'),
+  };
+}
+
+/** Selo do TOTAL: quantos alertas ⚠ há em toda a frota (contas e coletor/máquinas); null sem nenhum. */
+export function fleetBadge(items) {
+  const warn = (items || []).filter((i) => i.level === 'warn');
+  if (!warn.length) return null;
+  return { level: 'warn', label: `⚠ ${warn.length} alerta${warn.length > 1 ? 's' : ''}`, title: warn.map((i) => i.text).join('\n') };
+}

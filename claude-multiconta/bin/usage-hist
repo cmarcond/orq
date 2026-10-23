@@ -466,8 +466,19 @@ def sessions_window(conn, now: dt.datetime, hours: float) -> Tuple[Dict[str, dic
 
 # ================================================================ alertas
 def alerts(conn, now: dt.datetime, labels: Dict[str, str]) -> List[str]:
-    out: List[str] = []
+    """Os alertas como texto (painel, terminal, toasts da página)."""
+    return [a["text"] for a in alert_items(conn, now, labels)]
+
+
+def alert_items(conn, now: dt.datetime, labels: Dict[str, str]) -> List[dict]:
+    """Cada alerta com a conta a que pertence (None = da frota), o tipo, a gravidade (warn = ⚠, info = ·), um
+    rótulo curto para o selo do cartão na página e o texto completo."""
+    out: List[dict] = []
     lab = lambda a: labels.get(a, a)  # noqa: E731
+
+    def add(level: str, account: Optional[str], kind: str, short: str, text: str) -> None:
+        out.append({"level": level, "account": account, "kind": kind, "short": short, "text": text})
+
     q = latest_quota(conn, now)
     tpp = tpp_all(conn, now)
     for acc, qq in sorted(q.items()):
@@ -485,13 +496,13 @@ def alerts(conn, now: dt.datetime, labels: Dict[str, str]) -> List[str]:
                     (acc, iso(t0)),
                 ).fetchone()
                 where = f" ({top['host']} {os.path.basename(top['cwd'] or '?')})" if top else ""
-                out.append(f"⚠ {lab(acc)}: +{num(up, 0)} pts de 5h em 30 min, {script / total * 100:.0f}% de scripts{where}")
+                add("warn", acc, "script", "script", f"⚠ {lab(acc)}: +{num(up, 0)} pts de 5h em 30 min, {script / total * 100:.0f}% de scripts{where}")
         # subida da semana sem tokens que a expliquem
         up7 = consumed_between(conn, acc, "weekly_all", now - dt.timedelta(hours=1), now) or 0.0
         if up7 >= 2 and tpp.get(acc):
             seen = weight_between(conn, acc, now - dt.timedelta(minutes=70), now) / tpp[acc]
             if seen < 0.2 * up7:
-                out.append(f"⚠ {lab(acc)}: +{num(up7)} pts na semana em 1 h sem consumo nas máquinas (claude.ai, celular ou máquina sem resposta)")
+                add("warn", acc, "fora", "fora das máquinas", f"⚠ {lab(acc)}: +{num(up7)} pts na semana em 1 h sem consumo nas máquinas (claude.ai, celular ou máquina sem resposta)")
         # acaba antes do reset
         for kind, name, hours in (("weekly_all", "semana", 6), ("session", "5h", 1)):
             w = window_of(qq, kind)
@@ -499,7 +510,8 @@ def alerts(conn, now: dt.datetime, labels: Dict[str, str]) -> List[str]:
                 continue
             h, before = forecast(w["pct"], rate(conn, acc, kind, now, hours), parse(w["resets_at"]), now)
             if before and h is not None and (kind == "weekly_all" or h < 2):
-                out.append(f"⚠ {lab(acc)}: a cota de {name} acaba em {dur(h)} no ritmo atual, antes do reset ({dur((parse(w['resets_at']) - now).total_seconds() / 3600)})")
+                add("warn", acc, "semana" if kind == "weekly_all" else "5h", "semana" if kind == "weekly_all" else "5h",
+                    f"⚠ {lab(acc)}: a cota de {name} acaba em {dur(h)} no ritmo atual, antes do reset ({dur((parse(w['resets_at']) - now).total_seconds() / 3600)})")
     # processos esquecidos (último retrato de cada máquina)
     for r in conn.execute("SELECT host, MAX(ts) AS ts FROM processes GROUP BY host"):
         if parse(r["ts"]) < now - dt.timedelta(minutes=FRESH_MIN):
@@ -507,16 +519,17 @@ def alerts(conn, now: dt.datetime, labels: Dict[str, str]) -> List[str]:
         for p in conn.execute("SELECT * FROM processes WHERE host=? AND ts=? AND kind IN ('interativo','script','orq')", (r["host"], r["ts"])):
             la = parse(p["last_activity"])
             if la and now - la > dt.timedelta(days=1):
-                out.append(f"· {lab(p['account'])}: processo parado há {dur((now - la).total_seconds() / 3600)} em {p['host']} {os.path.basename(p['cwd'] or '?')} (pid {p['pid']})")
+                add("info", p["account"], "processo", "processo parado",
+                    f"· {lab(p['account'])}: processo parado há {dur((now - la).total_seconds() / 3600)} em {p['host']} {os.path.basename(p['cwd'] or '?')} (pid {p['pid']})")
     # coletor
     last = last_collect(conn)
     if last is None or now - last > dt.timedelta(minutes=15):
-        out.append(f"⚠ coletor parado: última coleta {'nunca' if last is None else 'há ' + dur((now - last).total_seconds() / 3600)}")
+        add("warn", None, "coletor", "coletor", f"⚠ coletor parado: última coleta {'nunca' if last is None else 'há ' + dur((now - last).total_seconds() / 3600)}")
     for r in conn.execute("SELECT host, MAX(ts) AS ts FROM runs WHERE ok=1 GROUP BY host"):
         ok_at = parse(r["ts"])
         failing = conn.execute("SELECT COUNT(*) FROM runs WHERE host=? AND ts > ? AND ok=0", (r["host"], r["ts"])).fetchone()[0]
         if failing and now - ok_at > dt.timedelta(hours=1) and now - ok_at < dt.timedelta(days=1):
-            out.append(f"⚠ {r['host']} sem resposta há {dur((now - ok_at).total_seconds() / 3600)}")
+            add("warn", None, "maquina", "máquina", f"⚠ {r['host']} sem resposta há {dur((now - ok_at).total_seconds() / 3600)}")
     return out
 
 
@@ -588,11 +601,12 @@ def painel(conn, now: dt.datetime, labels: Dict[str, str], only: Optional[List[s
     lines.append(fleet)
     if partial_since:
         lines.append(f"* desde o início da coleta ({partial_since.astimezone().strftime('%d/%m %H:%M')}): ainda sem o dia inteiro ou sem 6 h de amostras")
-    al = alerts(conn, now, labels)
+    items = alert_items(conn, now, labels)
+    al = [a["text"] for a in items]
     lines += al
     lines.append(source_line(conn, now))
     last = last_collect(conn)
-    return "\n".join(lines), {"accounts": data, "free": free, "used_24h": used24, "alerts": al, "collected": iso(last) if last else None,
+    return "\n".join(lines), {"accounts": data, "free": free, "used_24h": used24, "alerts": al, "alert_items": items, "collected": iso(last) if last else None,
                               "t24": iso(t24), "partial_since": iso(partial_since) if partial_since else None}
 
 
@@ -666,7 +680,7 @@ def conta(conn, now: dt.datetime, labels: Dict[str, str], account: str) -> Tuple
         "calibration": cal,
         "projects_24h": project_data(conn, t24, now, tpp, account, limit=8),
         "projects_7d": project_data(conn, now - dt.timedelta(days=7), now, tpp, account, limit=8),
-        "alerts": [a for a in alerts(conn, now, labels) if f" {label}:" in a],
+        "alerts": [a["text"] for a in alert_items(conn, now, labels) if a["account"] == account],
         "first_sample": iso(fs) if fs else None,
     }
     lines = [f"{label} · semana {w7['pct']:.0f}%" if w7 else label]
