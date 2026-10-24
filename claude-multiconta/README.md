@@ -24,7 +24,8 @@ com um marcador de ritmo. Feito para levar de máquina em máquina: Mac (zsh) e 
 | `orq` | **orquestrador**: escolhe até 4 projetos de qualquer máquina e abre uma janela com 4 painéis, cada um no ssh, no tmux e na conta certa |
 | `orq web` | atalho para o `orq-web` (projeto `orq-web`): página local com cota, abas e chat com os agentes |
 | `claude-last` | lista, para a pasta atual, a conversa mais recente de cada conta, da mais nova para a mais velha |
-| `claude-resume` | retoma a conversa mais recente da pasta atual **na conta certa**; `claude-resume 2` abre a linha 2 do `claude-last` |
+| `claude-resume` | retoma a conversa mais recente da pasta atual: na conta dela se ela estiver boa, senão na melhor conta agora; `claude-resume 2` abre a linha 2 do `claude-last` |
+| `usage-all --melhor` | imprime a melhor conta para abrir agora (a cota que vence primeiro); `-v` mostra a ordem e o motivo; é o que `claude` e `claude-resume` usam |
 | `claude-resume --as gmail` | retoma a mesma conversa **usando outra conta** (ex.: a original acabou a cota) |
 | `tmux ls`, `tmux attach -t claude-<pasta>` | voltar a uma sessão do Claude (attach é manual) |
 | `./add-account.sh nome email "rótulo"` | cria uma conta nova e gera os três aliases dela |
@@ -56,7 +57,9 @@ procura a credencial com outro nome e aparece como deslogado.
 
 ### 2. `claude` puro e as sessões tmux
 
-`claude` sem nada abre a conta padrão (`default_account` no `accounts.json`, hoje `work`).
+`claude` sem nada abre **a melhor conta agora**, escolhida por `usage-all --melhor` (usa primeiro a cota que vence
+antes do reset; detalhes abaixo); sem cota legível, a conta padrão (`default_account`, hoje `work`).
+`CLAUDE_CONTA=gmail claude` força uma conta, e `claude-<conta>` abre sempre aquela.
 E tanto ele quanto `claude-<conta>` abrem o Claude **numa sessão tmux nova**, para você poder
 fechar o terminal, cair a conexão, e depois voltar exatamente onde estava:
 
@@ -214,7 +217,9 @@ $ claude-last -a ~
     = claude-work --resume 00000000-0000-0000-0000-000000000000
 ```
 
-`claude-resume` abre a linha 1 na conta dela; `claude-resume 2` abre a linha 2, e argumentos
+`claude-resume` abre a linha 1 **na conta dela, se ela estiver boa** (janela de 5 h abaixo de 70% e 15+ pontos
+sobrando na semana); senão, na melhor conta agora (`usage-all --melhor`), copiando a conversa como o `--as` faz.
+Não imprime nada. `claude-resume 2` abre a linha 2, e argumentos
 extras vão para o `claude`. Com `-a`, os dois comandos usam as 15 conversas mais recentes da
 pasta, de qualquer conta. Conversas vazias e as de renovação de token ficam de fora.
 

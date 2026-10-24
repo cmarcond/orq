@@ -182,3 +182,64 @@ def test_main_json_and_unknown_account(monkeypatch, tmp_path, capsys):
     else:
         raise AssertionError("conta desconhecida deveria sair com 1")
     assert "conta desconhecida: nada" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- a melhor conta para abrir agora
+def u(d7, h5=0.0, left_h=48.0):
+    return {"5h": h5, "7d": d7, "7d_left": None if left_h is None else int(left_h * 3600)}
+
+
+def test_best_uses_first_what_expires_first():
+    per = {
+        "gmail": u(61, 29, left_h=8.4),  # sobra 39 que vencem em 8 h: 4,6 pts/h
+        "work": u(41, 2, left_h=30),  # 59 em 30 h: 2 pts/h
+        "work2": u(4, 13, left_h=142),  # 96 em 6 dias: 0,7 pts/h
+        "_total": {},
+    }
+    assert [r["name"] for r in U.rank(per)] == ["gmail", "work", "work2"]
+    name, why = U.best_account(per)
+    assert name == "gmail" and "vencem em" in why and "4,6" in why
+
+
+def test_best_guards_5h_window_and_small_leftover():
+    per = {"gmail": u(97, 10, left_h=2), "work": u(30, 90, left_h=5), "work3": u(20, 0, left_h=100)}
+    ranked = {r["name"]: r for r in U.rank(per)}
+    assert not ranked["gmail"]["ok"] and "sobra só 3" in ranked["gmail"]["why"]
+    assert not ranked["work"]["ok"] and "5 h em 90%" in ranked["work"]["why"]
+    assert U.best_account(per)[0] == "work3"
+
+
+def test_best_window_not_started_and_errors():
+    per = {"gmail": u(0, 0, left_h=None), "work": {"err": "429"}}
+    ranked = U.rank(per)
+    assert ranked[0]["name"] == "gmail" and ranked[0]["ok"] and ranked[-1]["why"] == "sem dados de cota"
+
+
+def test_best_stays_on_the_conversation_account_when_it_is_fine():
+    per = {"gmail": u(61, 29, left_h=8), "work3": u(20, 10, left_h=100)}
+    assert U.best_account(per, stay="work3")[0] == "work3"  # boa: fica, mesmo não sendo a primeira
+    per["work3"] = u(20, 75, left_h=100)  # 5 h apertada
+    assert U.best_account(per, stay="work3")[0] == "gmail"
+    per["work3"] = u(90, 10, left_h=100)  # só 10 pts sobrando
+    assert U.best_account(per, stay="work3")[0] == "gmail"
+
+
+def test_best_when_nothing_is_fine():
+    name, why = U.best_account({"gmail": u(97, 10), "work": u(99, 95)})
+    assert name == "gmail" and why.startswith("nenhuma conta com folga")
+    assert U.best_account({"gmail": {"err": "x"}}) == (None, "nenhuma conta com cota")
+
+
+def test_main_melhor_prints_only_the_name(monkeypatch, tmp_path, capsys):
+    conf = tmp_path / "accounts.json"
+    conf.write_text(json.dumps({"accounts": [{"name": "gmail", "config_dir": "~/.g"}, {"name": "work", "config_dir": "~/.a"}]}))
+    monkeypatch.setattr(U, "CONF", conf)
+    table = {"gmail": u(61, 29, left_h=8), "work": u(10, 0, left_h=150)}
+    monkeypatch.setattr(U, "usage_json", lambda acc: table[acc.name])
+    assert U.main(["--melhor"]) == 0
+    out = capsys.readouterr()
+    assert out.out == "gmail\n" and out.err == ""  # silencioso
+    assert U.main(["--melhor", "--fica", "work"]) == 0 and capsys.readouterr().out == "work\n"
+    assert U.main(["--melhor", "-v"]) == 0
+    err = capsys.readouterr().err
+    assert "→ gmail" in err.replace("Gmail", "gmail") or "escolha:" in err

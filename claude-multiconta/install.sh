@@ -128,7 +128,14 @@ for a in accounts:
     out += [f"alias claude-{n}-login='{env} BROWSER=\"$HOME/.local/bin/claude-login-url\" claude auth login{email}'",
             f"alias claude-usage-{n}='usage-all {n}'", ""]
 if default:
-    out += [f"# `claude` puro = conta {default}  (confira com: claude-whoami)", f'claude() {{ claude-{default} "$@"; }}', ""]
+    out += [f"# `claude` puro = a melhor conta agora (usage-all --melhor: usa primeiro a cota que vence antes; -v explica).",
+            f"#   CLAUDE_CONTA=gmail claude  força uma conta; sem cota legível, cai na padrão ({default}).",
+            "claude() {",
+            '  local acc=${CLAUDE_CONTA:-}',
+            '  [ -n "$acc" ] || acc=$(usage-all --melhor 2>/dev/null)',
+            f'  type "claude-$acc" >/dev/null 2>&1 || acc={default}',
+            '  "claude-$acc" "$@"',
+            "}", ""]
 
 if conf.get("codex", True):
     out += ["# Codex (OpenAI)",
@@ -137,9 +144,10 @@ if conf.get("codex", True):
 out += ["# Uso de todas as contas de uma vez: é o script ~/.local/bin/usage-all",
         "#   usage-all [-v|--verbose] [conta ...]   (ex.: usage-all work; -v = completo)",
         "unalias usage-all 2>/dev/null", "",
-        "# Retomar a conversa mais recente desta pasta na conta certa (lista: claude-last)",
+        "# Retomar a conversa mais recente desta pasta (lista: claude-last) na melhor conta: fica na da conversa se ela",
+        "# estiver boa; senão, na que usage-all --melhor escolher (a conversa é copiada para ela; a original fica)",
         "#   claude-resume [--as CONTA] [-a] [N] [args do claude]   N = número da linha do claude-last",
-        "#   --as CONTA: retoma usando outra conta (copia a conversa para ela; a original fica)",
+        "#   --as CONTA: força a conta",
         "claude-resume() {",
         "  local all= as= n=1 out acc sid",
         "  while :; do",
@@ -151,9 +159,14 @@ out += ["# Uso de todas as contas de uma vez: é o script ~/.local/bin/usage-all
         "    esac",
         "  done",
         '  case "$1" in ""|*[!0-9]*) ;; *) n=$1; shift;; esac',
-        '  out=$(claude-last --pick $all ${as:+--as=$as} "$n") || return 1',
+        '  if [ -z "$as" ]; then',
+        '    out=$(claude-last --pick $all "$n") || return 1',
+        '    read -r acc sid <<< "$out"',
+        '    as=$(usage-all --melhor --fica "$acc" 2>/dev/null)',
+        '    [ -n "$as" ] || as=$acc',
+        '  fi',
+        '  out=$(claude-last --pick $all --as="$as" "$n") || return 1',
         '  read -r acc sid <<< "$out"',
-        '  echo "abrindo: claude-$acc --resume $sid"',
         '  "claude-$acc" --resume "$sid" "$@"',
         "}", ""]
 if conf.get("tip_on_login", True):
@@ -253,5 +266,6 @@ echo "  usage-all -v         # completo, com barra e marcador de ritmo"
 echo "  usage-all gmail      # só a conta escolhida (também aceita -v); codex-usage para o Codex"
 echo "  orq                  # abre até 4 projetos (qualquer máquina) numa janela com 4 painéis"
 echo "  claude-last          # qual conta teve a conversa mais recente nesta pasta"
-echo "  claude-resume        # retoma essa conversa na conta certa (claude-resume 2 = a segunda)"
+echo "  claude               # abre a melhor conta agora (usage-all --melhor -v explica; CLAUDE_CONTA=x força)"
+echo "  claude-resume        # retoma essa conversa: na conta dela se estiver boa, senão na melhor (2 = a segunda)"
 echo "  claude-resume --as gmail   # retoma a mesma conversa usando outra conta"

@@ -15,7 +15,9 @@
 | `usage-sessoes [-v] [--horas N] [--conta C] [--maquinas a,b] [--json] [--tudo]` | quem gasta cada conta em todas as máquinas, com a cota ao lado: resumido por pasta e tipo; `-v` cada sessão e processo |
 | `codex-usage [-v]` | cota do Codex |
 | `claude-last [-a] [pasta]`, `--pick [N]`, `--as CONTA`, `--projects` | conversas por conta; cópia entre contas; lista de projetos da máquina |
-| `claude-resume [N]`, `claude-resume --as CONTA [N]` | retoma na conta certa, ou noutra |
+| `claude-resume [N]`, `claude-resume --as CONTA [N]` | retoma na conta da conversa se ela estiver boa, senão na melhor (`usage-all --melhor --fica`); `--as` força |
+| `claude` (função), `CLAUDE_CONTA=X claude` | abre a melhor conta agora (`usage-all --melhor`), ou a forçada |
+| `usage-all --melhor [--fica CONTA] [-v]` | imprime a melhor conta: a cota que vence primeiro (sobra ÷ horas até o reset), fora as com <5 pts ou 5 h ≥85% |
 | `orq`, `orq --new`, `orq --list`, `orq --status-json`, `orq web` | grade tmux de 4 projetos; estado dos agentes; atalho da página |
 | `orq-run --dir P --account C [--label L] [--mode resume\|new] [--tmux] [--depth N]` | um painel da grade (chamado pelo `orq`) |
 | `./install.sh [--no-install\|--uninstall]` | instala/atualiza/remove |

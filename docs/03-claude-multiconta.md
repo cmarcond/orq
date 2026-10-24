@@ -32,8 +32,16 @@ enxergar o histórico inteiro; o `fullscreen` guarda a conversa num buffer próp
 
 `install.sh` lê o `accounts.json` e escreve `~/.config/claude-multiconta/aliases.sh`; no `.zshrc` ou
 `.bashrc` entra uma única linha de `source`, marcada com `# >>> claude-multiconta >>>`. Para cada conta:
-`claude-<conta>`, `claude-<conta>-login`, `claude-usage-<conta>`. `claude` puro é a conta
-`default_account`.
+`claude-<conta>`, `claude-<conta>-login`, `claude-usage-<conta>`. `claude` puro abre **a melhor conta agora**
+(abaixo); se a cota não puder ser lida, a `default_account`.
+
+**A melhor conta (`usage-all --melhor`)**: `claude` puro e `claude-resume` escolhem a conta sozinhos, sem imprimir
+nada. A regra é "use primeiro o que vai vencer": a cota que sobra numa conta perto do reset semanal some em horas,
+a de uma conta que só zera daqui a dias continua valendo; então a ordem é o que sobra da semana dividido pelas horas
+até o reset (pontos que vencem por hora). Ficam de fora contas com menos de 5 pontos sobrando na semana ou com a
+janela de 5 h acima de 85%; se nenhuma serve, vai a que tem mais sobra (com um aviso). `usage-all --melhor -v`
+mostra a ordem e o motivo; a cota vem do banco do `usage-hist` (ou da API, se o banco estiver velho).
+`CLAUDE_CONTA=gmail claude` força uma conta; `claude-<conta>` continua abrindo aquela conta.
 
 Sessão interativa abre num tmux **novo** chamado `<prefixo>-<pasta>` (`claude-foo` para a padrão,
 `claude-gmail-foo` para as outras; `-2`, `-3` se repetir), nascido com `cd ~` antes do `new-session`
@@ -192,6 +200,9 @@ varredura. A página do orq recebe a cota do `usage-all --json`, então também 
 máquina sem banco (o laptop), os três comandos rodam por ssh na máquina de `usage_db_host` do accounts.json.
 
 ## 3.5 `claude-last` e `claude-resume`: a conversa certa
+
+No `claude-resume` sem `--as`, a conversa fica na conta dela se a conta estiver boa (janela de 5 h abaixo de 70%
+e 15+ pontos sobrando na semana); senão vai para a melhor conta agora, copiada como no `--as`.
 
 Cada conta guarda as conversas em `<config_dir>/projects/<pasta codificada>/<id>.jsonl`. O `--resume`
 de uma conta não vê as das outras. O `claude-last` olha todas:

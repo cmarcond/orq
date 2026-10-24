@@ -508,6 +508,71 @@ def _total_line(t: Optional[dict]) -> str:
     return f"{lab}  {cell_of(t['7d'], t['7d_pace'] or None, runs)}  {tail}"
 
 
+# ======================================================================== a melhor conta para abrir agora
+# "Use primeiro o que vai vencer": a cota que sobra numa conta perto do reset semanal some em horas; a de uma conta
+# que só zera daqui a dias continua valendo. A ordem é o que sobra da semana dividido pelas horas até o reset
+# (pontos que vencem por hora). Travas: sobra mínima na semana e a janela de 5 h longe do limite.
+MIN_FREE_7D = 5.0  # pontos da semana que a conta precisa ter sobrando para entrar
+MAX_5H = 85.0  # % da janela de 5 h acima da qual a conta fica de fora (a sessão bateria no limite logo)
+STAY_5H, STAY_FREE_7D = 70.0, 15.0  # no resume, a conta da conversa "está boa" abaixo disto e com essa sobra
+
+
+def rank(per: Dict[str, dict]) -> List[dict]:
+    """Contas em ordem de preferência, com o motivo. `per` é o usage_json de cada conta."""
+    out = []
+    for name, u in per.items():
+        if name.startswith("_"):
+            continue
+        if "err" in u or u.get("7d") is None:
+            out.append({"name": name, "ok": False, "score": -1.0, "free": 0.0, "why": "sem dados de cota"})
+            continue
+        free = max(0.0, 100.0 - float(u["7d"]))
+        h5 = float(u.get("5h") or 0.0)
+        left_h = (u.get("7d_left") or WEEK) / 3600.0  # janela não iniciada: a semana inteira pela frente
+        score = free / max(left_h, 0.5)
+        ok, why = True, f"semana {u['7d']:.0f}%, sobra {free:.0f} pts que vencem em {fmt_left(left_h * 3600).strip()} ({f'{score:.2f}'.replace('.', ',')} pts/h) · 5h {h5:.0f}%"
+        if free < MIN_FREE_7D:
+            ok, why = False, f"sobra só {free:.0f} pts na semana"
+        elif h5 >= MAX_5H:
+            ok, why = False, f"janela de 5 h em {h5:.0f}%"
+        out.append({"name": name, "ok": ok, "score": score, "free": free, "h5": h5, "why": why})
+    return sorted(out, key=lambda r: (not r["ok"], -r["score"], r.get("h5", 0)))
+
+
+def best_account(per: Dict[str, dict], stay: Optional[str] = None) -> Tuple[Optional[str], str]:
+    """(conta, motivo). Com `stay` (a conta da conversa, no resume), fica nela se estiver boa."""
+    ranked = rank(per)
+    if stay:
+        cur = next((r for r in ranked if r["name"] == stay), None)
+        if cur and cur["ok"] and cur["h5"] < STAY_5H and cur["free"] >= STAY_FREE_7D:
+            return stay, "a conta da conversa está boa: " + cur["why"]
+    ok = [r for r in ranked if r["ok"]]
+    if ok:
+        return ok[0]["name"], ok[0]["why"]
+    usable = sorted((r for r in ranked if r["free"] > 0), key=lambda r: -r["free"])
+    if usable:
+        return usable[0]["name"], f"nenhuma conta com folga; a com mais sobra ({usable[0]['why']})"
+    return None, "nenhuma conta com cota"
+
+
+def show_best(accounts: List[Account], stay: Optional[str], verbose: bool) -> int:
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        per = dict(zip((x.name for x in accounts), ex.map(usage_json, accounts)))
+    name, why = best_account(per, stay)
+    if verbose:
+        labels = {x.name: x.label for x in accounts}
+        for r in rank(per):
+            mark = "→" if r["name"] == name else " "
+            print(f"{mark} {labels.get(r['name'], r['name']):<{LABEL_W}} {'ok  ' if r['ok'] else 'fora'}  {r['why']}", file=sys.stderr)
+        print(c("2", f"escolha: {labels.get(name, name)} · {why} · {source_note()}"), file=sys.stderr)
+    elif name and why.startswith("nenhuma"):
+        print(f"usage-all: {why}", file=sys.stderr)
+    if not name:
+        return 2
+    print(name)
+    return 0
+
+
 # ======================================================================== cli
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="usage-all", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -515,6 +580,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--json", action="store_true", help="saída para scripts")
     ap.add_argument("-b", "--brief", action="store_true", help=argparse.SUPPRESS)  # sinônimo antigo do padrão
     ap.add_argument("--ao-vivo", action="store_true", help="consulta a API agora, mesmo com o banco do usage-hist fresco")
+    ap.add_argument("--melhor", action="store_true", help="imprime só a melhor conta para abrir agora (o que vence primeiro; -v explica)")
+    ap.add_argument("--fica", metavar="CONTA", help="com --melhor: fica nesta conta (a da conversa) se ela estiver boa")
     ap.add_argument("names", nargs="*", metavar="conta")
     a = ap.parse_args(argv)
 
@@ -529,6 +596,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     global SNAP
     SNAP = None if a.ao_vivo else load_snapshot()
 
+    if a.melhor:
+        return show_best(chosen, a.fica, a.verbose)
     if a.json:
         with ThreadPoolExecutor(max_workers=8) as ex:
             per = dict(zip((x.name for x in chosen), ex.map(usage_json, chosen)))
