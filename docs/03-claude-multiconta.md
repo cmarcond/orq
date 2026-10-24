@@ -96,8 +96,8 @@ origem dos dados só aparece quando a coleta do banco tem 15 min ou mais.
   vermelho além); **quando zera**: uma simulação que gasta o que sobra de todas as contas no ritmo atual e
   recarrega cada conta no reset dela (`∞` quando os resets chegam antes); e o próximo reset semanal, de
   que conta. A ideia vem dos *error budgets* de SLO: queima e tempo até esgotar.
-- Modos: `usage-all` (resumido), `-v` (barras de 20 células com horário do reset, a melhor conta com o
-  motivo e a origem dos dados), `usage-all gmail`
+- Modos: `usage-all` (resumido), `-v` (por conta, barras de 20 células, desvio do ritmo e horário do
+  reset; no fim o TOTAL, a melhor conta e a idade dos dados), `usage-all gmail`
   (só as citadas), `--json` (para o `orq` e a página: por conta `5h`, `5h_pace`, `5h_left`, `7d`,
   `7d_pace`, `7d_left` ou `{"err": …}`, mais `_total` com `7d`, `7d_pace`, `7d_free`, `7d_burn`,
   `7d_runs_out`, `7d_next_reset`, `accounts`).

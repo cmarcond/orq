@@ -16,7 +16,7 @@ com um marcador de ritmo. Feito para levar de máquina em máquina: Mac (zsh) e 
 | `codex-login` | login do Codex por *device auth* (sem navegador local) |
 | `codex-usage` | uso do Codex (comando próprio; não entra no `usage-all`) |
 | `usage-all` | uso de todas as contas do Claude, **resumido**: uma linha por conta e, por janela, % usado, mini-barra com marcador de ritmo e tempo até o reset |
-| `usage-all -v` | o mesmo, **completo**: barra por janela, marcador de ritmo e horário do reset |
+| `usage-all -v` | o mesmo, **completo**: barra larga por janela, pontos acima/abaixo do ritmo e horário do reset |
 | `usage-all gmail` | só as contas citadas (nomes do `accounts.json`); combina com `-v` |
 | `usage-hist` | **histórico**: por conta, hoje, ritmo, previsão de 100%, barras das últimas 24 h e alertas; `dia`, `semana`, `calibrar`, `estado`; o coletor roda a cada 5 min no node4 |
 | `usage-sessoes` | **quem está gastando cada conta**, em todas as máquinas: por conta, a cota e uma linha por pasta e tipo (as execuções de um script juntas), com a parte de cada uma no peso da conta e os processos abertos parados há mais de 1 h; `-v` mostra cada sessão com processo, tmux, quem lançou e prompt; `--horas N`, `--conta C`, `--json` |
@@ -138,20 +138,22 @@ conta, rode o `./install.sh` de novo.
 ### 4. Uso com marcador de ritmo
 
 `usage-all -v` consulta a API de uso da Anthropic com a credencial de cada conta e
-desenha, para cada janela de limite, uma barra de 20 células:
+desenha, para cada janela de limite, uma barra de 20 células, os pontos acima (+) ou abaixo (−) do
+ritmo e o horário do reset (só a hora quando é hoje):
 
 ```
-⏱  Sessão 5h            30% [██████░░░░░░░░┃░░░░░]  reseta 25/09 12:30  ritmo  73% (▼-43 abaixo do ritmo)
-📅 Semanal 7d (todos)    30% [███┃██░░░░░░░░░░░░░░]  reseta 01/10 03:00  ritmo  19% (▲+11 acima do ritmo)
-🔮 Semanal 7d só Fable   26% [███┃█░░░░░░░░░░░░░░░]  reseta 01/10 03:00  ritmo  19% (▲+7 acima do ritmo)
+→ Gmail  you@example.com
+  sessão 5h   2% ░░░░░░░┃░░░░░░░░░░░░ -37  18:09
+  semana 7d  62% ████████████░░░░░░░┃ -34  20:59
+  Fable 7d   82% ████████████████░░░┃ -14  20:59 ⚠
 ```
 
 - A parte cheia (`█`) é o **uso** que a API reporta. O script não estima isso.
-- O `┃` amarelo é o **tempo**: a fração da janela que já passou. Para "ficar no ritmo", a barra
+- O `┃` é o **tempo**: a fração da janela que já passou. Para "ficar no ritmo", a barra
   cheia deveria chegar exatamente até ele. Exemplo: se em 30 min de uma janela de 5 h você
   gastou 50%, passaram 10% do tempo, o `┃` fica em 10% e a barra (50%) passa muito dele.
-- O texto ao lado diz o desvio: verde quando está abaixo ou no ritmo (diferença menor que 3
-  pontos), amarelo até 15 pontos acima, vermelho além disso.
+- O número ao lado é o desvio, na cor da barra: verde abaixo do ritmo, amarelo acima, vermelho com
+  15 pontos ou mais acima. `⚠` marca janela que a API diz estar perto do limite.
 - Como o tempo é calculado: no Claude a API só dá o horário de reset, então o script assume
   janelas fixas de 5 h e 7 dias e conta para trás. Se a janela não está ativa (reset já passou)
   o marcador some.
@@ -165,7 +167,7 @@ serviço e tem comando próprio, `codex-usage` (`bin/codex-usage-fast`), com os 
 ```
 usage-all                 # todas as contas do Claude, resumido
 usage-all work         # só essa conta (pode listar várias)
-usage-all -v              # completo: barra, marcador de ritmo e horário do reset
+usage-all -v              # completo: barra larga, desvio do ritmo e horário do reset
 usage-all -v gmail        # combina os dois
 usage-all --json          # para scripts
 ```

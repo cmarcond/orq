@@ -307,7 +307,7 @@ def test_usage_all_reads_snapshot_and_reports_source(monkeypatch, tmp_path):
     buf = io.StringIO()
     with redirect_stdout(buf):
         U.main(["-v"])
-    assert "do banco · coleta há 3 min" in buf.getvalue()
+    assert "dados de 3 min atrás" in buf.getvalue()
     # --ao-vivo: não lê o banco
     monkeypatch.setattr(U, "load_snapshot", lambda: pytest.fail("não devia ler o banco"))
     monkeypatch.setattr(U, "load_cred", lambda acc: None)

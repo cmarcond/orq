@@ -43,7 +43,7 @@ def test_parse_windows_new_format_sorted_with_scope():
     }
     ws = U.parse_windows(data)
     assert [w.kind for w in ws] == ["session", "weekly_all", "weekly_scoped"]
-    assert ws[2].scope == "Fable" and ws[2].title == "Fable 7d" and ws[2].long_title.endswith("só Fable")
+    assert ws[2].scope == "Fable" and ws[2].title == "Fable 7d"
     assert ws[0].title == "sessão 5h" and ws[1].title == "semana 7d"
 
 
@@ -191,6 +191,20 @@ def test_brief_notes_only_stale_data(monkeypatch, capsys):
         monkeypatch.setattr(U, "snap_age_min", lambda m=mins: m)
         U.show_brief([acc("a", "A (x)")])
         assert ("dados de 40 min atrás" in capsys.readouterr().out) is note
+
+
+def test_verbose_is_compact(monkeypatch, capsys):
+    U.COLOR = False
+    table = {"a": fake_windows(80), "b": fake_windows(10), "c": ([], "sem credencial")}
+    monkeypatch.setattr(U, "get_windows", lambda a: table[a.name])
+    monkeypatch.setattr(U, "logged_email", lambda a: None)
+    ok = U.show_verbose([acc("a", "A (x)"), acc("b", "B (x)"), acc("c", "C (x)")], datetime.timezone.utc)
+    out = capsys.readouterr().out.splitlines()
+    assert not ok
+    assert out[0] == "→ B  g@x" and out[1].startswith("  sessão 5h ") and out[2].startswith("  semana 7d  10% ██"), out[:3]
+    assert out[4] == "A  g@x" and "C  g@x" in out and "  ✗ sem credencial" in out
+    assert out[-2].startswith("TOTAL ") and out[-1].startswith("→ B: 90 pts vencem em ") and out[-1].endswith("dados da API"), out[-2:]
+    assert not any("ritmo" in ln or "reseta" in ln or "📊" in ln for ln in out), "sem textos longos"
 
 
 def test_brief_highlights_the_best_account(monkeypatch, capsys):

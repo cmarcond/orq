@@ -6,7 +6,8 @@ Uso: usage-all [-v|--verbose] [--json] [conta ...]     (sem conta = todas as con
                  ritmo e tempo até o reset. Contas ordenadas da mais folgada para a mais apertada no 7d;
                  → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota: usado,
                  queima (1,0× = no ritmo), quando zera (∞ = os resets chegam antes) e o próximo reset.
-  -v, --verbose  completo: barra por janela, marcador de ritmo, horário do reset e aviso de login.
+  -v, --verbose  completo: por conta, barra larga, pontos acima/abaixo do ritmo, horário do reset e
+                 aviso de login; no fim o TOTAL, a melhor conta e a idade dos dados.
   --json         para scripts (orq, orq-web): por conta, % usado, ritmo e segundos até o reset de
                  5h e 7d, ou {"err": texto}.
 
@@ -191,11 +192,6 @@ class Window:
         return {"session": "sessão 5h", "weekly_all": "semana 7d"}.get(self.kind, self.kind)
 
     @property
-    def long_title(self) -> str:
-        t = {"session": "⏱  Sessão 5h", "weekly_all": "📅 Semanal 7d (todos)", "weekly_scoped": "🔮 Semanal 7d"}.get(self.kind, self.kind)
-        return f"{t} só {self.scope}" if self.scope else t
-
-    @property
     def slack(self) -> float:
         """Pontos acima (positivo) ou abaixo (negativo) do ritmo."""
         return self.percent - (self.pace or 0)
@@ -266,9 +262,7 @@ def snap_age_min() -> Optional[int]:
 
 def source_note() -> str:
     mins = snap_age_min()
-    if mins is None:
-        return "ao vivo (API)"
-    return f"do banco · coleta há {mins} min · --ao-vivo consulta a API"
+    return "dados da API" if mins is None else f"dados de {mins} min atrás"
 
 
 def get_windows(acc: Account, live: bool = False) -> Tuple[List[Window], Optional[str]]:
@@ -328,12 +322,12 @@ def cell(w: Window) -> str:
     return cell_of(w.percent, w.pace, fmt_left(w.left, w.size))
 
 
-def cell_of(percent: float, pace: Optional[float], right: str) -> str:
+def cell_of(percent: float, pace: Optional[float], right: str, width: int = CELL_BAR) -> str:
     col = color_for(percent, pace)
-    n = int(round(max(0.0, min(100.0, percent)) / 100 * CELL_BAR))
-    cells = [c(col, "█")] * n + [c("2", "░")] * (CELL_BAR - n)
+    n = int(round(max(0.0, min(100.0, percent)) / 100 * width))
+    cells = [c(col, "█")] * n + [c("2", "░")] * (width - n)
     if pace is not None:
-        i = min(CELL_BAR - 1, int(pace / 100 * CELL_BAR))
+        i = min(width - 1, int(pace / 100 * width))
         cells[i] = c(f"1;{col}", "┃") if i < n else c("1", "┃")
     return f"{c(col, f'{int(round(percent)):3d}%')} {''.join(cells)} {right}"
 
@@ -366,59 +360,62 @@ def show_brief(accounts: List[Account]) -> bool:
     print(fmt_total(total_json(per), {a.name: a.label for a in accounts}))
     mins = snap_age_min()
     if mins is not None and mins >= STALE_MIN:
-        print(c("2", f"  dados de {mins} min atrás · --ao-vivo consulta a API"))
+        print(c("2", source_note() + " · --ao-vivo atualiza"))
     return all(r[0] != float("inf") for r in rows)
 
 
-# ---- completo (-v)
+# ---- completo (-v): por conta, uma linha por janela com barra larga, distância do ritmo e horário do reset
 BAR_W = 20
 
 
-def bar(w: Window) -> str:
-    n = int(round(max(0.0, min(100.0, w.percent)) / 100 * BAR_W))
-    cells = ["█"] * n + ["░"] * (BAR_W - n)
-    pace = w.pace if (w.pace or 0) > 0 else None
-    if pace is not None:
-        cells[min(BAR_W - 1, int(pace / 100 * BAR_W))] = c("1;33", "┃")
-    return "".join(cells)
-
-
-def pace_info(w: Window) -> str:
-    pace = w.pace if (w.pace or 0) > 0 else None
-    if pace is None:
-        return ""
-    d = w.percent - pace
-    if abs(d) < 3:
-        s = c("32", "no ritmo")
-    elif d > 0:
-        s = c("31" if d >= 15 else "33", f"▲{d:+.0f} acima do ritmo")
-    else:
-        s = c("32", f"▼{d:+.0f} abaixo do ritmo")
-    return f"  ritmo {pace:3.0f}% ({s})"
+def pace_delta(w: Window) -> str:
+    """Pontos acima (+) ou abaixo (−) do ritmo, na cor da barra; vazio sem ritmo."""
+    if not w.pace:
+        return "   "
+    d = int(round(w.percent)) - int(round(w.pace))
+    return c(color_for(w.percent, w.pace), f"{d:+3d}")
 
 
 def fmt_reset(iso: Optional[str], tz) -> str:
+    """Horário do reset: 'HH:MM' se for hoje, senão 'dd/mm HH:MM'."""
     if not iso:
         return ""
-    return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(tz).strftime("%d/%m %H:%M")
+    t = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(tz)
+    return t.strftime("%H:%M" if t.date() == datetime.datetime.now(tz).date() else "%d/%m %H:%M")
 
 
-def show_verbose(acc: Account, tz) -> Tuple[bool, dict]:
-    windows, err = get_windows(acc)
+def verbose_block(acc: Account, windows: List[Window], err: Optional[str], tz, best: bool) -> List[str]:
+    head = f"{'→ ' if best else ''}{acc.label}"
+    head = (c("1", head) + "  " + c("2", acc.email)) if acc.email else c("1", head)
     if err:
-        print(f"\n📊 {acc.full_label}\n   ✗ {err}\n")
-        return False, {"err": err}
-    now = datetime.datetime.now(tz).strftime("%d/%m %H:%M")
-    print(f"\n📊 {acc.full_label} — {now}   (┃ = onde a barra deveria estar para ficar no ritmo)")
+        return [head, f"  ✗ {err}"]
+    out = [head]
     real = logged_email(acc)
     if real and acc.email and real.lower() != acc.email.lower():
-        print(f"   ⚠️  {acc.config_dir} está logado como {real}, não como {acc.email}. Para corrigir: claude-{acc.name}-login")
-    print()
+        out.append(c("33", f"  ⚠ logado como {real}; corrige: claude-{acc.name}-login"))
     for w in windows:
-        flag = "" if w.severity == "normal" else f"  ⚠️ {w.severity}"
-        print(f"{w.long_title:<22} {w.percent:>3.0f}% [{bar(w)}]  reseta {fmt_reset(w.resets_at, tz)}{pace_info(w)}{flag}")
-    print()
-    return True, json_of(windows, None)
+        flag = c("33", " ⚠") if w.severity != "normal" else ""
+        out.append(f"  {w.title:<10}{cell_of(w.percent, w.pace, pace_delta(w), BAR_W)}  {c('2', fmt_reset(w.resets_at, tz))}{flag}")
+    return out
+
+
+def show_verbose(accounts: List[Account], tz) -> bool:
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        got = list(ex.map(get_windows, accounts))
+    per = {a.name: json_of(*g) for a, g in zip(accounts, got)}
+    best, _ = best_account(per)
+    slack = lambda g: float("inf") if g[1] else next((w.slack for w in g[0] if w.kind == "weekly_all"), 999.0)
+    for a, g in sorted(zip(accounts, got), key=lambda x: slack(x[1])):
+        print("\n".join(verbose_block(a, g[0], g[1], tz, a.name == best)))
+        print()
+    labels = {a.name: a.label for a in accounts}
+    print(fmt_total(total_json(per), labels))
+    r = next((r for r in rank(per) if r["name"] == best), None)
+    if r:
+        print(f"→ {labels[best]}: {r['free']:.0f} pts vencem em {fmt_left(r['left']).strip()}  {c('2', source_note())}")
+    else:
+        print(c("2", source_note()))
+    return all(not g[1] for g in got)
 
 
 # ---- json (orq, orq-web)
@@ -545,7 +542,7 @@ def rank(per: Dict[str, dict]) -> List[dict]:
             ok, why = False, f"sobra só {free:.0f} pts na semana"
         elif h5 >= MAX_5H:
             ok, why = False, f"janela de 5 h em {h5:.0f}%"
-        out.append({"name": name, "ok": ok, "score": score, "free": free, "h5": h5, "why": why})
+        out.append({"name": name, "ok": ok, "score": score, "free": free, "h5": h5, "left": left_h * 3600, "why": why})
     return sorted(out, key=lambda r: (not r["ok"], -r["score"], r.get("h5", 0)))
 
 
@@ -616,15 +613,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(per))
         return 0
     if a.verbose:
-        tz = timezone(conf)
-        results = [show_verbose(x, tz) for x in chosen]
-        per = {x.name: r[1] for x, r in zip(chosen, results)}
-        labels = {x.name: x.label for x in chosen}
-        best, why = best_account(per)
-        print(fmt_total(total_json(per), labels))
-        print(f"{c('1', '→ melhor agora: ' + labels.get(best, best or '—'))} {c('2', '· ' + why)}")
-        print(c("2", source_note()))
-        return 0 if all(r[0] for r in results) else 2
+        return 0 if show_verbose(chosen, timezone(conf)) else 2
     ok = show_brief(chosen)
     return 0 if ok else 2
 
