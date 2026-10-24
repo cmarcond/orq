@@ -158,8 +158,9 @@ def test_brief_and_json_carry_the_total(monkeypatch, capsys):
     monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(40))
     assert U.show_brief([acc("a", "A (x)"), acc("b", "B (x)")])
     out = capsys.readouterr().out.splitlines()
-    assert out[-1].strip().startswith("TOTAL ") and out[-1].endswith("queima 0,8× · 60% livre"), out[-1]
-    assert out[-2] == "", "uma linha em branco antes do TOTAL"
+    assert out[-2].strip().startswith("TOTAL ") and out[-2].endswith("queima 0,8× · 60% livre"), out[-2]
+    assert out[-3] == "", "uma linha em branco antes do TOTAL"
+    assert out[-1].startswith("→ melhor agora: A · semana 40%"), out[-1]
     conf = {"accounts": [{"name": "a", "label": "A (x)", "config_dir": "~/.claude-a"}]}
     monkeypatch.setattr(U, "load_conf", lambda: conf)
     assert U.main(["--json"]) == 0
@@ -185,6 +186,20 @@ def test_main_json_and_unknown_account(monkeypatch, tmp_path, capsys):
 
 
 # ---------------------------------------------------------------- a melhor conta para abrir agora
+def test_brief_highlights_the_best_account(monkeypatch, capsys):
+    U.COLOR = True
+    try:
+        table = {"a": fake_windows(80), "b": fake_windows(10)}
+        monkeypatch.setattr(U, "get_windows", lambda a: table[a.name])
+        U.show_brief([acc("a", "A (x)"), acc("b", "B (x)")])
+        out = capsys.readouterr().out
+    finally:
+        U.COLOR = False
+    assert "\033[1;7mB         \033[0m" in out, "nome da melhor em destaque"
+    assert "\033[1;7mA" not in out
+    assert "→ melhor agora: \033[1mB\033[0m" in out
+
+
 def u(d7, h5=0.0, left_h=48.0):
     return {"5h": h5, "7d": d7, "7d_left": None if left_h is None else int(left_h * 3600)}
 

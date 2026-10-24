@@ -82,7 +82,9 @@ O script manda o código por ssh (um tarball pelo stdin, numa conexão só) e ro
    próprio server0 é "remoto";
 3. escreve `~/.config/orq-web/ssh_config`, um `Host` por máquina de `orq_hosts` mais `laptop` e o
    próprio host, com os IPs resolvidos ali (o container não vê o `/etc/hosts` nem o `~/.ssh/config` do
-   host), `StrictHostKeyChecking accept-new` e um `known_hosts` próprio;
+   host), `StrictHostKeyChecking accept-new` e um `known_hosts` próprio; o que o `~/.ssh/config` do host
+   muda para uma máquina e o container também precisa vai junto: `ProxyJump` e uma lista própria de
+   `KexAlgorithms` (por exemplo, para contornar uma máquina só alcançável por outra);
 4. sobe o `docker compose` com a imagem `ghcr.io/cmarcond/orq-web:latest` publicada pela CI (se o
    Docker estiver logado no GHCR) ou construída ali (`ORQ_BUILD_LOCAL=1` força construir com o código
    enviado, útil antes de o commit chegar à `main`);
@@ -102,6 +104,20 @@ sessão dura enquanto o servidor viver.
 Atualizar depois de um commit na `main`: espere o workflow `orq-web` publicar a imagem (uns 3 minutos) e
 rode `push-server0.sh` de novo; ele recria o container. `docker ps` no server0 mostra `healthy` em
 ~30 s.
+
+**Pacotes grandes que somem no ZeroTier.** Se o ssh a uma máquina trava logo na troca de chaves (a
+pós-quântica, `mlkem768x25519`, manda pacotes grandes) ou respostas de mais de ~1 KB nunca chegam, olhe o
+MTU da placa de rede de cada ponta. O node4 é uma VM com `ens3` de MTU 1442, menor que os 1460 bytes
+dos pacotes UDP que o ZeroTier manda por padrão; no caminho direto até o node3 (em casa, outra rede) os
+fragmentos se perdiam. O conserto é o ZeroTier mandar pacotes menores, nas duas pontas, em
+`/var/lib/zerotier-one/local.conf` seguido de `sudo systemctl restart zerotier-one`:
+
+```json
+{ "physical": { "0.0.0.0/0": { "mtu": 1400 } } }
+```
+
+No node4 vale para todos os destinos; no node3 basta a rede do outro lado (`"198.51.100.0/24"`).
+`sudo zerotier-cli -j peers` mostra se o caminho até um nó é direto ou por relay.
 
 ## Mac como máquina remota
 

@@ -27,6 +27,9 @@ grep -qF "$(cut -d' ' -f2 "$KEY.pub")" "$HOME/.ssh/authorized_keys" || cat "$KEY
 # ssh_config do container: um Host por máquina, com IP resolvido aqui (o container não tem o /etc/hosts
 # desta máquina nem o ~/.ssh/config dela). known_hosts próprio, gravável, com accept-new.
 hosts=$(python3 -c "import json;print(' '.join(json.load(open('$CONF')).get('orq_hosts',[])))")
+# o que o ~/.ssh/config desta máquina muda para cada host e o container também precisa: ProxyJump e uma troca de
+# chaves própria (ex.: uma máquina só alcançável passando por outra)
+default_kex=$(ssh -G orq-host-sem-config 2>/dev/null | awk '/^kexalgorithms /{print $2}')
 {
   echo "# gerado por deploy.sh em $(date -Is); não edite, rode o deploy de novo"
   seen=" "
@@ -36,8 +39,13 @@ hosts=$(python3 -c "import json;print(' '.join(json.load(open('$CONF')).get('orq
     case "$ip" in ""|"$h") ip=$(getent hosts "$h" 2>/dev/null | awk '{print $1; exit}');; esac
     [ "$h" = "$HOSTNAME_" ] && ip="$ZT_IP"
     [ -n "$ip" ] || { echo "aviso: não resolvi $h; pulando" >&2; continue; }
-    printf 'Host %s\n    HostName %s\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile %s/known_hosts\n    ConnectTimeout 8\n    ServerAliveInterval 15\n\n' \
+    printf 'Host %s\n    HostName %s\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n    StrictHostKeyChecking accept-new\n    UserKnownHostsFile %s/known_hosts\n    ConnectTimeout 8\n    ServerAliveInterval 15\n' \
       "$h" "$ip" "$(id -un)" "$KEY" "$CFG"
+    jump=$(ssh -G "$h" 2>/dev/null | awk '/^proxyjump /{print $2}')
+    case "$jump" in ""|none) ;; *) printf '    ProxyJump %s\n' "$jump";; esac
+    kex=$(ssh -G "$h" 2>/dev/null | awk '/^kexalgorithms /{print $2}')
+    [ -n "$kex" ] && [ "$kex" != "$default_kex" ] && printf '    KexAlgorithms %s\n' "$kex"
+    echo
   done
 } > "$CFG/ssh_config"
 chmod 600 "$CFG/ssh_config"

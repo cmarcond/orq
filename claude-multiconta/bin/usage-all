@@ -348,13 +348,26 @@ def show_brief(accounts: List[Account]) -> bool:
     titles = max((r[2] for r in rows), key=len, default=[])
     if titles:
         print(c("2", (" " * (LABEL_W + 1) + SEP.join(f"{t:^{CELL_BAR + 11}}" for t in titles)).rstrip()))
-    for _, line, _, _ in sorted(rows, key=lambda r: r[0]):
+    per = {a.name: r[3] for a, r in zip(accounts, rows)}
+    best, why = best_account(per)
+    for a, (_, line, _, _) in sorted(zip(accounts, rows), key=lambda x: x[1][0]):
+        if a.name == best:  # o nome da melhor conta em destaque (a linha de texto embaixo diz o mesmo sem cor)
+            lab = f"{a.label:<{LABEL_W}}"
+            line = c("1;7", lab) + line[len(lab):]
         print(line)
     labels = {a.name: a.label for a in accounts}
     width = max((visible_len(r[1]) for r in rows), default=0)
     print()
-    print(fmt_total(total_json({a.name: r[3] for a, r in zip(accounts, rows)}), labels, width))
+    print(fmt_total(total_json(per), labels, width))
+    print(best_line(best, why, labels))
     return all(r[0] != float("inf") for r in rows)
+
+
+def best_line(best: Optional[str], why: str, labels: Dict[str, str]) -> str:
+    """'→ melhor agora: Gmail · motivo', o que o `claude` puro abriria (usage-all --melhor)."""
+    if not best:
+        return c("2", f"→ melhor agora: {why}")
+    return f"→ melhor agora: {c('1', labels.get(best, best))} {c('2', '· ' + why)}"
 
 
 # ---- completo (-v)
@@ -608,7 +621,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.verbose:
         tz = timezone(conf)
         results = [show_verbose(x, tz) for x in chosen]
-        print(fmt_total(total_json({x.name: r[1] for x, r in zip(chosen, results)}), {x.name: x.label for x in chosen}))
+        per = {x.name: r[1] for x, r in zip(chosen, results)}
+        labels = {x.name: x.label for x in chosen}
+        print(fmt_total(total_json(per), labels))
+        print(best_line(*best_account(per), labels))
         print(c("2", source_note()))
         return 0 if all(r[0] for r in results) else 2
     ok = show_brief(chosen)
