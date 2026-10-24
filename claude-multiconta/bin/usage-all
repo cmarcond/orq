@@ -4,7 +4,7 @@
 Uso: usage-all [-v|--verbose] [--json] [conta ...]     (sem conta = todas as contas do accounts.json)
   padrão         resumido: uma linha por conta; por janela, % usado, mini-barra com marcador de
                  ritmo e tempo até o reset. Contas ordenadas da mais folgada para a mais apertada no 7d;
-                 → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota: usado, sobra,
+                 → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota: usado,
                  queima (1,0× = no ritmo), quando zera (∞ = os resets chegam antes) e o próximo reset.
   -v, --verbose  completo: barra por janela, marcador de ritmo, horário do reset e aviso de login.
   --json         para scripts (orq, orq-web): por conta, % usado, ritmo e segundos até o reset de
@@ -502,7 +502,7 @@ def visible_len(s: str) -> int:
 
 
 def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None) -> str:
-    """O TOTAL da semana numa linha curta: barra do usado médio com o ritmo médio, o que sobra em média, a queima
+    """O TOTAL da semana numa linha curta: barra do usado médio com o ritmo médio, a queima
     (velocidade de consumo; 1,0× = no ritmo), quando a frota zera (∞ = os resets chegam antes) e o próximo
     reset semanal."""
     lab = c("1", "TOTAL")
@@ -515,7 +515,7 @@ def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None) -> str
     who = t.get("7d_next_reset_account")
     nxt = f"  reset {(labels or {}).get(who, who)} {fmt_left(t['7d_next_reset']).strip()}" if t.get("7d_next_reset") else ""
     week = cell_of(t["7d"], t["7d_pace"] or None, "").rstrip()
-    return f"{lab} {week}  sobra {t['7d_free']:.0f}%  queima {burn}  zera {runs}{nxt}"
+    return f"{lab} {week}  queima {burn}  zera {runs}{nxt}"
 
 
 # ======================================================================== a melhor conta para abrir agora

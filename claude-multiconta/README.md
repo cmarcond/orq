@@ -183,7 +183,7 @@ marca a melhor conta para abrir agora (a do `usage-all --melhor`) e o TOTAL resu
   Work 3    0% ░┃░░░░░░░░ 04h05   19% ██░░░┃░░░░ 3d07h   35% ████░┃░░░░ 3d07h
   Work 2    2% ┃░░░░░░░░░ 04h35    5% ░┃░░░░░░░░ 5d20h    0% ░┃░░░░░░░░ 5d20h
 
-TOTAL  32% ███░░░┃░░░  sobra 68%  queima 0,5×  zera ∞  reset Gmail 06h21
+TOTAL  32% ███░░░┃░░░  queima 0,5×  zera ∞  reset Gmail 06h21
 ```
 
 O `┃` é o **tempo**: quanto da janela já passou. Barra que não chega no `┃` está abaixo do
