@@ -174,7 +174,7 @@ O resumido é o padrão (`-v`/`--verbose` dá o completo). No resumido,
 cada conta vira uma linha de tabela. Por janela: a % usada, uma mini-barra de 10 células
 (cada célula = 10%) com o mesmo marcador `┃` de ritmo do modo completo e, à direita, o tempo
 até o reset. Só o nome das janelas sai em cima da tabela (a legenda está no `--help`); a seta
-marca a melhor conta para abrir agora (a do `usage-all --melhor`) e o TOTAL fecha a coluna da semana.
+marca a melhor conta para abrir agora (a do `usage-all --melhor`) e o TOTAL resume a semana da frota.
 
 ```
                    sessão 5h              semana 7d              Fable 7d
@@ -182,7 +182,8 @@ marca a melhor conta para abrir agora (a do `usage-all --melhor`) e o TOTAL fech
 → Gmail        0% ░░┃░░░░░░░ 03h45   62% ██████░░░┃ 06h35   82% ████████░┃ 06h35
   Work 3    0% ░┃░░░░░░░░ 04h05   19% ██░░░┃░░░░ 3d07h   35% ████░┃░░░░ 3d07h
   Work 2    2% ┃░░░░░░░░░ 04h35    5% ░┃░░░░░░░░ 5d20h    0% ░┃░░░░░░░░ 5d20h
-  TOTAL                              32% ███░░░┃░░░   ∞    68% livre
+
+TOTAL  32% ███░░░┃░░░  sobra 68%  queima 0,5×  zera ∞  reset Gmail 06h21
 ```
 
 O `┃` é o **tempo**: quanto da janela já passou. Barra que não chega no `┃` está abaixo do

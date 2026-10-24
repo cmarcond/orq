@@ -76,7 +76,8 @@ estima** uso, só desenha.
   Work      5% ░░░░░░░░┃░ 00h35   42% ████░░░░┃░ 1d04h   65% ██████░░┃░ 1d04h
 → Gmail        0% ░░┃░░░░░░░ 03h45   62% ██████░░░┃ 06h35   82% ████████░┃ 06h35
   Work 3    0% ░┃░░░░░░░░ 04h05   19% ██░░░┃░░░░ 3d07h   35% ████░┃░░░░ 3d07h
-  TOTAL                              32% ███░░░┃░░░   ∞    68% livre
+
+TOTAL  32% ███░░░┃░░░  sobra 68%  queima 0,5×  zera ∞  reset Gmail 06h21
 ```
 
 Sem legenda (ela está no `--help`): `█` é o usado, `┃` o ritmo, à direita o tempo até o reset. A seta
@@ -89,12 +90,13 @@ origem dos dados só aparece quando a coleta do banco tem 15 min ou mais.
   primeiro uso) e aparece com o `┃` na primeira célula.
 - **Cores**: diferença uso − ritmo menor que 3 pontos ou negativa é verde; até 15, amarela; além, vermelha.
 - **Ordem**: contas da mais folgada para a mais apertada no `semana 7d` (uso − ritmo); erro vai para o fim.
-- **TOTAL** (linha final, na coluna da semana): a semana da frota. Uso médio e ritmo médio na mesma
-  mini-barra; à direita, **quando zera**: uma simulação que gasta o que sobra de todas as contas no ritmo
-  atual e recarrega cada conta no reset dela; `∞` quando os resets bastam para a semana não zerar. `% livre`
-  é a média do que sobra. O `--json` traz ainda a **queima** (`7d_burn`, que a página mostra): o consumo
-  dividido pela fração da semana decorrida, somados sobre as contas; `1,0×` é exatamente no ritmo. A ideia
-  vem dos *error budgets* de SLO: queima e tempo até esgotar.
+- **TOTAL** (última linha): a semana da frota. Uso médio e ritmo médio na mesma mini-barra, a **sobra**
+  (média do que resta), a **queima**, velocidade de consumo: o consumo dividido pela fração da semana decorrida, somados sobre as
+  contas; `1,0×` é exatamente no ritmo, menos é folga, mais é aperto (verde abaixo de 0,9, amarelo até
+  1,15, vermelho além). Depois, **quando zera**: uma simulação
+  que gasta o que sobra de todas as contas no ritmo atual e recarrega cada conta no reset dela (`∞` quando
+  os resets chegam antes); por fim, o próximo reset semanal e de que conta. A ideia vem dos *error
+  budgets* de SLO: queima e tempo até esgotar.
 - Modos: `usage-all` (resumido), `-v` (barras de 20 células com horário do reset, a melhor conta com o
   motivo e a origem dos dados), `usage-all gmail`
   (só as citadas), `--json` (para o `orq` e a página: por conta `5h`, `5h_pace`, `5h_left`, `7d`,

@@ -4,8 +4,8 @@
 Uso: usage-all [-v|--verbose] [--json] [conta ...]     (sem conta = todas as contas do accounts.json)
   padrão         resumido: uma linha por conta; por janela, % usado, mini-barra com marcador de
                  ritmo e tempo até o reset. Contas ordenadas da mais folgada para a mais apertada no 7d;
-                 → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota, quando zera
-                 (∞ = os resets bastam) e quanto sobra em média.
+                 → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota: usado, sobra,
+                 queima (1,0× = no ritmo), quando zera (∞ = os resets chegam antes) e o próximo reset.
   -v, --verbose  completo: barra por janela, marcador de ritmo, horário do reset e aviso de login.
   --json         para scripts (orq, orq-web): por conta, % usado, ritmo e segundos até o reset de
                  5h e 7d, ou {"err": texto}.
@@ -362,8 +362,8 @@ def show_brief(accounts: List[Account]) -> bool:
             print(c("1", "→ " + lab) + line[len(lab):])
         else:
             print("  " + line)
-    # o TOTAL é só da semana: fica na coluna do 7d (a segunda)
-    print("  " + fmt_total(total_json(per), skip=1 if len(titles) > 1 else 0))
+    print()
+    print(fmt_total(total_json(per), {a.name: a.label for a in accounts}))
     mins = snap_age_min()
     if mins is not None and mins >= STALE_MIN:
         print(c("2", f"  dados de {mins} min atrás · --ao-vivo consulta a API"))
@@ -501,16 +501,21 @@ def visible_len(s: str) -> int:
     return len(re.sub(r"\x1b\[[0-9;]*m", "", s))
 
 
-def fmt_total(t: Optional[dict], skip: int = 0) -> str:
-    """Linha TOTAL só do semanal, depois de `skip` colunas vazias: barra do usado médio com o ritmo médio; à
-    direita, em quanto tempo a frota zera (∞ = com os resets, não zera nesta semana) e quanto sobra em média."""
-    lab = c("1", f"{'TOTAL':<{LABEL_W}}")
+def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None) -> str:
+    """O TOTAL da semana numa linha curta: barra do usado médio com o ritmo médio, o que sobra em média, a queima
+    (velocidade de consumo; 1,0× = no ritmo), quando a frota zera (∞ = os resets chegam antes) e o próximo
+    reset semanal."""
+    lab = c("1", "TOTAL")
     if not t:
         return f"{lab} {c('2', 'sem dados')}"
-    runs = fmt_left(t["7d_runs_out"]) if t["7d_runs_out"] is not None else c("32", "  ∞  ")
-    free = f"{t['7d_free']:.0f}"
-    gap = (" " * CELL_W + SEP) * skip
-    return f"{lab} {gap}{cell_of(t['7d'], t['7d_pace'] or None, runs)}  {c('2', f'{free}% livre')}"
+    b = t["7d_burn"]
+    bcol = "32" if b < 0.9 else "33" if b <= 1.15 else "31"
+    burn = c(bcol, f"{b:.1f}×".replace(".", ","))
+    runs = c("32", "∞") if t["7d_runs_out"] is None else c("31", fmt_left(t["7d_runs_out"]).strip())
+    who = t.get("7d_next_reset_account")
+    nxt = f"  reset {(labels or {}).get(who, who)} {fmt_left(t['7d_next_reset']).strip()}" if t.get("7d_next_reset") else ""
+    week = cell_of(t["7d"], t["7d_pace"] or None, "").rstrip()
+    return f"{lab} {week}  sobra {t['7d_free']:.0f}%  queima {burn}  zera {runs}{nxt}"
 
 
 # ======================================================================== a melhor conta para abrir agora
@@ -616,7 +621,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         per = {x.name: r[1] for x, r in zip(chosen, results)}
         labels = {x.name: x.label for x in chosen}
         best, why = best_account(per)
-        print(fmt_total(total_json(per)))
+        print(fmt_total(total_json(per), labels))
         print(f"{c('1', '→ melhor agora: ' + labels.get(best, best or '—'))} {c('2', '· ' + why)}")
         print(c("2", source_note()))
         return 0 if all(r[0] for r in results) else 2

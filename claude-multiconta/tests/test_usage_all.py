@@ -144,12 +144,11 @@ def test_runs_out_before_the_reset_saves_it():
 def test_fmt_total_line():
     U.COLOR = False
     t = U.total_json({"a": {"7d": 80, "7d_pace": 50, "7d_left": 3 * 86400}, "b": {"7d": 20, "7d_pace": 50, "7d_left": 4 * 86400}})
-    s = U.fmt_total(t)
-    assert s == "TOTAL       50% █████┃░░░░   ∞    50% livre", repr(s)
-    assert U.fmt_total(t, skip=1) == "TOTAL      " + " " * 23 + s[11:], "pula a coluna do 5h"
+    s = U.fmt_total(t, {"a": "A"})
+    assert s == "TOTAL  50% █████┃░░░░  sobra 50%  queima 1,0×  zera ∞  reset A 3d00h", repr(s)
     assert U.fmt_total(None).startswith("TOTAL ") and "sem dados" in U.fmt_total(None)
     t = U.total_json({"a": {"7d": 90, "7d_pace": 50, "7d_left": 3.5 * 86400}})
-    assert "09h20  10% livre" in U.fmt_total(t), U.fmt_total(t)
+    assert "queima 1,8×  zera 09h20" in U.fmt_total(t), U.fmt_total(t)
 
 
 def test_brief_and_json_carry_the_total(monkeypatch, capsys):
@@ -157,8 +156,8 @@ def test_brief_and_json_carry_the_total(monkeypatch, capsys):
     monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(40))
     assert U.show_brief([acc("a", "A (x)"), acc("b", "B (x)")])
     out = capsys.readouterr().out.splitlines()
-    assert out[-1].startswith("  TOTAL ") and out[-1].endswith("60% livre"), out[-1]
-    assert len(out) == 4, "cabeçalho, duas contas e o TOTAL: sem legenda nem rodapé"
+    assert out[-1].startswith("TOTAL ") and "sobra 60%  queima 0,8×  zera ∞" in out[-1], out[-1]
+    assert len(out) == 5 and out[3] == "", "cabeçalho, duas contas, linha em branco e o TOTAL: sem legenda nem rodapé"
     assert sorted(ln[:2] for ln in out[1:3]) == ["  ", "→ "], "uma seta só (as duas contas empatam; qualquer uma serve)"
     conf = {"accounts": [{"name": "a", "label": "A (x)", "config_dir": "~/.claude-a"}]}
     monkeypatch.setattr(U, "load_conf", lambda: conf)
