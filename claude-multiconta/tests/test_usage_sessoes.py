@@ -210,14 +210,15 @@ def test_brief_groups_script_runs_hides_noise_and_flags_forgotten_processes():
     out = S.render_brief(by, {"work3": {"5h": 26, "7d": 19}, "gmail": {"err": "429"}}, {"work3": "Work 3", "gmail": "Gmail"}, 5, {"node1": "No route"}, NOW)
     lines = out.splitlines()
     assert lines[0] == "últimas 5 h · sem resposta: node1"
-    assert lines[2].startswith("┌") and any(l.startswith("└") for l in lines)
+    assert lines[1].startswith("┌") and lines[-1].startswith("└"), "sem rodapé"
     assert len({len(l) for l in lines if l and l[0] in "┌│├└"}) == 1  # todas as linhas da tabela com a mesma largura
     row = next(l for l in lines if "Work 3" in l)
     assert " 26% ·  19%" in row
-    script = next(l for l in lines if " script " in l)
-    assert "9×" in script and " 90%" in script and "●" not in script  # nove execuções numa linha
-    assert "●" in next(l for l in lines if " interativo " in l)
-    assert "parado" in out and "há 1 h 30" in out and "pid" not in out and "↳" not in out
+    script = next(l for l in lines if " · script " in l)
+    assert "script 9×" in script and " 90%" in script and "●" not in script  # nove execuções numa linha
+    assert "● m " in out and "interativo" not in out, "● marca a que respondeu agora; o tipo interativo é o padrão e não aparece"
+    assert "tipo" not in lines[2] and "n │" not in lines[2]
+    assert "parado 1 h 30" in out and "pid" not in out and "↳" not in out
     gmail = next(l for l in lines if "Gmail" in l)
     assert "  ? ·   ?" in gmail and "sem consumo" in gmail
 

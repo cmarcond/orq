@@ -16,7 +16,9 @@ sessão é uma estimativa relativa, não a porcentagem exata da cota. Uso pelo c
 celular) não grava arquivo nas máquinas e não aparece aqui.
 
   (padrão)         resumido: uma linha por conta, uma por pasta e tipo (execuções de um script juntas),
-                   e só os processos abertos parados há mais de 1 h
+                   e só os processos abertos parados há mais de 1 h. ● = respondeu nos últimos 10 min;
+                   parte = fatia da linha no consumo da conta; ≈pts = pontos da semana estimados pelos
+                   tokens (calibração do usage-hist; ? = amostra pequena)
   -v               completo: cada sessão, com processo, tmux, quem lançou e o começo do prompt
   --horas N        janela de consumo (padrão 5, a janela curta da cota)
   --conta C        só essas contas (nome do accounts.json; pode repetir)
@@ -613,6 +615,7 @@ def describe_proc(p: dict) -> str:
     return f"pid {p['pid']} {p['kind']}" + (f" ({who})" if who else "")
 
 
+STALE_MIN = 15  # minutos: dado do banco mais velho que isso ganha uma nota no resumo
 IDLE_MIN = 60  # minutos: no resumido, só aparece processo aberto e parado há mais que isso
 
 
@@ -700,7 +703,8 @@ def brief_groups(by: Dict[str, dict], now: dt.datetime, top: int = 5, tpp: Optio
 
 def render_brief(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hours: float, errs: Dict[str, str], now: dt.datetime, top: int = 5, tpp: Optional[Dict[str, Optional[float]]] = None, source: str = "") -> str:
     """Resumido: uma tabela, um bloco por conta; uma linha por máquina + pasta + tipo (as execuções de um
-    script juntas) e os processos abertos parados há mais de IDLE_MIN minutos (os esquecidos)."""
+    script juntas) e os processos abertos parados há mais de IDLE_MIN minutos (os esquecidos). ● antes da pasta:
+    respondeu nos últimos ACTIVE_MIN minutos; o tipo só aparece quando não é interativo."""
     head = f"últimas {hours:g} h"
     if errs:
         head += " · sem resposta: " + ", ".join(errs)
@@ -712,28 +716,26 @@ def render_brief(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str]
         pts = (lambda w: f"≈{w / k:.1f}".replace(".", ",") if k else "?") if tpp is not None else None
         rows = []
         for g in d["groups"]:
-            rows.append([g["host"], g["folder"][:24], g["kind"], f"{g['n']}×" if g["n"] > 1 else "", f"{hhmm(g['first'])}–{hhmm(g['last'])}", f"{bar(g['share'])} {g['share'] * 100:>3.0f}%"] + ([pts(g["w"])] if pts else []) + ["●" if g["now"] else ""])
+            kind = "" if g["kind"] == "interativo" else f" · {g['kind']}" + (f" {g['n']}×" if g["n"] > 1 else "")
+            folder = ("● " if g["now"] else "  ") + g["folder"][:24] + kind
+            rows.append([g["host"], folder, f"{hhmm(g['first'])}–{hhmm(g['last'])}", f"{bar(g['share'])} {g['share'] * 100:>3.0f}%"] + ([pts(g["w"])] if pts else []))
         rest = d["rest"]
         if rest:
-            rows.append(["", f"… mais {rest['n']}", "", "", "", f"{bar(rest['share'])} {rest['share'] * 100:>3.0f}%"] + ([pts(rest["w"])] if pts else []) + [""])
+            rows.append(["", f"  … mais {rest['n']}", "", f"{bar(rest['share'])} {rest['share'] * 100:>3.0f}%"] + ([pts(rest["w"])] if pts else []))
         for p_ in d["stale"]:
-            rows.append([p_["host"], p_["folder"][:24], "parado", "", f"há {ago(p_['idle_s'])}", ""] + ([""] if pts else []) + [""])
+            rows.append([p_["host"], "  " + p_["folder"][:24], f"parado {ago(p_['idle_s'])}", ""] + ([""] if pts else []))
         if not rows:
-            rows.append(["", "sem consumo", "", "", "", ""] + ([""] if pts else []) + [""])
+            rows.append(["", "  sem consumo", "", ""] + ([""] if pts else []))
         rows[0] = [labels.get(acc, acc), quota_cells(q.get(acc, {}))] + rows[0]
         for r in rows[1:]:
             r[:0] = ["", ""]
         blocks.append(rows)
+    tail = [source] if source else []
     if not blocks:
-        return head + "\n\nnenhuma sessão com consumo e nenhum processo do claude vivo" + ("\n" + source if source else "")
-    cols = ["conta", "5h · 7d", "máquina", "pasta", "tipo", "n", "horário", "parte"] + (["≈pts"] if tpp is not None else []) + ["●"]
-    table = box(cols, blocks, right=(5, 8) if tpp is not None else (5,))
-    foot = "parte: fatia de cada linha no consumo da conta na janela · ●: respondeu nos últimos 10 min · -v: detalhe"
-    if tpp is not None:
-        foot += "\n≈pts: pontos da semana estimados pelos tokens (calibração do usage-hist; ? = amostra pequena)"
-    if source:
-        foot += "\n" + source
-    return "\n".join([head, ""] + table + [foot])
+        return "\n".join([head, "", "nenhuma sessão com consumo e nenhum processo do claude vivo"] + tail)
+    cols = ["conta", "5h · 7d", "máquina", "pasta", "horário", "parte"] + (["≈pts"] if tpp is not None else [])
+    table = box(cols, blocks, right=(6,) if tpp is not None else ())
+    return "\n".join([head] + table + tail)
 
 
 def render(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hours: float, hosts_ok: List[str], errs: Dict[str, str], now: dt.datetime, show_all: bool) -> str:
@@ -811,10 +813,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if snap:
         machines, errs, tpp = snap["machines"], snap["errors"], snap.get("tpp") or {}
         t = parse_ts(snap["ts"])
-        source = f"do banco · coleta há {int((dt.datetime.now(dt.timezone.utc) - t).total_seconds() // 60)} min · --ao-vivo varre as máquinas agora"
+        mins = int((dt.datetime.now(dt.timezone.utc) - t).total_seconds() // 60)
+        source = f"dados de {mins} min atrás · --ao-vivo atualiza" if mins >= STALE_MIN else ""
     else:
         machines, errs = gather(hosts, a.horas)
-        tpp, source = None, "ao vivo (varredura das máquinas agora)"
+        tpp, source = None, ""
     by = build(machines, a.conta)
     q = quota()
     if a.json:

@@ -282,8 +282,8 @@ def test_sessions_window_feeds_usage_sessoes_render(conn):
     assert {s["session"] for s in machines["laptop"]["sessions"]} == {"s0", "s1"}
     by = S.build(machines)
     tpp = {"work3": 1000.0}
-    out = S.render_brief(by, {}, LABELS, 5, errs, NOW, tpp=tpp, source="do banco · coleta há 2 min")
-    assert "≈pts" in out and "do banco · coleta há 2 min" in out and "≈" in next(line for line in out.splitlines() if "script" in line)
+    out = S.render_brief(by, {}, LABELS, 5, errs, NOW, tpp=tpp, source="dados de 20 min atrás · --ao-vivo atualiza")
+    assert "≈pts" in out and out.endswith("dados de 20 min atrás · --ao-vivo atualiza") and "≈" in next(line for line in out.splitlines() if "script" in line)
 
 
 # ---------------------------------------------------------------- usage-all e usage-sessoes lendo o banco
@@ -328,13 +328,13 @@ def test_usage_sessoes_uses_database_unless_live(monkeypatch):
     buf = io.StringIO()
     with redirect_stdout(buf):
         S.main([])
-    assert "≈5,0" in buf.getvalue() and "do banco · coleta há 0 min" in buf.getvalue()
+    assert "≈5,0" in buf.getvalue() and "min atrás" not in buf.getvalue(), "coleta recente: sem nota da origem"
     monkeypatch.setattr(S, "from_database", lambda hours: pytest.fail("não devia ler o banco"))
     monkeypatch.setattr(S, "gather", lambda *a, **k: ({}, {}))
     buf = io.StringIO()
     with redirect_stdout(buf):
         S.main(["--ao-vivo"])
-    assert "ao vivo" in buf.getvalue() and "≈pts" not in buf.getvalue()
+    assert "nenhuma sessão" in buf.getvalue() and "min atrás" not in buf.getvalue() and "≈pts" not in buf.getvalue()
 
 
 def test_remote_host_only_without_local_db(monkeypatch, tmp_path):
