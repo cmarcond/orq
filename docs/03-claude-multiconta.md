@@ -72,14 +72,16 @@ conta, ~1 s). A API devolve, por janela, a porcentagem usada e o horário do res
 estima** uso, só desenha.
 
 ```
-█ usado  ┃ ritmo (quanto da janela já passou)  à direita: falta até o reset
-verde = abaixo do ritmo · amarelo = acima · vermelho = 15+ pontos acima
-                 sessão 5h              semana 7d              Fable 7d
-Gmail        2% ░░░┃░░░░░░ 03h13    2% ░░░░┃░░░░░ 3d12h    3% ░░░░┃░░░░░ 3d12h
-Work      3% ░░░┃░░░░░░ 03h13   19% ██░┃░░░░░░ 4d10h   11% █░░┃░░░░░░ 4d10h
-
-            TOTAL   10% █░░░┃░░░░░   ∞    queima 0,2× · 90% livre
+                   sessão 5h              semana 7d              Fable 7d
+  Work      5% ░░░░░░░░┃░ 00h35   42% ████░░░░┃░ 1d04h   65% ██████░░┃░ 1d04h
+→ Gmail        0% ░░┃░░░░░░░ 03h45   62% ██████░░░┃ 06h35   82% ████████░┃ 06h35
+  Work 3    0% ░┃░░░░░░░░ 04h05   19% ██░░░┃░░░░ 3d07h   35% ████░┃░░░░ 3d07h
+  TOTAL                              32% ███░░░┃░░░   ∞    68% livre
 ```
+
+Sem legenda (ela está no `--help`): `█` é o usado, `┃` o ritmo, à direita o tempo até o reset. A seta
+marca a melhor conta para abrir agora, a mesma do `usage-all --melhor` (o que o `claude` puro abre). A
+origem dos dados só aparece quando a coleta do banco tem 15 min ou mais.
 
 - **Janelas**: `session` (5 h), `weekly_all` (7 dias, todos os modelos) e `weekly_scoped` (7 dias de um
   modelo). O tamanho é fixo; o ritmo é `1 - (reset - agora) / tamanho`. Janela cujo reset já passou
@@ -87,13 +89,14 @@ Work      3% ░░░┃░░░░░░ 03h13   19% ██░┃░░░░
   primeiro uso) e aparece com o `┃` na primeira célula.
 - **Cores**: diferença uso − ritmo menor que 3 pontos ou negativa é verde; até 15, amarela; além, vermelha.
 - **Ordem**: contas da mais folgada para a mais apertada no `semana 7d` (uso − ritmo); erro vai para o fim.
-- **TOTAL** (linha final, centralizada): a semana da frota. Uso médio e ritmo médio na mesma mini-barra;
-  à direita, **quando zera**: uma simulação que gasta o que sobra de todas as contas no ritmo atual e
-  recarrega cada conta no reset dela; `∞` quando os resets bastam para a semana não zerar. `queima` é
-  o consumo dividido pela fração da semana decorrida, somados sobre as contas: `1,0×` é exatamente no
-  ritmo, menos é folga, mais é aperto (verde abaixo de 0,9, amarelo até 1,15, vermelho acima). `% livre`
-  é a média do que sobra. A ideia vem dos *error budgets* de SLO: queima e tempo até esgotar.
-- Modos: `usage-all` (resumido), `-v` (barras de 20 células com horário do reset), `usage-all gmail`
+- **TOTAL** (linha final, na coluna da semana): a semana da frota. Uso médio e ritmo médio na mesma
+  mini-barra; à direita, **quando zera**: uma simulação que gasta o que sobra de todas as contas no ritmo
+  atual e recarrega cada conta no reset dela; `∞` quando os resets bastam para a semana não zerar. `% livre`
+  é a média do que sobra. O `--json` traz ainda a **queima** (`7d_burn`, que a página mostra): o consumo
+  dividido pela fração da semana decorrida, somados sobre as contas; `1,0×` é exatamente no ritmo. A ideia
+  vem dos *error budgets* de SLO: queima e tempo até esgotar.
+- Modos: `usage-all` (resumido), `-v` (barras de 20 células com horário do reset, a melhor conta com o
+  motivo e a origem dos dados), `usage-all gmail`
   (só as citadas), `--json` (para o `orq` e a página: por conta `5h`, `5h_pace`, `5h_left`, `7d`,
   `7d_pace`, `7d_left` ou `{"err": …}`, mais `_total` com `7d`, `7d_pace`, `7d_free`, `7d_burn`,
   `7d_runs_out`, `7d_next_reset`, `accounts`).
@@ -195,7 +198,7 @@ tokens nas máquinas que a expliquem (claude.ai, celular ou máquina sem respost
 reset; processo do claude parado há mais de 1 dia; coletor parado; máquina sem resposta há mais de 1 h.
 
 **Os outros comandos leem o banco**: o `usage-all` e o `usage-sessoes` usam a última coleta quando ela tem
-menos de 10 min (instantâneos e sem 429; rodapé "do banco · coleta há N min"); `--ao-vivo` volta à API e à
+menos de 10 min (instantâneos e sem 429; o `-v` diz "do banco · coleta há N min", o resumido só avisa coleta de 15 min ou mais); `--ao-vivo` volta à API e à
 varredura. A página do orq recebe a cota do `usage-all --json`, então também passa a vir do banco. Numa
 máquina sem banco (o laptop), os três comandos rodam por ssh na máquina de `usage_db_host` do accounts.json.
 

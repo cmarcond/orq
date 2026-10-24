@@ -3,14 +3,16 @@
 
 Uso: usage-all [-v|--verbose] [--json] [conta ...]     (sem conta = todas as contas do accounts.json)
   padrão         resumido: uma linha por conta; por janela, % usado, mini-barra com marcador de
-                 ritmo e tempo até o reset. Contas ordenadas da mais folgada para a mais apertada no 7d.
+                 ritmo e tempo até o reset. Contas ordenadas da mais folgada para a mais apertada no 7d;
+                 → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota, quando zera
+                 (∞ = os resets bastam) e quanto sobra em média.
   -v, --verbose  completo: barra por janela, marcador de ritmo, horário do reset e aviso de login.
   --json         para scripts (orq, orq-web): por conta, % usado, ritmo e segundos até o reset de
                  5h e 7d, ou {"err": texto}.
 
-Ritmo = quanto da janela já passou. Barra que não chega no ┃ está abaixo do ritmo (verde); barra que
-passa dele está acima (amarela; vermelha com 15 pontos ou mais). O Codex tem comando próprio:
-codex-usage-fast.
+█ = usado, ┃ = ritmo (quanto da janela já passou), à direita o tempo até o reset. Barra que não chega
+no ┃ está abaixo do ritmo (verde); barra que passa dele está acima (amarela; vermelha com 15 pontos ou
+mais). O Codex tem comando próprio: codex-usage-fast.
 
 Contas: ~/.config/claude-multiconta/accounts.json (ou $CLAUDE_MULTICONTA_CONF). Credencial: Keychain
 no macOS (o mesmo item do Claude Code) ou <config_dir>/.credentials.json no Linux. O token nunca é
@@ -251,11 +253,21 @@ def from_snapshot(acc: Account) -> Optional[List[Window]]:
     return sorted(ws, key=lambda w: ORDER.get(w.kind, 9))
 
 
-def source_note() -> str:
+STALE_MIN = 15  # minutos: dado do banco mais velho que isso ganha uma nota no resumo
+
+
+def snap_age_min() -> Optional[int]:
+    """Idade em minutos da coleta do banco; None quando os dados vieram da API agora."""
     if not SNAP:
-        return "ao vivo (API)"
+        return None
     t = datetime.datetime.fromisoformat(SNAP["ts"].replace("Z", "+00:00"))
-    mins = int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() // 60)
+    return int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() // 60)
+
+
+def source_note() -> str:
+    mins = snap_age_min()
+    if mins is None:
+        return "ao vivo (API)"
     return f"do banco · coleta há {mins} min · --ao-vivo consulta a API"
 
 
@@ -306,13 +318,9 @@ def color_for(percent: float, pace: Optional[float]) -> Optional[str]:
     return "31" if d >= 15 else "33" if d > 0 else "32"
 
 
-# ---- resumido (padrão)
+# ---- resumido (padrão): sem legenda (está no --help); a seta marca a melhor conta para abrir agora
 LABEL_W, CELL_BAR, SEP = 10, 10, "  "
-LEGEND = [
-    "█ usado  ┃ ritmo (quanto da janela já passou)  à direita: falta até o reset",
-    "verde = abaixo do ritmo · amarelo = acima · vermelho = 15+ pontos acima",
-    "TOTAL: semana da frota; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo",
-]
+CELL_W = CELL_BAR + 11  # largura de uma célula: ' 32% ███████┃░░ 2d02h'
 
 
 def cell(w: Window) -> str:
@@ -343,31 +351,23 @@ def brief_row(acc: Account) -> Tuple[float, str, List[str], dict]:
 def show_brief(accounts: List[Account]) -> bool:
     with ThreadPoolExecutor(max_workers=8) as ex:
         rows = list(ex.map(brief_row, accounts))
-    for line in LEGEND:
-        print(c("2", line))
     titles = max((r[2] for r in rows), key=len, default=[])
     if titles:
-        print(c("2", (" " * (LABEL_W + 1) + SEP.join(f"{t:^{CELL_BAR + 11}}" for t in titles)).rstrip()))
+        print(c("2", (" " * (LABEL_W + 3) + SEP.join(f"{t:^{CELL_W}}" for t in titles)).rstrip()))
     per = {a.name: r[3] for a, r in zip(accounts, rows)}
-    best, why = best_account(per)
+    best, _ = best_account(per)
     for a, (_, line, _, _) in sorted(zip(accounts, rows), key=lambda x: x[1][0]):
-        if a.name == best:  # o nome da melhor conta em destaque (a linha de texto embaixo diz o mesmo sem cor)
+        if a.name == best:  # a que o `claude` puro abriria (usage-all --melhor)
             lab = f"{a.label:<{LABEL_W}}"
-            line = c("1;7", lab) + line[len(lab):]
-        print(line)
-    labels = {a.name: a.label for a in accounts}
-    width = max((visible_len(r[1]) for r in rows), default=0)
-    print()
-    print(fmt_total(total_json(per), labels, width))
-    print(best_line(best, why, labels))
+            print(c("1", "→ " + lab) + line[len(lab):])
+        else:
+            print("  " + line)
+    # o TOTAL é só da semana: fica na coluna do 7d (a segunda)
+    print("  " + fmt_total(total_json(per), skip=1 if len(titles) > 1 else 0))
+    mins = snap_age_min()
+    if mins is not None and mins >= STALE_MIN:
+        print(c("2", f"  dados de {mins} min atrás · --ao-vivo consulta a API"))
     return all(r[0] != float("inf") for r in rows)
-
-
-def best_line(best: Optional[str], why: str, labels: Dict[str, str]) -> str:
-    """'→ melhor agora: Gmail · motivo', o que o `claude` puro abriria (usage-all --melhor)."""
-    if not best:
-        return c("2", f"→ melhor agora: {why}")
-    return f"→ melhor agora: {c('1', labels.get(best, best))} {c('2', '· ' + why)}"
 
 
 # ---- completo (-v)
@@ -501,24 +501,16 @@ def visible_len(s: str) -> int:
     return len(re.sub(r"\x1b\[[0-9;]*m", "", s))
 
 
-def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None, width: int = 0) -> str:
-    """Linha TOTAL só do semanal, centralizada em `width` colunas: barra do usado médio com o ritmo médio;
-    à direita, em quanto tempo a frota zera (∞ = com os resets, não zera nesta semana); depois a taxa de
-    queima e a média do que sobra nas contas."""
-    line = _total_line(t)
-    pad = max(0, (width - visible_len(line)) // 2)
-    return " " * pad + line
-
-
-def _total_line(t: Optional[dict]) -> str:
-    lab = c("1", "TOTAL")
+def fmt_total(t: Optional[dict], skip: int = 0) -> str:
+    """Linha TOTAL só do semanal, depois de `skip` colunas vazias: barra do usado médio com o ritmo médio; à
+    direita, em quanto tempo a frota zera (∞ = com os resets, não zera nesta semana) e quanto sobra em média."""
+    lab = c("1", f"{'TOTAL':<{LABEL_W}}")
     if not t:
         return f"{lab} {c('2', 'sem dados')}"
     runs = fmt_left(t["7d_runs_out"]) if t["7d_runs_out"] is not None else c("32", "  ∞  ")
-    burn = f"{t['7d_burn']:.1f}".replace(".", ",")
-    bcol = "32" if t["7d_burn"] < 0.9 else "33" if t["7d_burn"] <= 1.15 else "31"
-    tail = f"queima {c(bcol, burn + '×')} · {t['7d_free']:.0f}% livre"
-    return f"{lab}  {cell_of(t['7d'], t['7d_pace'] or None, runs)}  {tail}"
+    free = f"{t['7d_free']:.0f}"
+    gap = (" " * CELL_W + SEP) * skip
+    return f"{lab} {gap}{cell_of(t['7d'], t['7d_pace'] or None, runs)}  {c('2', f'{free}% livre')}"
 
 
 # ======================================================================== a melhor conta para abrir agora
@@ -623,12 +615,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         results = [show_verbose(x, tz) for x in chosen]
         per = {x.name: r[1] for x, r in zip(chosen, results)}
         labels = {x.name: x.label for x in chosen}
-        print(fmt_total(total_json(per), labels))
-        print(best_line(*best_account(per), labels))
+        best, why = best_account(per)
+        print(fmt_total(total_json(per)))
+        print(f"{c('1', '→ melhor agora: ' + labels.get(best, best or '—'))} {c('2', '· ' + why)}")
         print(c("2", source_note()))
         return 0 if all(r[0] for r in results) else 2
     ok = show_brief(chosen)
-    print(c("2", source_note()))
     return 0 if ok else 2
 
 

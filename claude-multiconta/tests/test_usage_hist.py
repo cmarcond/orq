@@ -303,6 +303,10 @@ def test_usage_all_reads_snapshot_and_reports_source(monkeypatch, tmp_path):
     buf = io.StringIO()
     with redirect_stdout(buf):
         U.main([])
+    assert "Gmail" in buf.getvalue() and "min atrás" not in buf.getvalue(), "coleta recente: o resumo não fala da origem"
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        U.main(["-v"])
     assert "do banco · coleta há 3 min" in buf.getvalue()
     # --ao-vivo: não lê o banco
     monkeypatch.setattr(U, "load_snapshot", lambda: pytest.fail("não devia ler o banco"))

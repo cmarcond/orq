@@ -98,7 +98,7 @@ def test_brief_orders_by_weekly_slack_and_errors_last(monkeypatch):
         ok = U.show_brief([acc("a", "A (x)"), acc("b", "B (x)"), acc("c", "C (x)")])
     lines = out.getvalue().splitlines()
     assert not ok
-    body = [ln for ln in lines if ln[:1] and ln[:1] in "ABC"]
+    body = [ln[2:] for ln in lines if ln[2:3] and ln[2:3] in "ABC"]
     assert [ln[0] for ln in body] == ["B", "A", "C"], body
     assert "✗ sem credencial" in body[-1]
     assert any("sessão 5h" in ln and "semana 7d" in ln for ln in lines), "cabeçalho das janelas"
@@ -145,12 +145,11 @@ def test_fmt_total_line():
     U.COLOR = False
     t = U.total_json({"a": {"7d": 80, "7d_pace": 50, "7d_left": 3 * 86400}, "b": {"7d": 20, "7d_pace": 50, "7d_left": 4 * 86400}})
     s = U.fmt_total(t)
-    assert s.startswith("TOTAL  ") and " 50% █████┃░░░░   ∞  " in s and s.endswith("queima 1,0× · 50% livre"), s
-    wide = U.fmt_total(t, width=len(s) + 20)
-    assert wide == " " * 10 + s, "centralizada na largura pedida"
+    assert s == "TOTAL       50% █████┃░░░░   ∞    50% livre", repr(s)
+    assert U.fmt_total(t, skip=1) == "TOTAL      " + " " * 23 + s[11:], "pula a coluna do 5h"
     assert U.fmt_total(None).startswith("TOTAL ") and "sem dados" in U.fmt_total(None)
     t = U.total_json({"a": {"7d": 90, "7d_pace": 50, "7d_left": 3.5 * 86400}})
-    assert "09h20  queima 1,8×" in U.fmt_total(t), U.fmt_total(t)
+    assert "09h20  10% livre" in U.fmt_total(t), U.fmt_total(t)
 
 
 def test_brief_and_json_carry_the_total(monkeypatch, capsys):
@@ -158,9 +157,9 @@ def test_brief_and_json_carry_the_total(monkeypatch, capsys):
     monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(40))
     assert U.show_brief([acc("a", "A (x)"), acc("b", "B (x)")])
     out = capsys.readouterr().out.splitlines()
-    assert out[-2].strip().startswith("TOTAL ") and out[-2].endswith("queima 0,8× · 60% livre"), out[-2]
-    assert out[-3] == "", "uma linha em branco antes do TOTAL"
-    assert out[-1].startswith("→ melhor agora: A · semana 40%"), out[-1]
+    assert out[-1].startswith("  TOTAL ") and out[-1].endswith("60% livre"), out[-1]
+    assert len(out) == 4, "cabeçalho, duas contas e o TOTAL: sem legenda nem rodapé"
+    assert sorted(ln[:2] for ln in out[1:3]) == ["  ", "→ "], "uma seta só (as duas contas empatam; qualquer uma serve)"
     conf = {"accounts": [{"name": "a", "label": "A (x)", "config_dir": "~/.claude-a"}]}
     monkeypatch.setattr(U, "load_conf", lambda: conf)
     assert U.main(["--json"]) == 0
@@ -186,6 +185,15 @@ def test_main_json_and_unknown_account(monkeypatch, tmp_path, capsys):
 
 
 # ---------------------------------------------------------------- a melhor conta para abrir agora
+def test_brief_notes_only_stale_data(monkeypatch, capsys):
+    U.COLOR = False
+    monkeypatch.setattr(U, "get_windows", lambda a: fake_windows(40))
+    for mins, note in ((5, False), (40, True)):
+        monkeypatch.setattr(U, "snap_age_min", lambda m=mins: m)
+        U.show_brief([acc("a", "A (x)")])
+        assert ("dados de 40 min atrás" in capsys.readouterr().out) is note
+
+
 def test_brief_highlights_the_best_account(monkeypatch, capsys):
     U.COLOR = True
     try:
@@ -195,9 +203,8 @@ def test_brief_highlights_the_best_account(monkeypatch, capsys):
         out = capsys.readouterr().out
     finally:
         U.COLOR = False
-    assert "\033[1;7mB         \033[0m" in out, "nome da melhor em destaque"
-    assert "\033[1;7mA" not in out
-    assert "→ melhor agora: \033[1mB\033[0m" in out
+    assert "\033[1m→ B         \033[0m" in out, "seta e nome da melhor em negrito"
+    assert "→ A" not in out and "melhor agora" not in out
 
 
 def u(d7, h5=0.0, left_h=48.0):

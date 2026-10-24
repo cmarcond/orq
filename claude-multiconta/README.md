@@ -173,16 +173,16 @@ usage-all --json          # para scripts
 O resumido é o padrão (`-v`/`--verbose` dá o completo). No resumido,
 cada conta vira uma linha de tabela. Por janela: a % usada, uma mini-barra de 10 células
 (cada célula = 10%) com o mesmo marcador `┃` de ritmo do modo completo e, à direita, o tempo
-até o reset. Uma legenda de duas linhas e o nome das janelas saem em cima da tabela.
+até o reset. Só o nome das janelas sai em cima da tabela (a legenda está no `--help`); a seta
+marca a melhor conta para abrir agora (a do `usage-all --melhor`) e o TOTAL fecha a coluna da semana.
 
 ```
-█ usado  ┃ ritmo (quanto da janela já passou)  à direita: falta até o reset
-verde = abaixo do ritmo · amarelo = acima · vermelho = 15+ pontos acima
-                 sessão 5h              semana 7d              Fable 7d
-Gmail        2% ░░░┃░░░░░░ 03h13    2% ░░░░┃░░░░░ 3d12h    3% ░░░░┃░░░░░ 3d12h
-Work 2    0% ░░░┃░░░░░░ 03h13   32% ███░░░░┃░░ 2d02h    0% ░░░░░░░┃░░ 2d02h
-Work      3% ░░░┃░░░░░░ 03h13   19% ██░┃░░░░░░ 4d10h   11% █░░┃░░░░░░ 4d10h
-Work 3   37% ███┃░░░░░░ 03h13    8% ┃░░░░░░░░░ 6d13h   15% ┃█░░░░░░░░ 6d13h
+                   sessão 5h              semana 7d              Fable 7d
+  Work      5% ░░░░░░░░┃░ 00h35   42% ████░░░░┃░ 1d04h   65% ██████░░┃░ 1d04h
+→ Gmail        0% ░░┃░░░░░░░ 03h45   62% ██████░░░┃ 06h35   82% ████████░┃ 06h35
+  Work 3    0% ░┃░░░░░░░░ 04h05   19% ██░░░┃░░░░ 3d07h   35% ████░┃░░░░ 3d07h
+  Work 2    2% ┃░░░░░░░░░ 04h35    5% ░┃░░░░░░░░ 5d20h    0% ░┃░░░░░░░░ 5d20h
+  TOTAL                              32% ███░░░┃░░░   ∞    68% livre
 ```
 
 O `┃` é o **tempo**: quanto da janela já passou. Barra que não chega no `┃` está abaixo do
