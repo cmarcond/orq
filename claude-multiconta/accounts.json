@@ -33,9 +33,6 @@
   "tip_on_login": true,
   "orq_hosts": [
     "node4",
-    "node0",
-    "node1",
-    "node2",
     "node3"
   ],
   "permission_mode": "auto",
