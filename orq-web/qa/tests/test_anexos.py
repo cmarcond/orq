@@ -1,7 +1,8 @@
 """Arquivos que você manda ao agente (📎 ou arrastar para o chat): vão para `_inbox/` na pasta do projeto, na
 máquina do agente, e a mensagem sai com os caminhos. O primeiro teste é só a página (sem cota): soltar arquivo
-sem aba aberta avisa. O segundo anexa um CSV pelo 📎 e arrasta uma nota, tira um da fila e põe de volta, envia, e
-o claude real lê os dois de lá e responde a soma e a palavra-chave (um turno)."""
+sem aba aberta avisa. O segundo anexa um CSV pelo 📎 e arrasta uma nota, tira um da fila e põe de volta,
+envia,
+e o claude real lê os dois de lá e responde a soma e a palavra-chave (um turno)."""
 
 import base64
 import subprocess
@@ -12,7 +13,8 @@ CSV = "item,valor\na,10\nb,20\nc,30\n"  # soma 60
 NOTA = "palavra-chave: jabuticaba-317\n"
 SECRET = "jabuticaba-317"
 
-# Arrastar de verdade não existe no Chromium sem janela: solta um File num DragEvent, o mesmo que a página recebe.
+# Arrastar de verdade não existe no Chromium sem janela: solta um File num DragEvent, o mesmo que a página
+# recebe.
 DROP = """([name, b64]) => {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   const dt = new DataTransfer();
@@ -26,12 +28,17 @@ def drop(orq, name: str, text: str) -> None:
 
 
 def chips(orq):
-    return orq.page.evaluate("[...document.querySelectorAll('#files .fchip')].map((e) => e.textContent.trim())")
+    return orq.page.evaluate(
+        "[...document.querySelectorAll('#files .fchip')].map((e) => e.textContent.trim())"
+    )
 
 
 def cat_on(host: str, folder: str, names) -> str:
     """Conteúdo dos arquivos em `folder` na máquina do agente, numa conexão só (ver ssh-sequencial-falha)."""
-    script = f'cd {folder}/_inbox && ls -1 && for f in {" ".join(names)}; do printf "== %s\\n" "$f"; cat "$f"; done'
+    script = (
+        f'cd {folder}/_inbox && ls -1 && for f in {" ".join(names)}; do '
+        'printf "== %s\\n" "$f"; cat "$f"; done'
+    )
     cmd = ["sh", "-c", script] if host == local_host_name() else ["ssh", "-o", "BatchMode=yes", host, script]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr[-300:]
@@ -74,7 +81,9 @@ def test_anexa_arrasta_e_claude_le(orq, agent, tmp_path):
         "da coluna valor do CSV e a palavra-chave da nota, nada mais.",
         wait=False,
     )
-    orq.wait_fn("() => [...document.querySelectorAll('.chat.on .me')].some((e) => e.innerText.includes('_inbox'))")
+    orq.wait_fn(
+        "() => [...document.querySelectorAll('.chat.on .me')].some((e) => e.innerText.includes('_inbox'))"
+    )
     me = orq.page.inner_text(".chat.on .me")
     assert "Arquivo(s) enviado(s) para a pasta _inbox do projeto:" in me, me
     assert f"- {folder}/_inbox/dados.csv" in me and f"- {folder}/_inbox/nota.txt" in me, me

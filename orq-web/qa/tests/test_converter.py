@@ -1,8 +1,9 @@
-"""⇄ converter: um `claude` interativo rodando num tmux desta máquina vira agente da página, na mesma conversa.
-O teste sobe um claude de verdade num tmux na pasta do QA (como o alias `claude-<conta>` faz), conversa com ele
-pelo tmux (guarda uma palavra-chave), espera a página listá-lo como aba tracejada, converte pelo botão do painel
-e pergunta a palavra-chave ao agente novo: ele tem de lembrar. Dois turnos de cota, na conta escolhida
-(ORQ_QA_ACCOUNT; senão a primeira conta que não é a padrão, para o CLAUDE_CONFIG_DIR dizer a conta)."""
+"""⇄ converter: um `claude` interativo rodando num tmux desta máquina vira agente da página, na mesma
+conversa. O teste sobe um claude de verdade num tmux na pasta do QA (como o alias `claude-<conta>` faz),
+conversa com ele pelo tmux (guarda uma palavra-chave), espera a página listá-lo como aba tracejada,
+converte pelo botão do painel e pergunta a palavra-chave ao agente novo: ele tem de lembrar. Dois turnos de
+cota, na conta escolhida (ORQ_QA_ACCOUNT; senão a primeira conta que não é a padrão, para o
+CLAUDE_CONFIG_DIR dizer a conta)."""
 
 import json
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 import pytest
 from conftest import PROJECT
 from orqqa import local_host_name, qa_name
+
 from orqweb import config
 
 SECRET = "carambola-528"
@@ -35,7 +37,8 @@ def pane(sess: str, fmt: str) -> str:
 
 
 def wait_idle(sess: str, timeout: float = 120) -> None:
-    """Espera o claude do tmux parado (título do painel começa com ✳), aceitando o diálogo de confiança da pasta."""
+    """Espera o claude do tmux parado (título do painel começa com ✳), aceitando o diálogo de confiança da
+    pasta."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not has_session(sess):
@@ -44,7 +47,8 @@ def wait_idle(sess: str, timeout: float = 120) -> None:
         if title.startswith("✳"):
             return
         text = tmux("capture-pane", "-p", "-t", sess).stdout
-        if re.search(r"trust this folder|confia", text, re.I):  # vem com "No, exit" selecionado: desce para o "Yes"
+        # o diálogo vem com "No, exit" selecionado: desce para o "Yes"
+        if re.search(r"trust this folder|confia", text, re.I):
             tmux("send-keys", "-t", sess, "Down")
             time.sleep(0.3)
             tmux("send-keys", "-t", sess, "Enter")
@@ -102,7 +106,9 @@ def pick_account():
 def test_converte_claude_do_tmux(orq):
     host, _, path = PROJECT.partition(":")
     if host != local_host_name():
-        pytest.skip(f"o claude interativo sobe nesta máquina ({local_host_name()}), e ORQ_QA_PROJECT está em {host}")
+        pytest.skip(
+            f"o claude interativo sobe nesta máquina ({local_host_name()}), e ORQ_QA_PROJECT está em {host}"
+        )
     folder = Path(os.path.expanduser(path))
     name = qa_name(path)
     label = f"{name}@{host}"

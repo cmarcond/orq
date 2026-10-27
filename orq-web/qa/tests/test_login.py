@@ -44,7 +44,9 @@ def servidor_com_senha(tmp_path):
         except OSError:
             pass
         if p.poll() is not None:
-            raise RuntimeError(f"orq-web com senha saiu com {p.returncode}; veja {OUT / f'orq-web-{PORT}.log'}")
+            raise RuntimeError(
+                f"orq-web com senha saiu com {p.returncode}; veja {OUT / f'orq-web-{PORT}.log'}"
+            )
         time.sleep(0.3)
     else:
         raise RuntimeError(f"orq-web com senha não respondeu na porta {PORT}")

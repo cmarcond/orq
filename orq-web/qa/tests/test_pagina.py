@@ -1,7 +1,8 @@
-"""A página em si: a aba 📊 uso e o painel da conta a partir do banco do usage-hist, a versão para celular (/m),
-o sino 🔔 e os atalhos de teclado. Quase nada gasta cota: só test_titulo_e_aviso_quando_o_agente_termina manda
-um turno curto ao claude real (precisa de um agente para a página ter alguém que "terminou"); os atalhos abrem
-dois agentes mas não mandam nada. Precisa do histórico de uso (usage_db_host com banco) para o uso e o painel."""
+"""A página em si: a aba 📊 uso e o painel da conta a partir do banco do usage-hist, a versão para celular
+(/m), o sino 🔔 e os atalhos de teclado. Quase nada gasta cota: só
+test_titulo_e_aviso_quando_o_agente_termina manda um turno curto ao claude real (precisa de um agente para
+a página ter alguém que "terminou"); os atalhos abrem dois agentes mas não mandam nada. Precisa do
+histórico de uso (usage_db_host com banco) para o uso e o painel."""
 
 PHONE = {"width": 390, "height": 844}  # iPhone 14
 
@@ -68,11 +69,13 @@ def test_painel_da_conta_pelo_cartao(orq):
     assert orq.page.inner_text("#view .vname").startswith("Painel ·")
     assert orq.page.locator("#view .kpis .kpi").count() == 5, "semana, 5 h, hoje, ritmo, previsão"
     assert orq.page.locator("#view .apanel svg").count() >= 3, "semana até o reset, 24 h, 7 dias"
-    assert orq.page.is_visible('#view .ptable[data-p="24"]') and orq.page.is_hidden('#view .ptable[data-p="7"]')
+    assert orq.page.is_visible('#view .ptable[data-p="24"]')
+    assert orq.page.is_hidden('#view .ptable[data-p="7"]')
     orq.shot(f"painel-{name}")
     orq.page.wait_for_timeout(2000)
     orq.page.click('#view .ptabs button[data-p="7"]')  # o que mais gastou: 24 h ↔ 7 dias
-    assert orq.page.is_hidden('#view .ptable[data-p="24"]') and orq.page.is_visible('#view .ptable[data-p="7"]')
+    assert orq.page.is_hidden('#view .ptable[data-p="24"]')
+    assert orq.page.is_visible('#view .ptable[data-p="7"]')
     orq.page.wait_for_timeout(1500)
     orq.page.click("#view .vx")  # ✕ fecha
     assert orq.page.is_hidden("#view")
@@ -99,7 +102,7 @@ def test_celular(orq):
     orq.page.wait_for_timeout(1500)
     orq.page.click("#usage .ucard.total")
     assert accounts.first.is_hidden()
-    assert orq.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "sem rolagem lateral"
+    assert orq.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "sem rolagem"
     # + abre o seletor na largura da tela e lista os projetos
     orq.page.click('.tab.plus[data-host="laptop"]')
     orq.page.wait_for_selector("#picker:not([hidden])")
@@ -147,11 +150,14 @@ def test_sino_pede_permissao_e_testa(orq):
 
 
 def test_titulo_e_aviso_quando_o_agente_termina(orq, agent):
-    """Gasta um turno curto: com a página fora de vista, o fim do turno vira notificação e `(1) orq` no título."""
+    """Gasta um turno curto: com a página fora de vista, o fim do turno vira notificação e `(1) orq` no
+    título."""
     assert orq.page.title() == "orq"
     orq.page.evaluate(STUB_NOTIFY)
     # a página "fora de vista", como quando você vai a outra aba do navegador
-    orq.page.evaluate("() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})")
+    orq.page.evaluate(
+        "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})"
+    )
     orq.say("Responda apenas com a palavra pong, em minúsculas, sem pontuação.", wait=False)
     orq.wait_fn("() => document.title === '(1) orq'", timeout=180000)
     orq.wait_fn("() => window.__notas.some((n) => n[0].includes('terminou'))")

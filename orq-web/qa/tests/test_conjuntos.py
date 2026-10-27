@@ -1,6 +1,6 @@
-"""Conjuntos (⊞): dois agentes reais abertos de uma vez, cada um com prompt próprio, com um professor
-líder que recebe a tarefa inicial e coordena os dois; depois a página recusa abrir de novo (já abertos),
-a fotografia das abas vira um conjunto novo, e tudo é desfeito. Gasta cota: uns 5 turnos."""
+"""Conjuntos (⊞): dois agentes reais abertos de uma vez, cada um com prompt próprio, com um professor líder
+que recebe a tarefa inicial e coordena os dois; depois a página recusa abrir de novo (já abertos), a
+fotografia das abas vira um conjunto novo, e tudo é desfeito. Gasta cota: uns 5 turnos."""
 
 import json
 from pathlib import Path
@@ -113,8 +113,8 @@ def _run(orq, host, path, host2, path2, name, name2, label, label2):
 
 def test_enviar_json_pelo_botao(orq, tmp_path):
     """📄 enviar JSON: o botão abre o seletor de arquivos do navegador; o JSON vira um conjunto salvo (o nome
-    vem do arquivo quando falta), ⬇ baixa o mesmo JSON, JSON inválido e conjunto inválido só avisam, e ✕ duas
-    vezes apaga. Nada é aberto: não gasta cota."""
+    vem do arquivo quando falta), ⬇ baixa o mesmo JSON, JSON inválido e conjunto inválido só avisam, e ✕
+    duas vezes apaga. Nada é aberto: não gasta cota."""
     sid = "qa-json-botao"
     orq.api(f"/api/conjuntos/{sid}/delete", {})
     try:
@@ -146,7 +146,9 @@ def _json_botao(orq, tmp_path, sid):
     orq.shot("json-lista-antes")
     orq.page.wait_for_timeout(1500)  # pausas: o vídeo é para uma pessoa conferir
     _upload(orq, ok)
-    orq.wait_fn("(s) => document.getElementById('toast').textContent.includes(`conjunto ${s} salvo`)", arg=sid)
+    orq.wait_fn(
+        "(s) => document.getElementById('toast').textContent.includes(`conjunto ${s} salvo`)", arg=sid
+    )
     orq.page.wait_for_selector(f'#plist .setp[data-id="{sid}"]', timeout=20000)
     row = orq.page.inner_text(f'#plist .setp[data-id="{sid}"]')
     assert sid in row and "2 agentes" in row and "independentes" in row and "auto" in row, row
@@ -154,12 +156,14 @@ def _json_botao(orq, tmp_path, sid):
     orq.shot("json-salvo")
     orq.page.wait_for_timeout(1500)
     saved = orq.api(f"/api/conjuntos/{sid}")["conjunto"]
-    assert saved["nome"] == sid and [a["pasta"] for a in saved["agentes"]] == [a["pasta"] for a in data["agentes"]]
+    assert saved["nome"] == sid, saved
+    assert [a["pasta"] for a in saved["agentes"]] == [a["pasta"] for a in data["agentes"]]
     # ⬇ baixa o JSON salvo
     with orq.page.expect_download() as dl:
         orq.page.click(f'#plist .setp[data-id="{sid}"] [data-dl]')
     got = json.loads(Path(dl.value.path()).read_text())
-    assert dl.value.suggested_filename == f"{sid}.json" and got["nome"] == sid and len(got["agentes"]) == 2, got
+    assert dl.value.suggested_filename == f"{sid}.json"
+    assert got["nome"] == sid and len(got["agentes"]) == 2, got
     # JSON quebrado e conjunto inválido: só um aviso, a lista não muda
     bad = tmp_path / "quebrado.json"
     bad.write_text("{ isto não é json")
@@ -181,4 +185,5 @@ def _json_botao(orq, tmp_path, sid):
     orq.page.click("#pclose")
     orq.shot("json-apagado")
     # o 400 do conjunto inválido é o esperado; qualquer outro problema conta
-    assert not [p for p in orq.problems() if not ("[http 400]" in p and p.endswith("/api/conjuntos"))], orq.problems()
+    rest = [p for p in orq.problems() if not ("[http 400]" in p and p.endswith("/api/conjuntos"))]
+    assert not rest, orq.problems()

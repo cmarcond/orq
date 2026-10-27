@@ -1,9 +1,9 @@
 """A conversa sobrevive à página e ao servidor: o supervisor guarda os eventos numerados, quem reconecta pede
 "a partir do N" e recebe o que perdeu. Dois turnos com o claude real, cada um interrompido no meio:
 `test_recarregar_no_meio_do_turno` recarrega a página enquanto o claude escreve (a aba nova pede desde 0: a
-conversa inteira volta e o turno continua ao vivo); `test_servidor_reinicia_no_meio_do_turno` derruba e sobe o
-orq-web do QA no meio da resposta (os agentes continuam; a aba reconecta o stream pedindo só o que faltou, e nada
-se repete no chat)."""
+conversa inteira volta e o turno continua ao vivo); `test_servidor_reinicia_no_meio_do_turno` derruba e
+sobe o orq-web do QA no meio da resposta (os agentes continuam; a aba reconecta o stream pedindo só o que
+faltou, e nada se repete no chat)."""
 
 import time
 from urllib.parse import parse_qs, urlparse
@@ -20,7 +20,7 @@ def wait_streaming(orq, timeout: float = 90) -> None:
 
 
 def numbers(text: str):
-    return [int(l.strip()) for l in text.splitlines() if l.strip().isdigit()]
+    return [int(ln.strip()) for ln in text.splitlines() if ln.strip().isdigit()]
 
 
 def check_reply(orq, task_count: int):
@@ -30,7 +30,8 @@ def check_reply(orq, task_count: int):
     txt = orq.last_ai()
     assert "FIM" in txt, txt[-200:]
     nums = numbers(txt)
-    assert nums == list(range(1, N + 1)), f"contagem com falha ou repetição: {nums[:5]}…{nums[-5:]} ({len(nums)})"
+    msg = f"contagem com falha ou repetição: {nums[:5]}…{nums[-5:]} ({len(nums)})"
+    assert nums == list(range(1, N + 1)), msg
 
 
 def problems_outside_restart(orq):

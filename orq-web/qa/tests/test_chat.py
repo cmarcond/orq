@@ -3,7 +3,6 @@
 from conftest import PROJECT
 
 
-
 def test_abre_projeto_e_responde(orq, agent):
     assert agent.endswith("@" + PROJECT.partition(":")[0]) and agent in orq.labels()
     assert "esperando" in orq.cstate(), orq.cstate()

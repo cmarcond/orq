@@ -1,8 +1,8 @@
-"""Permissões e perguntas pela página, com o claude real.
-`test_pergunta_do_agente`: o `AskUserQuestion` vira formulário no chat; o QA responde escolhendo uma opção, depois
-pelo "Outro…", e por fim cancela (três turnos curtos, no modo normal do accounts.json).
-`test_modo_manual_negar_e_permitir`: um conjunto de um agente só com `permissao: manual` (tudo pergunta); o
-claude pede para gravar um arquivo, o QA nega (nada é gravado), pede de novo e o QA permite (dois turnos)."""
+"""Permissões e perguntas pela página, com o claude real. `test_pergunta_do_agente`: o `AskUserQuestion` vira
+formulário no chat; o QA responde escolhendo uma opção, depois pelo "Outro…", e por fim cancela (três turnos
+curtos, no modo normal do accounts.json). `test_modo_manual_negar_e_permitir`: um conjunto de um agente só com
+`permissao: manual` (tudo pergunta); o claude pede para gravar um arquivo, o QA nega (nada é gravado), pede de
+novo e o QA permite (dois turnos)."""
 
 import os
 import time
@@ -76,7 +76,10 @@ def test_pergunta_do_agente(orq, agent):
     )
     wait_ask(orq)
     orq.page.click(".chat.on .perm.ask:not(.done) .btns .no")
-    orq.wait_fn("() => [...document.querySelectorAll('.chat.on .perm.ask.done .btns')].some((e) => e.textContent.includes('cancelado'))")
+    orq.wait_fn(
+        "() => [...document.querySelectorAll('.chat.on .perm.ask.done .btns')]"
+        ".some((e) => e.textContent.includes('cancelado'))"
+    )
     st = orq.wait_idle(120)
     assert "erro" not in st, st
     assert "cancelad" in orq.last_ai().lower(), orq.last_ai()
@@ -98,7 +101,9 @@ def deny_all(orq, timeout: float = 180) -> str:
 def test_modo_manual_negar_e_permitir(orq):
     host, _, path = PROJECT.partition(":")
     if host != local_host_name():
-        pytest.skip(f"o teste confere o arquivo nesta máquina ({local_host_name()}), e ORQ_QA_PROJECT está em {host}")
+        pytest.skip(
+            f"o teste confere o arquivo nesta máquina ({local_host_name()}), e ORQ_QA_PROJECT está em {host}"
+        )
     name = path.rstrip("/").split("/")[-1]
     label = f"{name}@{host}"
     folder = Path(os.path.expanduser(path))
@@ -155,7 +160,8 @@ def _manual(orq, host, path, label, folder, sid):
     st = orq.answer_permissions(180)
     assert "erro" not in st, st
     assert orq.page.locator(".chat.on .perm.done").count() >= 2
-    assert "permitido" in orq.page.evaluate("[...document.querySelectorAll('.chat.on .perm.done .btns')].pop().textContent")
+    last = orq.page.evaluate("[...document.querySelectorAll('.chat.on .perm.done .btns')].pop().textContent")
+    assert "permitido" in last, last
     assert (folder / "oi.txt").read_text().strip() == "oi"
     orq.shot("manual-permitido")
     orq.page.wait_for_timeout(1500)

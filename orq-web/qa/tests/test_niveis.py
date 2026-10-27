@@ -55,7 +55,7 @@ def test_professor_arquiteto_executor(orq, agent):
     """Três níveis: o professor delega ao arquiteto, que decide como fazer e instrui o executor; os marcos
     sobem pelo caminho inverso (executor → arquiteto → professor) e o professor explica. Leva uns minutos."""
     folder = Path(os.path.expanduser(PROJECT.partition(":")[2]))
-    levels = orq.upgrade("professor-arquiteto-executor")
+    orq.upgrade("professor-arquiteto-executor")
     orq.wait_fn("() => document.querySelectorAll('#levels .lcard').length === 3", timeout=60000)
     assert orq.levels() == ["professor", "arquiteto", "executor"], orq.levels()
     assert "professor" in orq.cstate(), orq.cstate()

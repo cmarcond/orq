@@ -1,8 +1,9 @@
 """O caminho remoto: tudo que o servidor faz por ssh quando o agente está noutra máquina.
-`ORQ_QA_PROJECT_REMOTE` (padrão `laptop:~/Projects/orq-qa`) é uma pasta descartável numa máquina que não é a do
-servidor. Três testes com claude real: o agente remoto compartilha um arquivo (`orq-agent ls`/`cat` por ssh,
-prévia e download pela página); um agente daqui se vincula ao remoto (túnel do `orq-agent link`) e pergunta a pasta
-dele pelo SendMessage; e um conjunto abre um agente em cada máquina, cada um com a própria tarefa. Uns 5 turnos."""
+`ORQ_QA_PROJECT_REMOTE` (padrão `laptop:~/Projects/orq-qa`) é uma pasta descartável numa máquina que não é
+a do servidor. Três testes com claude real: o agente remoto compartilha um arquivo (`orq-agent ls`/`cat`
+por ssh, prévia e download pela página); um agente daqui se vincula ao remoto (túnel do `orq-agent link`) e
+pergunta a pasta dele pelo SendMessage; e um conjunto abre um agente em cada máquina, cada um com a própria
+tarefa. Uns 5 turnos."""
 
 import os
 import time
@@ -20,13 +21,13 @@ RNAME = RPATH.rstrip("/").split("/")[-1]
 def remote(orq):
     """Agente real na máquina remota; encerrado e apagado lá no fim (purge por ssh)."""
     if RHOST == local_host_name():
-        pytest.skip(f"ORQ_QA_PROJECT_REMOTE ({REMOTE}) está na máquina do servidor; o teste é do caminho remoto")
+        pytest.skip(f"ORQ_QA_PROJECT_REMOTE ({REMOTE}) está na máquina do servidor; o teste é do remoto")
     yield from qa_agent(orq, REMOTE)
 
 
 def remote_dir(orq, label: str) -> str:
-    """Pasta do agente como a página a conhece; sem o `~`, porque até a máquina confirmar o agente a lista traz
-    a pasta provisória tal como foi pedida (`~/Projects/…`), e o claude responde o caminho expandido."""
+    """Pasta do agente como a página a conhece; sem o `~`, porque até a máquina confirmar o agente a lista
+    traz a pasta provisória tal como foi pedida (`~/Projects/…`), e o claude responde o caminho expandido."""
     return next(a["dir"] for a in orq.agents() if a["label"] == label).rstrip("/").lstrip("~")
 
 
@@ -101,7 +102,7 @@ def test_vinculo_entre_maquinas(orq, agent, remote):
 
 def test_conjunto_entre_maquinas(orq):
     if RHOST == local_host_name():
-        pytest.skip(f"ORQ_QA_PROJECT_REMOTE ({REMOTE}) está na máquina do servidor; o teste é do caminho remoto")
+        pytest.skip(f"ORQ_QA_PROJECT_REMOTE ({REMOTE}) está na máquina do servidor; o teste é do remoto")
     host, _, path = PROJECT.partition(":")
     label, rlabel = f"{path.rstrip('/').split('/')[-1]}@{host}", f"{RNAME}@{RHOST}"
     sid = "qa-duas-maquinas"
