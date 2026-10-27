@@ -119,17 +119,20 @@ def test_conjunto_entre_maquinas(orq):
 
 def _conjunto(orq, host, path, label, rlabel, sid):
     task = "Diga em uma linha só qual é a sua pasta de trabalho (o caminho completo), nada mais."
-    assert orq.save_set(
-        {
-            "nome": "QA duas maquinas",
-            "descricao": "um agente aqui e um na máquina remota, cada um com a própria tarefa",
-            "permissao": "auto",
-            "agentes": [
-                {"maquina": host, "pasta": path, "modo": "new", "tarefa": task},
-                {"maquina": RHOST, "pasta": RPATH, "modo": "new", "tarefa": task},
-            ],
-        }
-    ) == sid
+    assert (
+        orq.save_set(
+            {
+                "nome": "QA duas maquinas",
+                "descricao": "um agente aqui e um na máquina remota, cada um com a própria tarefa",
+                "permissao": "auto",
+                "agentes": [
+                    {"maquina": host, "pasta": path, "modo": "new", "tarefa": task},
+                    {"maquina": RHOST, "pasta": RPATH, "modo": "new", "tarefa": task},
+                ],
+            }
+        )
+        == sid
+    )
     job = orq.open_set(sid)
     assert job["erros"] == {} and sorted(job["feitos"]) == sorted([label, rlabel]), job
     orq.shot("remoto-conjunto")

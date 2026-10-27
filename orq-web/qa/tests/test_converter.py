@@ -129,7 +129,16 @@ def test_converte_claude_do_tmux(orq):
 def _run(orq, folder: Path, label: str, acc, sess: str):
     # um claude interativo de verdade, no tmux, como o alias faz (CLAUDE_CONFIG_DIR diz a conta)
     tmux(
-        "new-session", "-d", "-s", sess, "-c", str(folder), "-x", "140", "-y", "40",
+        "new-session",
+        "-d",
+        "-s",
+        sess,
+        "-c",
+        str(folder),
+        "-x",
+        "140",
+        "-y",
+        "40",
         f"env CLAUDE_CONFIG_DIR={acc.config_dir} claude",
         check=True,
     )

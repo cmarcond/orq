@@ -36,7 +36,7 @@ def chips(orq):
 def cat_on(host: str, folder: str, names) -> str:
     """Conteúdo dos arquivos em `folder` na máquina do agente, numa conexão só (ver ssh-sequencial-falha)."""
     script = (
-        f'cd {folder}/_inbox && ls -1 && for f in {" ".join(names)}; do '
+        f"cd {folder}/_inbox && ls -1 && for f in {' '.join(names)}; do "
         'printf "== %s\\n" "$f"; cat "$f"; done'
     )
     cmd = ["sh", "-c", script] if host == local_host_name() else ["ssh", "-o", "BatchMode=yes", host, script]

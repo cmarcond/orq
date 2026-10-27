@@ -118,14 +118,17 @@ def test_modo_manual_negar_e_permitir(orq):
 
 
 def _manual(orq, host, path, label, folder, sid):
-    assert orq.save_set(
-        {
-            "nome": "QA manual",
-            "descricao": "um agente que pergunta tudo",
-            "permissao": "manual",
-            "agentes": [{"maquina": host, "pasta": path, "modo": "new"}],
-        }
-    ) == sid
+    assert (
+        orq.save_set(
+            {
+                "nome": "QA manual",
+                "descricao": "um agente que pergunta tudo",
+                "permissao": "manual",
+                "agentes": [{"maquina": host, "pasta": path, "modo": "new"}],
+            }
+        )
+        == sid
+    )
     job = orq.open_set(sid)
     assert job["erros"] == {} and job["feitos"] == [label], job
     orq.show(label)
