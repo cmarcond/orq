@@ -1,6 +1,6 @@
 """Vínculo entre dois agentes da página (🔗): um pede ao outro pelo SendMessage e recebe a resposta.
 
-Os dois ficam no laptop (vínculo local, sem túnel); o caminho por ssh é o mesmo com `orq-agent link`
+Os dois ficam na máquina do servidor (vínculo local, sem túnel); o caminho por ssh é o mesmo (`orq-agent link`
 por baixo, testado à parte. Gasta um pouco de cota: duas rodadas curtas do claude real.
 """
 
@@ -18,7 +18,7 @@ def test_vincula_pede_e_recebe(orq, agent, agent2):
         ".some((e) => e.innerText.includes('Vínculo criado'))",
         timeout=30000,
     )
-    other = agent2.split("@")[0] + "-laptop"  # nome de sessão do outro (rótulo saneado)
+    other = agent2.replace("@", "-")  # nome de sessão do outro (rótulo saneado)
     orq.say(
         f"Pergunte ao agente {other}, pelo SendMessage, qual é a pasta de trabalho dele (peça que responda "
         "pelo SendMessage a você). Quando a resposta chegar, me diga só o caminho que ele respondeu.",

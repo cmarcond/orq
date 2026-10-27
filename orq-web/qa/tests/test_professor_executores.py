@@ -1,6 +1,6 @@
 """Receita professor → executores: o nível de cima coordena o agente da aba e os vinculados a ele.
 
-Dois agentes reais no laptop (contas diferentes), vínculo pela página, ⇅ com a receita multi; o
+Dois agentes reais na máquina do servidor (contas diferentes), vínculo pela página, ⇅ com a receita multi; o
 professor pergunta a cada executor a pasta de trabalho e explica as duas. Gasta cota: uns 5 turnos.
 """
 
@@ -17,7 +17,7 @@ def test_professor_coordena_dois_executores(orq, agent, agent2):
     orq.shot("prof-executores-subiu")
     # o professor ficou vinculado ao segundo executor; o vínculo da base continua
     links = orq.state()["links"]
-    prof = f"{agent.split('@')[0]}~professor@laptop"
+    prof = agent.replace("@", "~professor@")
     assert any(lk["local"] == prof and lk["remote"] == agent2 and lk["up"] for lk in links), links
     orq.say(
         "Pergunte a cada um dos seus executores, pelo SendMessage, qual é a pasta de trabalho dele, "

@@ -36,6 +36,7 @@ class StateCache:
         self.agents: List[dict] = []
         self.links: List[dict] = []  # vínculos entre agentes (orq-agent links), de todas as máquinas
         self.agents_ts = 0.0
+        self.agents_started = 0.0  # quando começou a consulta que produziu `agents` (descarta as mais velhas)
         self.host_errors: Dict[str, str] = {}
         self.projects: Optional[List[dict]] = None
         self.projects_ts = 0.0
@@ -93,6 +94,13 @@ class StateCache:
         started = self.clock()
         ag, errs = self.ext.all_agents(self.conf.hosts)
         with self.lock:
+            # Consultas correm em paralelo (o laço, mais as agendadas por stop/downgrade) e levam 20 s ou mais
+            # quando uma máquina não responde. Uma que começou antes de um agente abrir pode terminar depois
+            # de outra que já o viu vivo: aplicá-la apagaria o agente da lista por um ciclo (a página tira a
+            # aba e pula para outra). Vale só a consulta mais nova.
+            if started < self.agents_started:
+                return
+            self.agents_started = started
             now = self.clock()
             self.closing = {k: v for k, v in self.closing.items() if v > now}
             for a in ag:

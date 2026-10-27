@@ -207,6 +207,39 @@ def test_page_open_window():
     assert c.page_open()
 
 
+def test_stale_listing_finishing_late_does_not_overwrite_a_newer_one():
+    """Duas consultas em paralelo: a velha (sem o agente, lenta) termina depois da nova e é ignorada."""
+    import threading
+
+    class Ext:
+        def __init__(self):
+            self.entered, self.gate, self.calls = threading.Event(), threading.Event(), 0
+
+        def all_agents(self, hosts):
+            self.calls += 1
+            if self.calls == 1:  # a primeira começou antes de o agente abrir e demora (máquina sem resposta)
+                self.entered.set()
+                self.gate.wait(5)
+                return [], {}
+            return [{"label": "p@h", "state": "waiting", "pid": 1}], {}
+
+    now = [1000.0]
+    ext = Ext()
+    cache = S.StateCache(type("C", (), {"hosts": []})(), ext, clock=lambda: now[0])
+    old = threading.Thread(target=cache.refresh_agents)
+    old.start()
+    assert ext.entered.wait(5)
+    now[0] = 1010.0
+    cache.refresh_agents()  # a mais nova vê o agente
+    assert [a["label"] for a in cache.agents] == ["p@h"]
+    ext.gate.set()
+    old.join(5)
+    assert [a["label"] for a in cache.agents] == ["p@h"], "a consulta velha não apaga o agente"
+    now[0] = 1020.0
+    cache.refresh_agents()  # e uma nova de verdade continua valendo
+    assert cache.agents_started == 1020.0
+
+
 def test_provisional_replaces_same_label():
     c = make_cache(Clock())
     c.refresh_agents()
