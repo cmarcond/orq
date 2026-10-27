@@ -3,6 +3,7 @@ líder que recebe a tarefa inicial e coordena os dois; depois a página recusa a
 a fotografia das abas vira um conjunto novo, e tudo é desfeito. Gasta cota: uns 5 turnos."""
 
 import json
+from pathlib import Path
 
 from conftest import PROJECT, PROJECT2
 
@@ -108,3 +109,76 @@ def _run(orq, host, path, host2, path2, name, name2, label, label2):
     assert not any(r["id"] in (sid, "qa-foto") for r in orq.open_sets())
     orq.page.click("#pclose")
     orq.shot("conjunto-desfeito")
+
+
+def test_enviar_json_pelo_botao(orq, tmp_path):
+    """📄 enviar JSON: o botão abre o seletor de arquivos do navegador; o JSON vira um conjunto salvo (o nome
+    vem do arquivo quando falta), ⬇ baixa o mesmo JSON, JSON inválido e conjunto inválido só avisam, e ✕ duas
+    vezes apaga. Nada é aberto: não gasta cota."""
+    sid = "qa-json-botao"
+    orq.api(f"/api/conjuntos/{sid}/delete", {})
+    try:
+        _json_botao(orq, tmp_path, sid)
+    finally:
+        orq.api(f"/api/conjuntos/{sid}/delete", {})
+
+
+def _upload(orq, path):
+    with orq.page.expect_file_chooser() as fc:
+        orq.page.click("#setup")
+    fc.value.set_files(str(path))
+
+
+def _json_botao(orq, tmp_path, sid):
+    host = PROJECT.partition(":")[0]
+    data = {
+        "descricao": "enviado pelo botão 📄 no QA",
+        "permissao": "auto",
+        "agentes": [
+            {"maquina": host, "pasta": PROJECT.partition(":")[2], "modo": "new", "prompt": "Você é o ALFA."},
+            {"maquina": host, "pasta": PROJECT2.partition(":")[2], "modo": "new", "tarefa": "Diga oi."},
+        ],
+    }
+    ok = tmp_path / f"{sid}.json"  # sem `nome`: o nome vem do arquivo
+    ok.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    rows = orq.open_sets()
+    assert not any(r["id"] == sid for r in rows)
+    orq.shot("json-lista-antes")
+    orq.page.wait_for_timeout(1500)  # pausas: o vídeo é para uma pessoa conferir
+    _upload(orq, ok)
+    orq.wait_fn("(s) => document.getElementById('toast').textContent.includes(`conjunto ${s} salvo`)", arg=sid)
+    orq.page.wait_for_selector(f'#plist .setp[data-id="{sid}"]', timeout=20000)
+    row = orq.page.inner_text(f'#plist .setp[data-id="{sid}"]')
+    assert sid in row and "2 agentes" in row and "independentes" in row and "auto" in row, row
+    assert "enviado pelo botão" in row
+    orq.shot("json-salvo")
+    orq.page.wait_for_timeout(1500)
+    saved = orq.api(f"/api/conjuntos/{sid}")["conjunto"]
+    assert saved["nome"] == sid and [a["pasta"] for a in saved["agentes"]] == [a["pasta"] for a in data["agentes"]]
+    # ⬇ baixa o JSON salvo
+    with orq.page.expect_download() as dl:
+        orq.page.click(f'#plist .setp[data-id="{sid}"] [data-dl]')
+    got = json.loads(Path(dl.value.path()).read_text())
+    assert dl.value.suggested_filename == f"{sid}.json" and got["nome"] == sid and len(got["agentes"]) == 2, got
+    # JSON quebrado e conjunto inválido: só um aviso, a lista não muda
+    bad = tmp_path / "quebrado.json"
+    bad.write_text("{ isto não é json")
+    _upload(orq, bad)
+    orq.wait_fn("() => document.getElementById('toast').textContent.includes('JSON inválido')")
+    orq.shot("json-invalido")
+    orq.page.wait_for_timeout(1500)
+    wrong = tmp_path / "qa-json-ruim.json"
+    wrong.write_text(json.dumps({"agentes": "não é lista", "permissao": "tudo"}))
+    _upload(orq, wrong)
+    orq.wait_fn("() => /agentes.*lista|permissao/.test(document.getElementById('toast').textContent)")
+    assert "agentes" in orq.toast() and "permissao" in orq.toast(), orq.toast()
+    orq.shot("json-conjunto-invalido")
+    orq.page.wait_for_timeout(1500)
+    assert not any(r["id"] == "qa-json-ruim" for r in orq.open_sets())
+    # ✕ duas vezes apaga
+    orq.delete_set(sid)
+    assert not any(r["id"] == sid for r in orq.open_sets())
+    orq.page.click("#pclose")
+    orq.shot("json-apagado")
+    # o 400 do conjunto inválido é o esperado; qualquer outro problema conta
+    assert not [p for p in orq.problems() if not ("[http 400]" in p and p.endswith("/api/conjuntos"))], orq.problems()

@@ -133,8 +133,11 @@ def purge_command(path: str) -> str:
     p = path.rstrip("/")
     folder = '"$HOME"/' + shlex.quote(p[2:]) if p.startswith("~/") else shlex.quote(p)
     state = os.environ.get("ORQ_QA_STATE_DIR", "~/.cache/orq")
+    # um nível recém-encerrado (↓ desfazer) ainda pode estar saindo: o supervisor regrava o state.json e o claude
+    # a conversa ao morrer; espera os sockets sumirem (até 30 s) antes de apagar, senão o estado reaparece
     return (
         f"P={folder}; K=$(printf %s \"$P\" | sed 's|[^A-Za-z0-9]|-|g'); "
+        f"for i in $(seq 1 30); do ls {state}/{name}-*/agent.sock >/dev/null 2>&1 || break; sleep 1; done; "
         f'rm -rf "$P" {state}/{name}-*; '
         'for d in ~/.claude ~/.claude-*; do [ -d "$d/projects" ] && rm -rf "$d/projects/$K"; done; true'
     )

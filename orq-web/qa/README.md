@@ -13,7 +13,42 @@ o agente noutra conta, reenvia a pergunta pendente e o claude novo responde a pa
 pelo antigo). Os arquivos compartilhados (`test_arquivos.py`): o primeiro teste grava direto na
 `_outbox/` da pasta do QA e confere lista, toast, prévia de Markdown e imagem e download, sem gastar
 cota; o segundo pede ao claude real que crie `resumo.md` e "compartilhe pela página", sem citar a
-pasta, e espera o arquivo aparecer na lista (prova que a nota do system prompt basta). Esse segundo
+pasta, e espera o arquivo aparecer na lista (prova que a nota do system prompt basta). A página em si
+(`test_pagina.py`): a aba 📊 uso (5 h, 24 h, 7 dias) e o painel da conta pelo cartão de cota, com os selos de
+alerta, a partir do banco do usage-hist; a versão para celular (`/m`, viewport de iPhone: faixa do TOTAL que abre as
+contas, seletor e aba uso na tela estreita); o sino 🔔 com e sem permissão; o título `(1) orq` e a notificação
+quando um agente termina com a página fora de vista (um turno curto); e os atalhos ⌘n, Shift+Enter e Esc (abre
+dois agentes, não manda nada). Só os dois últimos abrem agentes; os quatro primeiros não gastam cota. O caminho de ida dos arquivos (`test_anexos.py`): soltar arquivo sem aba
+aberta avisa (sem cota); e um CSV pelo 📎 (seletor do navegador) mais uma nota arrastada (um `DragEvent` com o
+`File`, o mesmo que a página recebe) entram na fila de chips, um sai pelo ✕ e volta, o envio grava os dois em
+`_inbox/` na máquina do agente e a mensagem sai com os caminhos; o claude real lê os dois de lá e responde a soma e
+a palavra-chave (um turno); no fim os bytes são conferidos por ssh numa conexão só. ⇄ converter (`test_converter.py`): sobe um `claude` interativo de
+verdade num tmux desta máquina, na pasta do QA e na conta `ORQ_QA_ACCOUNT` (senão a primeira que não é a padrão),
+aceita o diálogo de confiança da pasta, pede pelo tmux que guarde uma palavra-chave, espera a página listá-lo como
+aba tracejada, converte pelo botão do painel (`/exit` no tmux, mesma conversa reaberta como agente) e pergunta a
+palavra-chave ao agente novo: ele lembra. Dois turnos; só roda quando `ORQ_QA_PROJECT` está nesta máquina. Permissões e perguntas
+(`test_permissoes.py`): o `AskUserQuestion` vira formulário no chat e o QA responde escolhendo uma opção, depois
+pelo "Outro…" e por fim cancela (três turnos curtos); e um conjunto de um agente só com `permissao: manual` pede
+permissão para gravar um arquivo, o QA nega (nada é gravado, o claude diz que foi negado) e depois permite (dois
+turnos). Nos seletores, `.perm` sem `.term`: o painel do claude de terminal também é um `.perm`. Reconexão (`test_reconexao.py`): com o claude
+contando até 100, recarregar a página traz a conversa inteira de volta (stream desde 0) e o turno continua ao vivo;
+derrubar e subir o orq-web do QA no meio da resposta faz a aba reconectar pedindo `since=N` (só o que faltou) e nada
+se repete no chat. Dois turnos. Três níveis (`test_niveis.py::test_professor_arquiteto_executor`): a receita
+`professor → arquiteto → executor` com o mesmo hello world; o professor delega ao arquiteto, o arquiteto instrui o
+executor, o CONCLUÍDO sobe executor → arquiteto → professor, o cartão do arquiteto abre o chat cru dele, e ↓ desfazer
+encerra os dois níveis. Vários turnos. Caminho remoto (`test_remoto.py`, `ORQ_QA_PROJECT_REMOTE`, padrão
+`laptop:~/Projects/orq-qa`, numa máquina que não é a do servidor): o agente remoto compartilha um arquivo (lista,
+prévia e download passam por `orq-agent ls`/`cat` por ssh); um agente daqui se vincula ao remoto (vínculo `ssh`,
+túnel do `orq-agent link`) e pergunta a pasta dele pelo SendMessage; e um conjunto abre um agente em cada máquina com
+a própria tarefa. Uns 5 turnos; pula quando a pasta remota está na máquina do servidor. Login (`test_login.py`): um segundo orq-web só do teste sobe
+na porta `ORQ_QA_LOGIN_PORT` (8791) com `ORQ_PASSWORD_FILE` descartável; sem senha não se entra (página e API),
+senha errada avisa, cinco erros bloqueiam por um minuto, a senha certa volta para a página pedida (`/m`) e dá o
+cookie à API, e sair invalida o cookie. Sem cota. 📄 enviar JSON (`test_conjuntos.py::test_enviar_json_pelo_botao`): o botão abre o
+seletor de arquivos do navegador, o JSON vira conjunto salvo (nome do arquivo quando falta `nome`), ⬇ baixa o mesmo
+JSON, JSON quebrado e conjunto inválido só avisam, ✕ duas vezes apaga. Sem cota. ↻ reabrir com nome (`test_reabrir.py`): tira o `name` do state.json de um agente
+real (como um agente de antes dos nomes), a página passa a oferecer ↻ no ⇅ em vez das receitas, o agente reabre na
+mesma conversa com pid novo e nome, lembra a palavra-chave guardada antes, e o ⇅ volta a oferecer as receitas.
+Dois turnos curtos. Esse segundo
 teste usa o `orq-agent` instalado em `~/.local` (é o que o servidor do QA sobe): rode `./install.sh`
 antes se mudou o agente.
 Vínculos (`test_vinculos.py`): dois agentes reais no laptop, 🔗 pela página, um pergunta ao outro a
