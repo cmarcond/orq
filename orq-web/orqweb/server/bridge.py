@@ -65,6 +65,14 @@ class Bridge:
     def alive(self) -> bool:
         return self.p.poll() is None
 
+    def end_input(self) -> None:
+        """Fecha só o stdin (EOF): o attach entrega o que já recebeu e termina sozinho."""
+        try:
+            if self.p.stdin:
+                self.p.stdin.close()
+        except OSError:
+            pass
+
     def close(self) -> None:
         for fn in (lambda: self.p.stdin and self.p.stdin.close(), self.p.kill):
             try:
@@ -104,11 +112,14 @@ class BridgeRegistry:
                 del self._b[label]
         b.close()
 
-    def deliver(self, label: str, obj: dict, linger: float = 1.5, fresh: bool = False) -> Optional[str]:
+    def deliver(self, label: str, obj: dict, linger: float = 30.0, fresh: bool = False) -> Optional[str]:
         """Entrega `obj` ao agente. Erro em texto, ou None.
 
         `fresh` ignora a ponte da aba e abre uma passageira: depois de o agente ser reaberto (outra conta,
-        outro pid), a ponte da aba pode ainda estar presa ao supervisor anterior."""
+        outro pid), a ponte da aba pode ainda estar presa ao supervisor anterior. A passageira recebe a
+        mensagem e o EOF e termina por si quando o attach entregou; `linger` é só o seguro que a mata se
+        ela não terminar. Matá-la cedo (1,5 s, como era) perdia a mensagem por ssh: o handshake com a outra
+        máquina ainda não tinha acabado quando o ssh morria, e o conjunto não acusava erro."""
         with self._lock:
             b = None if fresh else self._b.get(label)
         temp = b is None or not b.alive()
@@ -119,5 +130,6 @@ class BridgeRegistry:
         except (OSError, ValueError) as e:
             return f"não consegui falar com o agente ({e})"
         if temp:
+            b.end_input()
             threading.Timer(linger, b.close).start()
         return None
