@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+node_modules/
+.DS_Store
+*.tar.gz
+claude-highlevel/runs*/
+claude-highlevel/*.log
+claude-multiconta/tests/orq-cl-*/

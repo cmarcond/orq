@@ -1,0 +1,29 @@
+/* Versão para celular (rota /m): o mesmo app.js e os mesmos ids do index.html, com outro arranjo.
+   Abas numa linha só com rolagem lateral; cota recolhida numa faixa com o TOTAL (toque abre as contas);
+   o chat fica com a tela inteira; botões só com ícone; composer acima da área segura do iPhone. */
+.top{flex-direction:column}
+.tabs{flex-direction:row;gap:10px;overflow-x:auto;padding:6px 8px 0;-webkit-overflow-scrolling:touch}
+.trow{flex:none;gap:4px}.trow .host{width:auto;font-size:9px;padding:0 2px 9px 0;letter-spacing:.04em}
+.tline{overflow:visible}.trow+.trow .tline{border-top:none;padding-top:0}
+.tab{max-width:150px;padding:7px 9px;gap:5px}.tab .kbd{display:none}
+.usage{position:relative;max-width:none;border-left:none;border-top:1px solid var(--line);padding:4px 8px 6px;gap:4px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.usage .tools{grid-column:1/-1;justify-self:end;margin:0 0 -2px}  /* numa linha própria: absoluta, cobria o título do TOTAL */
+.hsum{white-space:normal}
+.usage .ucard.total{padding:4px 40px 4px 10px;cursor:pointer;grid-column:1/-1;position:relative}
+.usage .ucard.total .small{display:none}.usage .ucard.total .name{font-size:12px;padding-right:22px}
+.usage .ucard:not(.total){display:none}.usage.open .ucard:not(.total){display:block}
+.usage .ucard.total::after{content:'▾ contas';position:absolute;right:8px;bottom:5px;font-size:10px;color:var(--mute)}
+.usage.open .ucard.total::after{content:'▴ contas'}
+.chat{padding:10px 10px 16px}.me{max-width:95%}
+.composer{padding:4px 10px calc(8px + env(safe-area-inset-bottom))}
+.composer .cstatus{font-size:11px;gap:6px}.composer .cbtns button{padding:4px 7px}.cbtns .lbl{display:none}
+.composer textarea{font-size:16px}  /* abaixo de 16px o iOS dá zoom ao focar */
+.composer #attach{padding:6px}
+/* painel lateral como gaveta por cima do chat, em qualquer largura */
+main.withside .chat{right:0}main.withside .side{display:none}
+main.withside.showside .side{display:flex;width:min(320px,88vw);box-shadow:-4px 0 12px rgba(0,0,0,.15);z-index:5}
+.pbox{width:96vw;padding:10px}.plist .p{grid-template-columns:70px 1fr 60px 44px;gap:6px;font-size:12px}
+.vbox{width:96vw;height:92vh}
+/* aba uso: na tela estreita ficam máquina, pasta, parte, ≈pts e ● */
+.usage-table th:nth-child(3),.usage-table td:nth-child(3),.usage-table th:nth-child(4),.usage-table td:nth-child(4),.usage-table th:nth-child(5),.usage-table td:nth-child(5),.usage-table th:nth-child(9),.usage-table td:nth-child(9){display:none}
+.usage-table td.fold{max-width:120px}.ubar{width:30px}.usage-table th,.usage-table td{padding:4px 4px}

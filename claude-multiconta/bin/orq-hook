@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Hook do orq. Em cada evento do agente:
+  - grava o estado em $ORQ_STATE/state.json (lido pelo `orq --status-json` e pela página web);
+  - quando ele para ou pede algo, manda uma notificação do iTerm2 (OSC 9) pelo terminal do painel.
+
+Só age em sessões abertas pelo orq-run, que define:
+  ORQ_TTY    terminal do painel (os hooks rodam sem terminal próprio)
+  ORQ_DEPTH  quantas camadas de tmux o aviso precisa atravessar até o iTerm2
+  ORQ_LABEL  nome curto do projeto, ex.: myproject@server0
+  ORQ_STATE  pasta de estado deste painel
+"""
+import json, os, sys, time
+
+if not os.environ.get("ORQ_LABEL"):
+    sys.exit(0)
+try:
+    ev = json.load(sys.stdin)
+except Exception:
+    ev = {}
+label = os.environ["ORQ_LABEL"]
+name = ev.get("hook_event_name")
+
+STATES = {   # evento -> (estado, mensagem do alerta ou None)
+    "SessionStart":     ("waiting", None),
+    "UserPromptSubmit": ("working", None),
+    "Stop":             ("waiting", "terminou, sua vez"),
+    "Notification":     ("permission", ev.get("message") or "precisa de você"),
+    "StopFailure":      ("error", "parou com erro (cota?). /exit troca de conta"),
+    "SessionEnd":       ("closed", None),
+}
+if name not in STATES:
+    sys.exit(0)
+state, alert = STATES[name]
+if name == "Notification" and "waiting for your input" in (ev.get("message") or ""):
+    state = "waiting"           # aviso de ociosidade, não pedido de permissão
+
+sd = os.environ.get("ORQ_STATE")
+if sd:
+    f = os.path.join(sd, "state.json")
+    try:
+        cur = json.load(open(f))
+    except Exception:
+        cur = {}
+    cur.update(label=label, state=state, event=name, ts=time.time(),
+               sid=ev.get("session_id") or cur.get("sid"), msg=alert or "")
+    try:
+        tmp = f + ".tmp"
+        json.dump(cur, open(tmp, "w")); os.replace(tmp, f)
+    except Exception:
+        pass
+
+tty = os.environ.get("ORQ_TTY")
+if alert and tty:
+    msg = f"{label}: {alert}".replace("\x07", " ").replace("\x1b", " ")[:200]
+    seq = f"\x1b]9;{msg}\x07"
+    for _ in range(int(os.environ.get("ORQ_DEPTH", "0") or 0)):   # passthrough de cada tmux
+        seq = "\x1bPtmux;" + seq.replace("\x1b", "\x1b\x1b") + "\x1b\\"
+    try:
+        with open(tty, "w") as t:
+            t.write(seq)
+    except Exception:
+        pass
+sys.exit(0)

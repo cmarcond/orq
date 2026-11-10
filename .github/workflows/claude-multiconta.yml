@@ -1,0 +1,32 @@
+name: claude-multiconta
+on:
+  push:
+    branches: [main]
+    paths: ["claude-multiconta/**", ".github/workflows/claude-multiconta.yml"]
+  pull_request:
+    paths: ["claude-multiconta/**", ".github/workflows/claude-multiconta.yml"]
+
+defaults:
+  run:
+    working-directory: claude-multiconta
+
+jobs:
+  check:
+    # 24.04 fixo: a imagem ubuntu-latest (26.04) não tem Python 3.8 no setup-python
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: sintaxe dos scripts (python pelo shebang, shell pelo sh -n)
+        run: |
+          for f in install.sh add-account.sh make-tarball.sh bin/*; do
+            if head -1 "$f" | grep -q python; then python3 -m py_compile "$f"; else sh -n "$f"; fi
+          done
+      - run: python3 -c "import json; json.load(open('accounts.json'))"
+      - run: pip install pytest && python3 -m pytest -q tests

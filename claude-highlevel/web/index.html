@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HighLevel</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="marca">HighLevel</div>
+  <div id="resumo-run" class="resumo"></div>
+  <div class="acoes">
+    <label class="toggle"><input type="checkbox" id="ver-bastidores"> bastidores</label>
+    <label class="toggle"><input type="checkbox" id="ver-thinking"> thinking</label>
+    <button id="btn-runs" class="btn">runs</button>
+    <button id="btn-parar" class="btn btn-perigo" hidden>parar</button>
+    <button id="btn-novo" class="btn" hidden>novo run</button>
+  </div>
+</header>
+
+<div id="painel-runs" class="painel" hidden>
+  <div class="painel-h">runs anteriores</div>
+  <div id="lista-runs"></div>
+</div>
+
+<main id="tela-nova" class="nova">
+  <form id="form-run" class="cartao-form">
+    <h1>Um pipeline novo</h1>
+    <p class="ajuda">Dois Claude Codes no mesmo diretório: o de cima traduz e delega,
+      o de baixo trabalha e reporta marcos.</p>
+    <label>Diretório de trabalho
+      <input name="cwd" required placeholder="/private/tmp/hl-demo" value="/private/tmp/hl-demo">
+    </label>
+    <label>Tarefa
+      <textarea name="task" required rows="4" placeholder="Crie um hello.py que…">Crie um hello.py que recebe um nome como argumento e imprime 'Olá, <nome>!', com pelo menos 3 testes automatizados, e rode os testes no final.</textarea>
+    </label>
+    <label>Pipeline
+      <select name="pipeline" id="sel-pipeline"></select>
+      <small class="ajuda" id="desc-pipeline"></small>
+    </label>
+    <label>Modo de permissão
+      <select name="permission_mode">
+        <option value="auto">auto — resolve os pedidos comuns sozinho</option>
+        <option value="acceptEdits">acceptEdits — aceita edições, pergunta o resto</option>
+        <option value="manual">manual — pergunta tudo</option>
+        <option value="bypassPermissions">bypassPermissions — não pergunta nada</option>
+      </select>
+      <small class="ajuda">Vale para todos os níveis: modos de classes diferentes fazem
+        o Claude Code reter as mensagens entre eles.</small>
+    </label>
+    <button class="btn btn-principal" type="submit">começar</button>
+    <div id="erro-form" class="erro" hidden></div>
+  </form>
+</main>
+
+<main id="tela-run" class="palco-grid" hidden>
+  <aside class="rail">
+    <div class="rail-h">níveis</div>
+    <div id="niveis"></div>
+    <div class="rail-h">tarefa</div>
+    <div id="tarefa" class="tarefa"></div>
+  </aside>
+
+  <section class="palco">
+    <div id="palco" class="fluxo"></div>
+    <div id="gaveta" class="gaveta" hidden>
+      <div class="gaveta-h">
+        <span id="gaveta-titulo"></span>
+        <button id="gaveta-fechar" class="btn">fechar</button>
+      </div>
+      <pre id="gaveta-corpo"></pre>
+    </div>
+
+    <form id="form-msg" class="compositor">
+      <select id="alvo" title="para quem vai a mensagem"></select>
+      <input id="msg" placeholder="fale com o professor…" autocomplete="off">
+      <button class="btn btn-principal" type="submit">enviar</button>
+    </form>
+  </section>
+
+  <aside class="fios">
+    <div class="rail-h">fios <span id="conta-fios" class="conta"></span></div>
+    <div id="fios" class="fluxo"></div>
+  </aside>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

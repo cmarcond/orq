@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Roda um agente do orq num painel: abre o claude na pasta e na conta certas, e troca de conta
+quando a cota acaba. Normalmente quem chama é o `orq`, não você.
+
+Uso: orq-run --dir PASTA --account CONTA [--label NOME] [--depth N] [--mode resume|new] [--tmux]
+  --mode resume  retoma a conversa mais recente da pasta (copiando para CONTA se for de outra)
+  --mode new     começa uma conversa nova
+  --tmux         roda dentro de uma sessão tmux "orq-<nome>" nesta máquina, que sobrevive ao ssh
+                 cair; se a sessão já existe, só reconecta (o agente continua de onde estava)
+  --depth N      camadas de tmux entre o claude e o iTerm2, para o alerta chegar (sem contar a do --tmux)
+"""
+import argparse, json, os, re, shlex, shutil, subprocess, sys, time, pathlib
+
+HOME = pathlib.Path.home()
+BIN = pathlib.Path(os.environ.get("ORQ_BIN", HOME / ".local/bin"))   # ORQ_BIN: só para testes
+CONF_DIR = pathlib.Path(os.environ.get("CLAUDE_MULTICONTA_CONF",
+                        HOME / ".config/claude-multiconta/accounts.json")).parent
+HOOKS = CONF_DIR / "orq-hooks.json"
+LIMIT = 95      # % a partir do qual a conta é tratada como sem cota
+AHEAD = 15      # pontos acima do ritmo no 7d a partir dos quais vale trocar de conta
+
+ap = argparse.ArgumentParser(add_help=False)
+ap.add_argument("--dir", required=False)
+ap.add_argument("--account")
+ap.add_argument("--label")
+ap.add_argument("--depth", type=int, default=0)
+ap.add_argument("--mode", choices=("resume", "new"), default="resume")
+ap.add_argument("--tmux", action="store_true")
+ap.add_argument("-h", "--help", action="store_true")
+a = ap.parse_args()
+if a.help or not a.dir or not a.account:
+    print(__doc__.strip()); sys.exit(0 if a.help else 1)
+
+folder = pathlib.Path(os.path.expanduser(a.dir))
+label = a.label or folder.name
+conf = json.loads((CONF_DIR / "accounts.json").read_text())
+ACCS = {x["name"]: x for x in conf.get("accounts", [])}
+
+def c(code, s): return f"\033[{code}m{s}\033[0m"
+
+# ---- modo --tmux: cria ou reconecta a sessão tmux desta máquina e roda o orq-run lá dentro ----
+if a.tmux:
+    tmux = shutil.which("tmux")
+    me = [sys.executable, os.path.abspath(__file__), "--dir", str(folder), "--account", a.account,
+          "--label", label, "--depth", str(a.depth + 1), "--mode", a.mode]
+    if not tmux:
+        print(c("33", f"sem tmux nesta máquina: o agente roda direto e morre se a conexão cair."))
+        me[me.index("--depth") + 1] = str(a.depth)
+        os.execv(sys.executable, me)
+    sess = "orq-" + re.sub(r"[^a-zA-Z0-9_-]", "-", label.split("@")[0])
+    env = dict(os.environ); env.pop("TMUX", None)
+    if subprocess.run([tmux, "has-session", "-t", "=" + sess], env=env, capture_output=True).returncode != 0:
+        folder.mkdir(parents=True, exist_ok=True)
+        subprocess.run([tmux, "new-session", "-d", "-s", sess, "-c", str(folder), shlex.join(me)], env=env, check=True,
+                       cwd=os.path.expanduser("~"))  # o servidor herda a pasta de quem o cria; a pessoal nunca some
+        for opt in (["status", "off"], ["prefix", "C-a"], ["mouse", "on"],
+                    ["set-titles", "on"], ["set-titles-string", "#{pane_title}"]):
+            subprocess.run([tmux, "set-option", "-t", sess] + opt, env=env, capture_output=True)
+        subprocess.run([tmux, "set-option", "-p", "-t", sess, "allow-passthrough", "on"], env=env, capture_output=True)
+    os.execvpe(tmux, [tmux, "attach-session", "-t", "=" + sess], env)
+
+# ---- modo normal: o laço do agente ----
+def usage():
+    try:
+        r = subprocess.run([str(BIN / "usage-all"), "--json"], capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout)
+    except Exception:
+        return {}
+
+def exhausted(u):
+    return (not u) or ("err" in u) or u.get("5h", 0) >= LIMIT or u.get("7d", 0) >= LIMIT
+
+def slack(u):
+    return u.get("7d", 0) - u.get("7d_pace", 0)
+
+def best_other(us, current):
+    ok = [(slack(u), n) for n, u in us.items() if n != current and n in ACCS and not exhausted(u)]
+    return min(ok)[1] if ok else None
+
+def claude_env(acc):
+    env = dict(os.environ)
+    d = os.path.expanduser(ACCS[acc].get("config_dir") or "~/.claude")
+    if os.path.realpath(d) == os.path.realpath(HOME / ".claude"):
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    else:
+        env["CLAUDE_CONFIG_DIR"] = d
+    return env
+
+def pick(acc):
+    """Conversa mais recente da pasta, copiada para acc se for de outra conta. None = não há."""
+    r = subprocess.run([str(BIN / "claude-last"), "--pick", f"--as={acc}", str(folder)],
+                       capture_output=True, text=True)
+    if r.stderr.strip(): print(c("2", r.stderr.strip()))
+    if r.returncode != 0 or not r.stdout.strip(): return None
+    return r.stdout.split()[1]
+
+def run_claude(cmd, env):
+    """Roda o claude e desfaz o Ctrl-z. Aqui não há shell com `fg`: o claude se dá por suspenso,
+    devolve o terminal ao modo normal e fica esperando um SIGCONT que nunca viria. Um vigia
+    nota o terminal fora do modo raw com o claude vivo e manda o SIGCONT ele mesmo."""
+    import signal, termios, threading
+    proc = subprocess.Popen(cmd, env=env)
+    def watch():
+        cooked_since = None
+        while proc.poll() is None:
+            time.sleep(0.4)
+            try:
+                cooked = bool(termios.tcgetattr(sys.stdin.fileno())[3] & termios.ICANON)
+            except Exception:
+                return
+            if not cooked:
+                cooked_since = None
+            elif cooked_since is None:
+                cooked_since = time.time()
+            elif time.time() - cooked_since > 1.2:
+                try: os.kill(proc.pid, signal.SIGCONT)
+                except Exception: pass
+                cooked_since = time.time() + 3
+    threading.Thread(target=watch, daemon=True).start()
+    while True:
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            continue   # Ctrl-c é do claude, não do orq-run
+
+folder.mkdir(parents=True, exist_ok=True)
+os.chdir(folder)
+state = HOME / ".cache/orq" / re.sub(r"[^a-zA-Z0-9_-]", "-", label)
+state.mkdir(parents=True, exist_ok=True)
+try:
+    tty = os.ttyname(sys.stdin.fileno())
+except Exception:
+    tty = ""
+os.environ.update(ORQ_TTY=tty, ORQ_DEPTH=str(a.depth), ORQ_LABEL=label, ORQ_STATE=str(state))
+claude = shutil.which("claude") or str(BIN / "claude")
+acc, mode = a.account, a.mode
+if acc not in ACCS:
+    print(f"conta desconhecida: {acc}. Disponíveis: {', '.join(ACCS)}"); sys.exit(1)
+
+def put_state(st, **kw):
+    """Estado do painel para o `orq --status-json` e a página web (o hook atualiza no meio)."""
+    f = state / "state.json"
+    try: cur = json.load(open(f))
+    except Exception: cur = {}
+    cur.update(label=label, dir=str(folder), account=acc, pid=os.getpid(), state=st, ts=time.time(), **kw)
+    tmp = state / "state.json.tmp"
+    json.dump(cur, open(tmp, "w")); os.replace(tmp, f)
+
+NEXT = state / "next_account"     # a página web pede troca de conta escrevendo aqui
+NEXT.unlink(missing_ok=True)
+import atexit
+atexit.register(lambda: put_state("closed"))
+
+while True:
+    cmd = [claude]
+    if HOOKS.exists(): cmd += ["--settings", str(HOOKS)]
+    sid = pick(acc) if mode == "resume" else None
+    if sid: cmd += ["--resume", sid]
+    print(c("1", f"▶ {label}  conta {acc}  " + (f"retomando {sid[:8]}" if sid else "conversa nova")))
+    put_state("starting", sid=sid, msg="")
+    run_claude(cmd, claude_env(acc))
+
+    if NEXT.exists():                 # troca pedida pela página web
+        nxt = NEXT.read_text().strip(); NEXT.unlink(missing_ok=True)
+        if nxt in ACCS and nxt != acc:
+            print(c("33", f"\ntrocando para a conta {nxt}, como pedido na página."))
+            acc, mode = nxt, "resume"; continue
+    us = usage()
+    if exhausted(us.get(acc, {})):
+        nxt = best_other(us, acc)
+        if nxt:
+            print(c("33", f"\nconta {acc} sem cota. Retomando na conta {nxt} em 5 s (Ctrl-C para escolher)."))
+            try:
+                time.sleep(5); acc, mode = nxt, "resume"; continue
+            except KeyboardInterrupt:
+                pass
+        else:
+            print(c("31", "\nnenhuma conta com cota agora."))
+    put_state("menu", msg="claude fechado; esperando escolha no painel")
+    print(c("2", f"\n[Enter] retomar na {acc}   [c] outra conta   [n] conversa nova   [q] fechar"))
+    try:
+        k = input("> ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        break
+    if k == "q": break
+    if k == "n": mode = "new"; continue
+    mode = "resume"
+    if k == "c":
+        names = list(ACCS)
+        for i, n in enumerate(names, 1):
+            u = us.get(n, {})
+            s = "erro" if "err" in u else f"7d {u.get('7d', 0):.0f}/{u.get('7d_pace', 0):.0f}%  5h {u.get('5h', 0):.0f}%"
+            print(f"  {i}  {n:<10} {s}")
+        try:
+            j = int(input("conta> ").strip()); acc = names[j - 1]
+        except (ValueError, IndexError, EOFError, KeyboardInterrupt):
+            pass

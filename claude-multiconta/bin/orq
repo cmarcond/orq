@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""orq: abre até 4 projetos de uma vez, cada um na máquina, na pasta e na conta certas, numa
+janela com 4 painéis (tmux). Os agentes remotos ficam em sessões tmux nas máquinas, então
+fechar o laptop não os mata.
+
+Uso: orq            escolhe os projetos e abre a grade (se ela já existe, só volta para ela)
+     orq --new      fecha a grade atual e escolhe de novo (os agentes remotos continuam rodando)
+     orq --list     só mostra a lista de projetos de todas as máquinas
+     orq web        página local de visão geral: agentes, cota, avisos e ações (http://127.0.0.1:8765)
+     orq --status-json   estado dos agentes do orq nesta máquina (usado pela página)
+
+Na grade: clique ou Ctrl-b + seta muda de painel · Ctrl-b z amplia/volta · Ctrl-b d sai
+(tudo continua rodando; `orq` volta). Rolagem: roda do mouse.
+Contas: os projetos são espalhados pelas contas com mais folga no 7d. Cada agente já rodando
+numa conta pesa contra ela, e ficar na conta da conversa tem uma pequena preferência.
+Alerta: notificação do iTerm2 quando um agente termina ou pede permissão.
+"""
+import json, os, re, secrets, shlex, shutil, subprocess, sys, threading, time, pathlib
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+
+HOME = pathlib.Path.home()
+BIN = HOME / ".local/bin"
+CONF = pathlib.Path(os.environ.get("CLAUDE_MULTICONTA_CONF", HOME / ".config/claude-multiconta/accounts.json"))
+STATE_DIR = HOME / ".cache/orq"
+SOCK, SESS = "orq", "grade"     # servidor tmux próprio, separado do tmux normal
+LIMIT = 95                      # % (5h ou 7d) a partir do qual a conta é tratada como sem cota
+PER_AGENT = 20                  # quanto cada agente já na conta pesa contra ela (pontos de folga)
+STAY = 10                       # preferência por ficar na conta da conversa (evita copiar à toa)
+USAGE_EVERY = 150               # s entre consultas de cota na página (a API reclama se for frequente)
+AGENTS_EVERY = 15               # s entre consultas do estado dos agentes, só com a página aberta
+
+conf = json.loads(CONF.read_text())
+ACCS = [x["name"] for x in conf.get("accounts", [])]
+LABELS = {x["name"]: x.get("label", x["name"]).split(" (")[0] for x in conf.get("accounts", [])}
+LABELS["codex"] = "Codex"
+HOSTS = conf.get("orq_hosts", [])
+TMUX = shutil.which("tmux")
+
+def c(code, s): return f"\033[{code}m{s}\033[0m" if sys.stdout.isatty() else s
+
+def safe(label): return re.sub(r"[^a-zA-Z0-9_-]", "-", label)
+
+def ago(m):
+    s = time.time() - m
+    return f"{int(s // 60)}min" if s < 3600 else f"{int(s // 3600)}h" if s < 86400 else f"{int(s // 86400)}d"
+
+def short(path, host):
+    return path.replace(str(HOME), "~", 1) if host == "laptop" else re.sub(r"^/home/[^/]+", "~", path)
+
+def ssh(host, cmd, timeout=20):
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, cmd],
+                          capture_output=True, text=True, timeout=timeout)
+
+# ---------------------------------------------------------------- estado local (qualquer máquina)
+def _proc_tree():
+    """{pid: [filhos]} de todos os processos do usuário."""
+    kids = {}
+    r = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        try: pid, ppid = map(int, line.split())
+        except ValueError: continue
+        kids.setdefault(ppid, []).append(pid)
+    return kids
+
+def _env(pid):
+    """Variáveis que interessam do ambiente de um processo (Linux: /proc; Mac: ps eww)."""
+    want = ("CLAUDE_CONFIG_DIR", "ORQ_LABEL")
+    try:
+        raw = open(f"/proc/{pid}/environ", "rb").read().decode(errors="ignore").split("\0")
+    except Exception:
+        r = subprocess.run(["ps", "eww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True)
+        raw = r.stdout.split()
+    return {k: v for k, _, v in (x.partition("=") for x in raw) if k in want}
+
+def _account_of(cfg):
+    d = os.path.realpath(os.path.expanduser(cfg or "~/.claude"))
+    for x in conf.get("accounts", []):
+        if os.path.realpath(os.path.expanduser(x.get("config_dir") or "~/.claude")) == d: return x["name"]
+    return "?"
+
+def transcript_state(cfg, cwd):
+    """Estado pela última mensagem da conversa mais recente da pasta: resposta encerrada = esperando
+    você; chamada de ferramenta, resultado ou pedido seu = trabalhando. (estado, quando) ou (None, 0)."""
+    base = pathlib.Path(os.path.expanduser(cfg or "~/.claude")) / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", cwd)
+    try:
+        f = max(base.glob("*.jsonl"), key=lambda x: x.stat().st_mtime)
+    except ValueError:
+        return None, 0
+    try:
+        with open(f, "rb") as fh:
+            fh.seek(0, 2); fh.seek(max(0, fh.tell() - 200_000))
+            lines = fh.read().decode(errors="ignore").splitlines()
+    except Exception:
+        return None, 0
+    for line in reversed(lines):
+        try: o = json.loads(line)
+        except Exception: continue
+        t = o.get("type")
+        if t == "assistant":
+            sr = (o.get("message") or {}).get("stop_reason")
+            return ("working" if sr in ("tool_use", None) else "waiting"), f.stat().st_mtime
+        if t == "user":
+            return "working", f.stat().st_mtime
+    return None, 0
+
+def tmux_claudes():
+    """Todo claude interativo rodando num painel tmux desta máquina, aberto ou não pelo orq.
+    O estado vem do título que o próprio claude põe no painel: ✳ parado, braille girando = trabalhando."""
+    tmuxbin = shutil.which("tmux")
+    if not tmuxbin: return []
+    kids, out = _proc_tree(), []
+    for sock in ([[]] + ([["-L", SOCK]] if sys.platform == "darwin" else [])):
+        r = subprocess.run([tmuxbin] + sock + ["list-panes", "-a", "-F",
+                            "#{pane_pid}\t#{session_name}\t#{pane_current_path}\t#{pane_title}"],
+                           capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            try: ppid, sess, cwd, title = line.split("\t", 3)
+            except ValueError: continue
+            t0 = title[:1]
+            if t0 == "✳": st = "waiting"
+            elif "\u2800" <= t0 <= "\u28ff": st = "working"
+            else: continue                       # painel sem claude
+            env, stack = {}, [int(ppid)]         # acha o claude entre o processo do painel e os filhos
+            while stack:
+                pid = stack.pop(); e = _env(pid)
+                if "ORQ_LABEL" in e or "CLAUDE_CONFIG_DIR" in e: env = e; break
+                stack += kids.get(pid, [])
+            tst, tts = transcript_state(env.get("CLAUDE_CONFIG_DIR"), cwd)
+            if tst and st != "working": st = tst
+            out.append({"label": env.get("ORQ_LABEL") or os.path.basename(cwd.rstrip("/")) or "home",
+                        "account": _account_of(env.get("CLAUDE_CONFIG_DIR")), "dir": cwd, "state": st,
+                        "msg": title[1:].strip()[:80], "ts": tts or time.time(), "tmux": sess,
+                        "orq": "ORQ_LABEL" in env})
+    return out
+
+def status_local():
+    """Agentes desta máquina: os do orq (~/.cache/orq/*/state.json, mais ricos) e todo claude em tmux."""
+    out, live = [], set()
+    tm_now = tmux_claudes()
+    tm_labels = {t["label"] for t in tm_now if t["orq"]}
+    for f in STATE_DIR.glob("*/state.json"):
+        try: st = json.loads(f.read_text())
+        except Exception: continue
+        st.setdefault("account", "?"); st.setdefault("dir", ""); st.setdefault("state", "waiting")
+        pid = st.get("pid")
+        if pid:
+            try: os.kill(int(pid), 0)
+            except Exception: st["state"] = "closed"
+        elif st["label"] not in tm_labels:   # painel de versão antiga: vivo só se ainda está no tmux
+            st["state"] = "closed"
+        st.setdefault("ts", 0); st["orq"] = True
+        for t in tm_now:                     # completa o que o painel antigo não gravou
+            if t["label"] == st["label"]:
+                if st["account"] == "?": st["account"] = t["account"]
+                if not st["dir"]: st["dir"] = t["dir"]
+                st["tmux"] = t["tmux"]
+        if st["state"] == "closed" and time.time() - st["ts"] > 6 * 3600: continue
+        if st["state"] != "closed": live.add(st["label"])
+        out.append(st)
+    for t in tm_now:
+        if t["label"] in live: continue          # já veio, com mais detalhe, do state.json
+        if any(o["label"] == t["label"] and o["state"] == "closed" for o in out):
+            out = [o for o in out if o["label"] != t["label"]]
+        out.append(t)
+    return out
+
+if "--status-json" in sys.argv:
+    print(json.dumps(status_local(), ensure_ascii=False)); sys.exit(0)
+
+# ---------------------------------------------------------------- coleta (laptop)
+def projects(host):
+    try:
+        r = (subprocess.run([str(BIN / "claude-last"), "--projects"], capture_output=True, text=True, timeout=20)
+             if host == "laptop" else ssh(host, "~/.local/bin/claude-last --projects"))
+    except Exception as e:
+        return host, [], str(e)
+    try:
+        return host, json.loads(r.stdout), None
+    except Exception:
+        return host, [], (r.stderr.strip().splitlines() or ["resposta inválida (versão antiga?)"])[-1]
+
+def all_projects():
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        res = list(ex.map(projects, ["laptop"] + HOSTS))
+    items, errs = [], {}
+    for host, lst, err in res:
+        if err and not lst: errs[host] = err[:80]
+        for p in lst: p["host"] = host; items.append(p)
+    items.sort(key=lambda p: -p["mtime"])
+    return items[:30], errs
+
+def agents(host):
+    try:
+        r = (subprocess.run([sys.executable, __file__, "--status-json"], capture_output=True, text=True, timeout=20)
+             if host == "laptop" else ssh(host, "~/.local/bin/orq --status-json"))
+        lst = json.loads(r.stdout)
+        for a in lst:
+            a["host"] = host
+            if "@" not in a["label"]: a["label"] += "@" + host
+        return host, lst, None
+    except Exception as e:
+        return host, [], "sem resposta"
+
+def all_agents():
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        res = list(ex.map(agents, ["laptop"] + HOSTS))
+    return [a for _, l, _ in res for a in l], {h: e for h, _, e in res if e}
+
+def usage_json(script):
+    try:
+        r = subprocess.run([str(BIN / script), "--json"], capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout)
+    except Exception:
+        return {"err": "falha ao consultar"} if script.startswith("codex") else {}
+
+# ---------------------------------------------------------------- contas
+def exhausted(u): return (not u) or "err" in u or u.get("5h", 0) >= LIMIT or u.get("7d", 0) >= LIMIT
+def slack(u): return u.get("7d", 0) - u.get("7d_pace", 0)
+
+def assign(projs, US, running=()):
+    """Escolhe a conta de cada projeto espalhando a carga. running = contas dos agentes já ativos."""
+    load = Counter(running)
+    healthy = [n for n in ACCS if n in US and not exhausted(US[n])]
+    for p in projs:
+        cur = p.get("account")
+        if p.get("acc"): load[p["acc"]] += 1; continue
+        if not healthy:
+            p["acc"], p["why"] = cur or ACCS[0], "nenhuma conta com folga"
+        else:
+            cost = lambda n: slack(US[n]) + PER_AGENT * load[n] - (STAY if n == cur else 0)
+            best = min(healthy, key=cost)
+            p["acc"] = best
+            if best == cur: p["why"] = "a da conversa"
+            elif not cur: p["why"] = f"mais folga ({slack(US[best]):+.0f} do ritmo)"
+            elif cur not in healthy: p["why"] = f"{cur} sem cota"
+            elif load[cur]: p["why"] = f"{cur} já tem {load[cur]} agente(s); {best} está {slack(US[best]):+.0f} do ritmo"
+            else: p["why"] = f"{best} tem mais folga ({slack(US[best]):+.0f} contra {slack(US[cur]):+.0f} da {cur})"
+        load[p["acc"]] += 1
+    return projs
+
+def label_for(p, taken):
+    base = os.path.basename(p["cwd"].rstrip("/")) or "home"
+    lab, n = f"{base}@{p['host']}", 1
+    while lab in taken: n += 1; lab = f"{base}-{n}@{p['host']}"
+    return lab
+
+# ---------------------------------------------------------------- grade tmux
+def tm(*a, **kw):
+    env = dict(os.environ); env.pop("TMUX", None)
+    kw.setdefault("cwd", os.path.expanduser("~"))  # o servidor herda a pasta de quem o cria; a pessoal nunca some
+    return subprocess.run([TMUX, "-L", SOCK] + list(a), env=env, **kw)
+
+def grid_exists():
+    return bool(TMUX) and tm("has-session", "-t", "=" + SESS, capture_output=True).returncode == 0
+
+def grid_panes():
+    if not grid_exists(): return []
+    r = tm("list-panes", "-t", SESS, "-F", "#{pane_id}\t#{@orq_name}\t#{pane_title}", capture_output=True, text=True)
+    return [dict(zip(("id", "label", "title"), l.split("\t"))) for l in r.stdout.splitlines()]
+
+def pane_cmd(p):
+    run = ["--dir", p["cwd"], "--account", p["acc"], "--label", p["label"], "--depth", "1", "--mode", p["mode"]]
+    if p["host"] == "laptop":
+        return shlex.join([str(BIN / "orq-run")] + run)
+    remote = "~/.local/bin/orq-run " + shlex.join(["--tmux"] + run)
+    s = shlex.join(["ssh", "-t", "-o", "ServerAliveInterval=30", p["host"], remote])
+    return (f"while :; do {s}; printf '\\nconexão com {p['host']} encerrada. Enter reconecta, Ctrl-C fecha. '; "
+            f"read _ || break; done")
+
+def style_grid():
+    for opt in (["-g", "allow-passthrough", "on"], ["-g", "mouse", "on"], ["-g", "set-titles", "on"],
+                ["-t", SESS, "pane-border-status", "top"],
+                ["-t", SESS, "pane-border-format", " #{?pane_active,#[bold],}#{@orq_name} · #{@orq_acc}#[default] │ #{pane_title} "],
+                ["-t", SESS, "status-left", " orq "],
+                ["-t", SESS, "status-right", " clique/C-b seta: painel · C-b z: ampliar · C-b d: sair (tudo continua) "],
+                ["-t", SESS, "status-right-length", "90"]):
+        tm("set-option", *opt)
+
+def tag_pane(pid, p):
+    tm("set-option", "-p", "-t", pid, "@orq_name", p["label"])
+    tm("set-option", "-p", "-t", pid, "@orq_acc", p["acc"])
+
+def add_pane(p):
+    """Abre o projeto num painel novo da grade (cria a grade se não existe). Devolve erro ou None."""
+    if not TMUX: return "precisa do tmux no laptop (brew install tmux)"
+    if not grid_exists():
+        cols, lines = shutil.get_terminal_size((200, 50))
+        tm("new-session", "-d", "-s", SESS, "-x", str(cols), "-y", str(lines - 1), pane_cmd(p), check=True)
+        style_grid()
+        pid = tm("list-panes", "-t", SESS, "-F", "#{pane_id}", capture_output=True, text=True).stdout.split()[0]
+    else:
+        if len(grid_panes()) >= 4: return "a grade já tem 4 painéis; feche um (/exit e q) antes"
+        pid = tm("split-window", "-t", SESS, "-P", "-F", "#{pane_id}", pane_cmd(p),
+                 capture_output=True, text=True).stdout.strip()
+        tm("select-layout", "-t", SESS, "tiled")
+    tag_pane(pid, p)
+    return None
+
+def attach():
+    env = dict(os.environ); env.pop("TMUX", None)
+    os.execvpe(TMUX, [TMUX, "-L", SOCK, "attach-session", "-t", "=" + SESS], env)
+
+# ---------------------------------------------------------------- página web (orq-web)
+def serve(args):
+    """`orq web` virou o pacote orq-web (~/Projects/orq-web): o comando orq-web em ~/.local/bin."""
+    exe = BIN / "orq-web"
+    if not exe.exists():
+        sys.exit("orq-web não instalado. No laptop: cd ~/Projects/orq-web && ./install.sh")
+    os.execv(str(exe), [str(exe)] + args)
+
+# ---------------------------------------------------------------- terminal
+def main():
+    args = sys.argv[1:]
+    if any(x in ("-h", "--help") for x in args):
+        print(__doc__.strip()); return
+    if args[:1] == ["web"]:
+        return serve(args[1:])
+    if not TMUX and "--list" not in args:
+        sys.exit("o orq precisa do tmux no laptop (brew install tmux).")
+    if grid_exists() and "--new" not in args and "--list" not in args:
+        attach()
+
+    print(c("2", "buscando projetos em " + ", ".join(["laptop"] + HOSTS) + "…"))
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        fu, fa = ex.submit(usage_json, "usage-all"), ex.submit(all_agents)
+        items, errs = all_projects()
+        US, (ags, _) = fu.result(), fa.result()
+    for h, e in errs.items():
+        print(c("33", f"  {h}: sem resposta ({e[:60]})"))
+    print(c("2", f"\n {'#':>2}  {'máquina':<10} {'pasta':<34} {'conta':<9} {'há':>5}  assunto"))
+    for i, p in enumerate(items, 1):
+        print(f" {i:>2}  {p['host']:<10} {short(p['cwd'], p['host'])[:34]:<34} {p['account']:<9} {ago(p['mtime']):>5}  {p['title'][:44]}")
+    if "--list" in args: return
+
+    print(c("2", "\nEscolha até 4, separados por espaço (ex.: 1 3 5 8). Pasta nova: maquina:/caminho"))
+    try: raw = input("> ").split()
+    except (EOFError, KeyboardInterrupt): return
+    chosen = []
+    for tok in raw[:4]:
+        if tok.isdigit() and 1 <= int(tok) <= len(items):
+            chosen.append(dict(items[int(tok) - 1], mode="resume"))
+        elif ":" in tok and tok.split(":", 1)[0] in ["laptop"] + HOSTS:
+            h, d = tok.split(":", 1)
+            chosen.append({"host": h, "cwd": d, "account": None, "mode": "new"})
+        else:
+            print(c("33", f"ignorei '{tok}'"))
+    if not chosen: sys.exit("nada escolhido.")
+
+    # agentes que vão continuar rodando fora da grade nova também pesam nas contas
+    if grid_exists(): tm("kill-session", "-t", "=" + SESS)
+    keys = {(p["host"], label_for(p, set())) for p in chosen}
+    running = [a["account"] for a in ags if a["state"] != "closed" and (a["host"], a["label"]) not in keys]
+    assign(chosen, US, running)
+    taken = set(); print()
+    for p in chosen:
+        p["label"] = label_for(p, taken); taken.add(p["label"])
+        print(f"  {p['label']:<34} conta {p['acc']:<9} {c('2', p['why'])}")
+    for p in chosen:
+        err = add_pane(p)
+        if err: print(c("31", err))
+    tm("select-pane", "-t", grid_panes()[0]["id"])
+    attach()
+
+main()
