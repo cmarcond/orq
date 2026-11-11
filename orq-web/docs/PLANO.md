@@ -74,7 +74,7 @@ ZeroTier, logar, abrir uma aba do `kaggle@server0` e do `dev@node3`.
 
 ## Fase 2 — monorepo privado e CI/CD  ✅ feita em 2026-10-11
 
-`https://github.com/cmarcond/orq` (privado). CI por projeto verde; imagem `ghcr.io/cmarcond/orq-web:latest`.
+`https://github.com/cmarcond/orq`. CI por projeto verde; imagem `ghcr.io/cmarcond/orq-web:latest`.
 O monorepo é a fonte de verdade a partir daqui; as pastas `~/Projects/orq-web` e `~/Projects/claude-multiconta` são
 cópias antigas. O deploy do server0 continua pelo `push-server0.sh`; para puxar do GHCR, `docker login ghcr.io`
 lá com um PAT `read:packages`.

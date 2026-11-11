@@ -104,9 +104,7 @@ def test_spawn_level_sends_role_on_stdin_with_parent_and_level():
     assert cmd[cmd.index("--role-file") + 1] == "-" and cmd[cmd.index("--parent") + 1] == "p@laptop"
     assert cmd[cmd.index("--level") + 1] == "professor" and r.inputs[-1] == "Você é…"
     assert (
-        ext.spawn(
-            "server0", "p~professor@server0", "~/p", "gmail", "new", role="papel", parent="p@server0"
-        )
+        ext.spawn("server0", "p~professor@server0", "~/p", "gmail", "new", role="papel", parent="p@server0")
         is None
     )
     assert r.calls[-1][0] == "ssh" and "--role-file -" in r.calls[-1][-1] and r.inputs[-1] == "papel"

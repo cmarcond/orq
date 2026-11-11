@@ -62,9 +62,7 @@ def test_migrates_to_account_with_slack_and_resends_last_message():
     state.refresh_agents()  # o gancho dispara a migração numa thread
     assert done.wait(5)
     assert calls == [("server0", "p@server0", "/p", "work", "resume", {"restart": True})]
-    assert sent == [
-        ("p@server0", {"type": "user", "message": {"role": "user", "content": "continue daqui"}})
-    ]
+    assert sent == [("p@server0", {"type": "user", "message": {"role": "user", "content": "continue daqui"}})]
     a = next(x for x in state.snapshot()["agents"] if x["label"] == "p@server0")
     assert a["account"] == "work" and a["state"] == "starting" and a["migrated_from"] == "gmail"
     assert m.history[-1]["from"] == "gmail" and m.history[-1]["to"] == "work"

@@ -356,9 +356,7 @@ def test_convert_endpoint(server):
     status, body, _ = req(port, "POST", "/api/agent/convert", {"label": "kaggle@server0"})
     assert status == 200 and body["label"] == "kaggle@server0" and body["how"] == "exit"
     assert calls == [("server0", "kaggle@server0")]
-    assert any(
-        a["label"] == "kaggle@server0" and a.get("kind") == "sdk" for a in state.snapshot()["agents"]
-    )
+    assert any(a["label"] == "kaggle@server0" and a.get("kind") == "sdk" for a in state.snapshot()["agents"])
     # agente da página não é convertível; máquina desconhecida é inválida; falha vira 500
     assert req(port, "POST", "/api/agent/convert", {"label": "proj@laptop"})[0] in (404, 400)
     assert req(port, "POST", "/api/agent/convert", {"label": "x@nope"})[0] == 400
@@ -833,12 +831,7 @@ def test_link_note_texts():
     me = {"label": "a@laptop", "name": "a-laptop"}
     other = {"label": "b@server0", "dir": "/h/b", "host": "server0"}  # sem nome: usa o rótulo saneado
     n = H.link_note(me, other)["message"]["content"]
-    assert (
-        n.startswith("[orq] ")
-        and 'to="b-server0"' in n
-        and 'a "a-laptop"' in n
-        and "/h/b em server0" in n
-    )
+    assert n.startswith("[orq] ") and 'to="b-server0"' in n and 'a "a-laptop"' in n and "/h/b em server0" in n
     rec = {
         "local": "a@laptop",
         "remote": "b@server0",

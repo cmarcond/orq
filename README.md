@@ -1,5 +1,16 @@
 # claude-orq
 
+> **English summary.** Tooling for someone who pays for several Claude accounts
+> and runs many Claude Code agents in parallel across several machines.
+> `claude-multiconta` keeps each account isolated (`CLAUDE_CONFIG_DIR`), with
+> aliases and a usage view across accounts. `orq-web` is a supervisor
+> (`orq-agent`, Claude Code in stream-json behind a Unix socket) plus a web page
+> to watch and drive every agent on every machine: usage, per-host tabs, chat,
+> permission prompts, attachments. `claude-highlevel` is an earlier experiment
+> with tiered agent pipelines (teacher/executor). Python standard library, tests
+> and CI per project. Host names, addresses and accounts in the docs and tests
+> are placeholders. The rest of the documentation is in Portuguese.
+
 Vários Claude Codes, várias contas, várias máquinas, uma página.
 
 | projeto | o que é | CI |
@@ -13,3 +24,7 @@ Vários Claude Codes, várias contas, várias máquinas, uma página.
 Ordem de instalação numa máquina nova: `claude-multiconta/install.sh` (contas e utilitários), depois
 `orq-web/install.sh` (ou `orq-web/deploy.sh` para todas as máquinas). O servidor da página pela rede
 roda em container no server0: `orq-web/deploy/push-server0.sh`.
+
+## Licença
+
+MIT. Veja [LICENSE](LICENSE).

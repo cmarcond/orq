@@ -194,9 +194,7 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
     out, avisos = sets.snapshot(live2, [], cat)
     assert out["lider"] == {"receita": "professor-executor"} and "permissao" not in out
     assert (
-        [a["maquina"] for a in out["agentes"]] == ["server0", "laptop"]
-        and avisos
-        and "permiss" in avisos[0]
+        [a["maquina"] for a in out["agentes"]] == ["server0", "laptop"] and avisos and "permiss" in avisos[0]
     )
     # dois professores: só o primeiro vira líder, com aviso
     live3 = live2 + [agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor")]

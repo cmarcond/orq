@@ -115,9 +115,7 @@ def test_multi_recipe_lists_executors_only_in_bottom_level():
     ]
     (prof,) = P.plan_levels(p, "kaggle@server0", lst)
     assert "- `dados-laptop`: máquina laptop" in prof["role"] and "{executores}" not in prof["role"]
-    assert (
-        "`kaggle-server0` é o principal" in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
-    )
+    assert "`kaggle-server0` é o principal" in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
     # receita de três níveis: só o de baixo recebe a lista; o de cima fica sem o marcador
     arq, top = P.plan_levels(P.get("professor-arquiteto-executor"), "k@laptop", "- `x`")
     assert "{executores}" not in top["role"] and "{executores}" not in arq["role"]

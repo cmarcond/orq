@@ -211,9 +211,7 @@ def test_logout_invalidates_cookie(server):
 def test_token_still_works_and_host_allowlist(server):
     port, _ = server
     assert req(port, "GET", "/api/state", headers={"X-Orq-Token": "tok"})[0] == 200
-    assert (
-        req(port, "GET", "/api/state", headers={"X-Orq-Token": "tok"}, host="10.0.0.10:8765")[0] == 200
-    )
+    assert req(port, "GET", "/api/state", headers={"X-Orq-Token": "tok"}, host="10.0.0.10:8765")[0] == 200
     assert req(port, "GET", "/api/state", headers={"X-Orq-Token": "tok"}, host="evil.example")[0] == 403
     assert req(port, "GET", "/login", host="evil.example")[0] == 403
     status, _, _ = req(port, "POST", "/login", body=b"password=segredo", host="evil.example")
