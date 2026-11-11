@@ -2,7 +2,7 @@
 # generates the password and the container's ssh_config. The port is published only on the ZeroTier IP.
 services:
   orq-web:
-    image: ghcr.io/cmarcond/orq-web:latest   # published by CI; without access to GHCR, the deploy builds locally under this name
+    image: ghcr.io/cmarcond/orq-web:latest   # not published by CI (which only builds and smoke-tests it): deploy.sh tries a pull and, when it fails, builds locally under this name
     build:
       context: ../..
       args: { UID: "${UID:-1000}", GID: "${GID:-1000}", USER: "${USER:-user}" }

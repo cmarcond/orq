@@ -116,8 +116,17 @@ mirror.
 
 **Security.** The `.key` is the socket's credential: it only travels over ssh, is written with mode
 0600 and its name is validated (`<pid>.<hex>.key`); writing or deleting a mirror never touches a card
-that is not a mirror. orq neither reads nor prints the token; the assistant that helped develop this
-could not even copy the files, by policy, and the supervisor itself does everything.
+that is not a mirror. To make a mirror, `orq-agent link` does read each session's `.key` file. On
+the same machine it copies the content into the other account's `sessions/` folder. Between machines
+the content travels inside the ssh connection as a field of a JSON record: the local session's key
+goes on the standard input of `orq-agent peer --mirror`, and the remote session's key comes back in
+the JSON that `orq-agent peer` writes to its standard output on that same connection. The key is not
+stored in the link file and is not sent to the page, and the link does not log it (the one exception:
+an error message quotes the tail of a peer response that failed or could not be parsed). What `orq-web` does not handle at all is
+the account's OAuth token (the Keychain, or `.credentials.json`): no code in `orqweb/` reads it; only
+`usage-all`, in `claude-multiconta`, reads it to query the usage API. The assistant that helped
+develop this could not even copy the key files, by policy, and the supervisor itself does
+everything.
 
 ## 6.5 The server and the page
 

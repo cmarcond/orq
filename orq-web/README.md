@@ -235,8 +235,14 @@ the stream-json of `claude -p`, plus:
 
 ### Security
 
-Server only on `127.0.0.1`, with `Host` checked; `/api` requires the link's token (`X-Orq-Token`,
-or `?t=` in the SSE, which does not accept headers); Content-Security-Policy restricts scripts to `'self'`
+By default the server listens only on `127.0.0.1`. `ORQ_BIND` makes it listen on another address (the
+container uses `0.0.0.0`); in that case it refuses to start unless the password file
+(`ORQ_PASSWORD_FILE`, default `~/.config/orq-web/password`) exists and is not empty. The `Host` header
+is checked: `127.0.0.1`, `localhost`, the bind address and the entries of `ORQ_ALLOWED_HOSTS`. `/api`
+requires the link's token (`X-Orq-Token`, or `?t=` in the SSE, which does not accept headers) or the
+session cookie given by the password login; sessions are kept in memory, so they end when the server
+restarts, and they expire after 30 days without use. A wrong password sleeps 1 s and five failures in
+a row from the same IP block it for 60 s. There is no TLS. Content-Security-Policy restricts scripts to `'self'`
 and to cdnjs; the model's Markdown goes through DOMPurify; `/static` does not accept traversal; the agent's
 socket is `0600`. A file from `_outbox/` goes out with `Content-Security-Policy: sandbox` and `nosniff`, and
 HTML is never served inline (an `.html` written by the agent does not run in the page's origin); only names
@@ -258,7 +264,9 @@ real HTTP server with the supervisor behind the bridge. Unix sockets require sho
 these tests use `/tmp`.
 
 The CI (GitHub Actions) runs ruff and pytest on Python 3.8, 3.11 and 3.12, and the frontend tests
-on Node 22. The supervisor runs on the remote machines, which is why the code stays compatible with 3.8.
+on Node 22; it then builds the Docker image and smoke-tests it (`/login` answers, `/api/state` without
+credentials gives 403). The image is not published to a registry: `deploy/server0/deploy.sh` builds it
+on the target machine. The supervisor runs on the remote machines, which is why the code stays compatible with 3.8.
 
 ## To do
 
