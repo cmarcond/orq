@@ -307,8 +307,8 @@ numa prévia editável e só salva ao confirmar.
 
 ### 5.7 Docs
 
-`docs/04-pagina-orq-web.md` ganha 4.12 "Conjuntos"; `docs/07-referencia.md` as rotas e o esquema do JSON;
-`docs/05-arquitetura.md` a sequência "abrir um conjunto" em 5.5 e `ORQ_SETS_DIR` em 5.4.
+`docs/04-orq-web-page.md` ganha 4.12 "Conjuntos"; `docs/07-reference.md` as rotas e o esquema do JSON;
+`docs/05-architecture.md` a sequência "abrir um conjunto" em 5.5 e `ORQ_SETS_DIR` em 5.4.
 
 Tamanho estimado: ~900 linhas (sets.py ~200, handlers ~150, supervisor ~60, app.js ~200, testes ~300), mais docs.
 Ordem sugerida: supervisor (5.2) → sets.py e rotas sem líder → página → líder e tarefas → snapshot → QA e docs.
