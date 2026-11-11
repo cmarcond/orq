@@ -1,10 +1,10 @@
-"""Os pipelines, lidos de `pipelines/*.toml`.
+"""The pipelines, read from `pipelines/*.toml`.
 
-Um pipeline é dado, não código: acrescentar um nível — professor → arquiteto → executor —
-é escrever um `[[niveis]]` a mais, sem tocar em Python.
+A pipeline is data, not code: adding a level — professor → arquiteto → executor —
+means writing one more `[[niveis]]`, without touching Python.
 
-TOML em vez de YAML (desvio do plano): `tomllib` é biblioteca padrão desde o 3.11, e
-YAML exigiria uma dependência externa que o projeto inteiro não tem.
+TOML instead of YAML (a deviation from the plan): `tomllib` has been in the standard library
+since 3.11, and YAML would require an external dependency that the whole project does not have.
 """
 from __future__ import annotations
 
@@ -29,17 +29,17 @@ class Pipeline:
     bootstrap: str
 
     def nomes(self, tag: str = "") -> list[str]:
-        """Os nomes reais das sessões deste run, com o sufixo que evita colisão entre
-        runs simultâneos."""
+        """The real names of this run's sessions, with the suffix that avoids collisions
+        between simultaneous runs."""
         return [f"{nivel['nome']}{tag}" for nivel in self.niveis]
 
     def montar(self, model: str | None = None, mode: str = "auto",
                tag: str = "") -> list[LevelSpec]:
-        """Os níveis prontos para subir, com {acima} e {abaixo} já resolvidos.
+        """The levels ready to start, with {acima} and {abaixo} already resolved.
 
-        Todos herdam o mesmo modo de permissão por padrão — classes diferentes fazem o
-        Claude Code reter as mensagens entre os níveis, e o pipeline trava antes de
-        começar. O TOML pode sobrepor por nível, para quem souber o que está fazendo.
+        They all inherit the same permission mode by default — different classes make
+        Claude Code hold the messages between the levels, and the pipeline stalls before it
+        starts. The TOML can override it per level, for those who know what they are doing.
         """
         nomes = self.nomes(tag)
         especificacoes = []
@@ -75,10 +75,10 @@ def _ler(caminho: Path) -> Pipeline:
     dados = tomllib.loads(caminho.read_text(encoding="utf-8"))
     niveis = dados.get("niveis") or []
     if not niveis:
-        raise ValueError(f"{caminho.name}: nenhum nível definido")
+        raise ValueError(f"{caminho.name}: no level defined")
     for nivel in niveis:
         if "nome" not in nivel or "papel" not in nivel:
-            raise ValueError(f"{caminho.name}: todo nível precisa de `nome` e `papel`")
+            raise ValueError(f"{caminho.name}: every level needs `nome` and `papel`")
     return Pipeline(
         id=caminho.stem,
         titulo=dados.get("titulo", caminho.stem),
@@ -100,10 +100,10 @@ def pegar(nome: str | None) -> Pipeline:
     disponiveis = catalogo()
     escolhido = nome or PADRAO
     if escolhido not in disponiveis:
-        raise KeyError(f"pipeline desconhecido: {escolhido}")
+        raise KeyError(f"unknown pipeline: {escolhido}")
     return disponiveis[escolhido]
 
 
 def mode_mismatch(levels: list[LevelSpec]) -> set[str]:
-    """Modos distintos entre os níveis — a causa da mensagem retida."""
+    """Distinct modes across the levels — the cause of the held message."""
     return {spec.permission_mode for spec in levels}

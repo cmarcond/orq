@@ -1,4 +1,4 @@
-"""Ciclo de vida de um run: sobe os níveis, junta os eventos, aceita comandos, encerra."""
+"""Life cycle of a run: starts the levels, gathers the events, accepts commands, shuts down."""
 from __future__ import annotations
 
 import json
@@ -17,7 +17,7 @@ from .session import LevelSpec, Session
 from .tailer import Tailer
 
 WATCH_INTERVAL = 1.5
-DRENO = 1.0           # segundos para os tailers lerem o fim do transcript antes de fechar
+DRENO = 1.0           # seconds for the tailers to read the end of the transcript before closing
 
 
 @dataclass
@@ -32,14 +32,14 @@ class Run:
     pipeline: str = ""
 
     sessions: list[Session] = field(default_factory=list)
-    status: str = "novo"          # novo · subindo · rodando · encerrado · erro
+    status: str = "novo"          # novo (new) · subindo (starting) · rodando (running) · encerrado (finished) · erro (error)
     error: str | None = None
     created_at: float = field(default_factory=time.time)
     _tailers: list[Tailer] = field(default_factory=list)
     _watch: threading.Thread | None = None
     _stopping: threading.Event = field(default_factory=threading.Event)
 
-    # ------------------------------------------------------------------ vida
+    # ------------------------------------------------------------------ life
 
     def start_async(self) -> None:
         threading.Thread(target=self._start, name=f"run-{self.id}", daemon=True).start()
@@ -51,23 +51,23 @@ class Run:
                 self.sessions.append(Session(
                     spec=spec, cwd=self.cwd, level=depth,
                     raw_log=self.run_dir / f"pty-{spec.name}.log",
-                    on_gate=lambda s, g: self._level(s, "portão", g.describe),
+                    on_gate=lambda s, g: self._level(s, "gate", g.describe),
                 ))
-            # De baixo para cima: o executor precisa existir quando o professor
-            # chamar ListAgents.
+            # Bottom-up: the executor has to exist by the time the professor
+            # calls ListAgents.
             for session in reversed(self.sessions):
-                self._level(session, "subindo")
+                self._level(session, "starting")
                 session.start()
                 if not session.wait_ready():
-                    raise RuntimeError(f"{session.spec.name} não ficou pronta")
-                self._level(session, "pronta")
+                    raise RuntimeError(f"{session.spec.name} did not become ready")
+                self._level(session, "ready")
                 self._tailers.append(self._tail(session))
 
             self.status = "rodando"
             self.gravar_manifesto()
             top = self.sessions[0]
             top.send_text(self.bootstrap)
-            self._level(top, "tarefa entregue")
+            self._level(top, "task delivered")
             self._watch = threading.Thread(target=self._watch_states, daemon=True)
             self._watch.start()
         except Exception as exc:                       # noqa: BLE001
@@ -96,8 +96,8 @@ class Run:
         ))
 
     def _watch_states(self) -> None:
-        """Publica mudança de estado dos níveis — inclusive bloqueio, que o
-        transcript não registra."""
+        """Publishes state changes of the levels — including a block, which the
+        transcript does not record."""
         last: dict[str, str] = {}
         while not self._stopping.is_set():
             for session in self.sessions:
@@ -115,8 +115,8 @@ class Run:
             self._stopping.wait(WATCH_INTERVAL)
 
     def gravar_manifesto(self) -> None:
-        """`run.json` é o que faz um run encerrado continuar existindo depois que o
-        servidor morre — o `events.ndjson` sozinho não diz nem qual era a tarefa."""
+        """`run.json` is what makes a finished run keep existing after the
+        server dies — `events.ndjson` alone does not even say what the task was."""
         manifesto = {
             "id": self.id,
             "cwd": str(self.cwd),
@@ -134,9 +134,9 @@ class Run:
 
     def stop(self) -> None:
         self._stopping.set()
-        # Derruba as sessões primeiro e só então os tailers, com uma última passada:
-        # parar de ler antes de parar de escrever perde o fim do transcript — em geral
-        # justamente a última mensagem trocada entre os níveis.
+        # Takes the sessions down first and only then the tailers, with one last pass:
+        # stopping reading before writing stops loses the end of the transcript — usually
+        # precisely the last message exchanged between the levels.
         for session in self.sessions:
             session.stop()
         time.sleep(DRENO)
@@ -148,7 +148,7 @@ class Run:
         self.bus.publish(Event("level", {"name": self.id, "state": self.status}, _now(), 0, "run"))
         self.bus.close()
 
-    # --------------------------------------------------------------- comandos
+    # --------------------------------------------------------------- commands
 
     def session_by_name(self, name: str | None) -> Session:
         if not name:
@@ -156,7 +156,7 @@ class Run:
         for session in self.sessions:
             if name in (session.spec.name, session.spec.name.rsplit("-", 1)[0]):
                 return session
-        raise KeyError(f"nível desconhecido: {name}")
+        raise KeyError(f"unknown level: {name}")
 
     def send(self, to: str | None, text: str) -> str:
         session = self.session_by_name(to)
@@ -169,15 +169,15 @@ class Run:
         return session.spec.name
 
     def allow(self, to: str | None) -> str:
-        """Libera o nível travado usando a tecla certa para o diálogo que está na tela."""
+        """Unblocks the stuck level using the right key for the dialog that is on screen."""
         session = self.session_by_name(to)
         block = session.blocked_on()
         if block is None:
-            raise RuntimeError(f"{session.spec.name} não está bloqueada")
+            raise RuntimeError(f"{session.spec.name} is not blocked")
         session.send_keys(block.keys_to_allow)
         return session.spec.name
 
-    # ----------------------------------------------------------------- estado
+    # ------------------------------------------------------------------ state
 
     def pty(self, nome: str, linhas: int = 200) -> list[str]:
         session = self.session_by_name(nome)
@@ -211,7 +211,7 @@ class Run:
 
 
 def ler_pty(caminho: Path, linhas: int = 200) -> list[str]:
-    """As últimas linhas do terminal cru de um nível."""
+    """The last lines of a level's raw terminal."""
     if not caminho.exists():
         return []
     with caminho.open("rb") as fh:
@@ -221,7 +221,7 @@ def ler_pty(caminho: Path, linhas: int = 200) -> list[str]:
 
 
 class Registry:
-    """Os runs desta instância do servidor."""
+    """The runs of this server instance."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -250,14 +250,14 @@ class Registry:
         return run
 
     def get(self, run_id: str) -> Run:
-        """O run vivo. Levanta KeyError se ele só existe em disco — comandar um run
-        encerrado não faz sentido, e o erro precisa dizer isso."""
+        """The live run. Raises KeyError if it exists only on disk — commanding a
+        finished run makes no sense, and the error has to say so."""
         with self._lock:
             if run_id not in self._runs:
                 raise KeyError(run_id)
             return self._runs[run_id]
 
-    # ------------------------------------------------------- vivos e arquivados
+    # -------------------------------------------------------- live and archived
 
     def _manifesto(self, run_id: str) -> dict[str, Any] | None:
         caminho = self.root / run_id / "run.json"
@@ -273,11 +273,11 @@ class Registry:
         return dados
 
     def _manifesto_dos_eventos(self, run_id: str) -> dict[str, Any] | None:
-        """Run antigo, sem manifesto: o que dá para saber vem dos próprios eventos."""
+        """Old run, with no manifest: what can be known comes from the events themselves."""
         caminho = self.root / run_id / "events.ndjson"
         if not caminho.is_file():
             return None
-        tarefa, niveis = "(tarefa não registrada)", {}
+        tarefa, niveis = "(task not recorded)", {}
         for linha in caminho.read_text(encoding="utf-8").splitlines():
             if not linha.strip():
                 continue

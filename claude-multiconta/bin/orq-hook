@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Hook do orq. Em cada evento do agente:
-  - grava o estado em $ORQ_STATE/state.json (lido pelo `orq --status-json` e pela página web);
-  - quando ele para ou pede algo, manda uma notificação do iTerm2 (OSC 9) pelo terminal do painel.
+"""The orq hook. On each agent event:
+  - writes the state to $ORQ_STATE/state.json (read by `orq --status-json` and by the web page);
+  - when the agent stops or asks for something, sends an iTerm2 notification (OSC 9) through the pane's terminal.
 
-Só age em sessões abertas pelo orq-run, que define:
-  ORQ_TTY    terminal do painel (os hooks rodam sem terminal próprio)
-  ORQ_DEPTH  quantas camadas de tmux o aviso precisa atravessar até o iTerm2
-  ORQ_LABEL  nome curto do projeto, ex.: myproject@server0
-  ORQ_STATE  pasta de estado deste painel
+It only acts in sessions opened by orq-run, which sets:
+  ORQ_TTY    the pane's terminal (hooks run without a terminal of their own)
+  ORQ_DEPTH  how many tmux layers the alert has to cross to reach iTerm2
+  ORQ_LABEL  short name of the project, e.g.: myproject@server0
+  ORQ_STATE  state folder of this pane
 """
 import json, os, sys, time
 
@@ -20,19 +20,19 @@ except Exception:
 label = os.environ["ORQ_LABEL"]
 name = ev.get("hook_event_name")
 
-STATES = {   # evento -> (estado, mensagem do alerta ou None)
+STATES = {   # event -> (state, alert message or None)
     "SessionStart":     ("waiting", None),
     "UserPromptSubmit": ("working", None),
-    "Stop":             ("waiting", "terminou, sua vez"),
-    "Notification":     ("permission", ev.get("message") or "precisa de você"),
-    "StopFailure":      ("error", "parou com erro (cota?). /exit troca de conta"),
+    "Stop":             ("waiting", "finished, your turn"),
+    "Notification":     ("permission", ev.get("message") or "needs you"),
+    "StopFailure":      ("error", "stopped with an error (quota?). /exit switches account"),
     "SessionEnd":       ("closed", None),
 }
 if name not in STATES:
     sys.exit(0)
 state, alert = STATES[name]
 if name == "Notification" and "waiting for your input" in (ev.get("message") or ""):
-    state = "waiting"           # aviso de ociosidade, não pedido de permissão
+    state = "waiting"           # idle notice, not a permission request
 
 sd = os.environ.get("ORQ_STATE")
 if sd:
@@ -53,7 +53,7 @@ tty = os.environ.get("ORQ_TTY")
 if alert and tty:
     msg = f"{label}: {alert}".replace("\x07", " ").replace("\x1b", " ")[:200]
     seq = f"\x1b]9;{msg}\x07"
-    for _ in range(int(os.environ.get("ORQ_DEPTH", "0") or 0)):   # passthrough de cada tmux
+    for _ in range(int(os.environ.get("ORQ_DEPTH", "0") or 0)):   # passthrough for each tmux layer
         seq = "\x1bPtmux;" + seq.replace("\x1b", "\x1b\x1b") + "\x1b\\"
     try:
         with open(tty, "w") as t:

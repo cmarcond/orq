@@ -1,15 +1,16 @@
-"""JSONL cru → eventos com significado.
+"""Raw JSONL → events with meaning.
 
-O transcript já separa fala do modelo, mensagem de peer e tool call, então o viewer
-não precisa de nenhum regex sobre saída de terminal. Cada evento sabe para qual painel
-da interface ele vai.
+The transcript already separates model speech, peer messages and tool calls, so the viewer
+needs no regex over terminal output. Each event knows which panel of the interface
+it goes to.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-# painéis: palco (a narração limpa), fios (a conversa entre níveis), bastidores (o resto)
+# panels: palco (stage: the clean narration), fios (wires: the conversation between levels),
+# bastidores (backstage: the rest)
 LANE = {
     "narration": "palco",
     "prompt": "palco",
@@ -20,7 +21,7 @@ LANE = {
     "thinking": "bastidores",
     "status": "bastidores",
     "cost": "bastidores",
-    "level": "niveis",      # estado do próprio nível: sobe do orquestrador, não do JSONL
+    "level": "niveis",      # state of the level itself: comes from the orchestrator, not the JSONL
 }
 
 _ARG_HINT = ("command", "file_path", "path", "pattern", "query", "url", "prompt")
@@ -56,7 +57,7 @@ def _brief(name: str, args: dict[str, Any]) -> str:
 
 
 def _blocks(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """Os blocos de conteúdo da mensagem. `content` também pode ser string crua."""
+    """The content blocks of the message. `content` can also be a raw string."""
     content = record.get("message", {}).get("content")
     if not isinstance(content, list):
         return []
@@ -94,7 +95,7 @@ def normalize(record: dict[str, Any]) -> Iterator[Event]:
     if kind == "user":
         origin = record.get("origin") or {}
         if origin.get("kind") == "peer":
-            # origin.body já vem sem o texto de embrulho que o Claude recebe.
+            # origin.body already comes without the wrapper text that Claude receives.
             yield Event("wire_in", {
                 "from": origin.get("name", "peer"),
                 "body": origin.get("body", ""),

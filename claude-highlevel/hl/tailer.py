@@ -1,4 +1,4 @@
-"""Segue o transcript JSONL de uma sessão e entrega registro por registro."""
+"""Follows a session's JSONL transcript and delivers it record by record."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from . import config
 
 
 class Tailer(threading.Thread):
-    """`tail -F` de um JSONL, tolerante a arquivo ainda inexistente e linha parcial."""
+    """`tail -F` of a JSONL, tolerant of a file that does not exist yet and of a partial line."""
 
     def __init__(
         self,
@@ -48,7 +48,7 @@ class Tailer(threading.Thread):
             except FileNotFoundError:
                 self.path = None
                 continue
-            if size < self.offset:      # truncado/reescrito: recomeça
+            if size < self.offset:      # truncated/rewritten: start over
                 self.offset, self._pending = 0, b""
             if size > self.offset:
                 self._drain(size)
@@ -68,5 +68,5 @@ class Tailer(threading.Thread):
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                continue            # linha ainda sendo escrita; vem completa depois
+                continue            # line still being written; it comes complete later
             self.on_record(record)

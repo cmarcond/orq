@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Uso do Codex (OpenAI) direto na API, ~1 s. Lê o token do Codex CLI em ~/.codex/auth.json.
-O token nunca é impresso.
+"""Codex (OpenAI) usage straight from the API, ~1 s. Reads the Codex CLI token in ~/.codex/auth.json.
+The token is never printed.
 
-Uso: codex-usage-fast [-v|--verbose]
-  padrão        resumido: uma linha; por janela, % usado, mini-barra com marcador de ritmo e tempo até o reset.
-  -v, --verbose completo: barra por janela, marcador de ritmo e horário do reset.
+Usage: codex-usage-fast [-v|--verbose]
+  default       brief: one line; per window, % used, mini-bar with pace marker and time until the reset.
+  -v, --verbose full: a bar per window, pace marker and reset time.
 """
 import json, os, sys, urllib.request, datetime, pathlib
 
@@ -23,7 +23,7 @@ def _tz():
             name = json.loads(conf.read_text()).get("timezone") or name
         return zoneinfo.ZoneInfo(name)
     except Exception:
-        return None   # fuso local
+        return None   # local time zone
 TZ = _tz()
 AUTH = pathlib.Path.home() / ".codex/auth.json"
 
@@ -34,9 +34,9 @@ try:
     auth = json.loads(AUTH.read_text())
     t = auth["tokens"]
 except Exception as e:
-    if JSON: print(json.dumps({"err": "sem login. Rode: codex-login"})); sys.exit(0)
-    if BRIEF: print(f"{'Codex':<10} ✗ sem login. Rode: codex-login")
-    else:     print(f"\n📊 Codex\n   ✗ sem login ({AUTH} não existe). Rode: codex-login\n")
+    if JSON: print(json.dumps({"err": "not logged in. Run: codex-login"})); sys.exit(0)
+    if BRIEF: print(f"{'Codex':<10} ✗ not logged in. Run: codex-login")
+    else:     print(f"\n📊 Codex\n   ✗ not logged in ({AUTH} does not exist). Run: codex-login\n")
     sys.exit(2)
 
 req = urllib.request.Request(
@@ -49,17 +49,17 @@ try:
         d = json.load(resp)
 except urllib.error.HTTPError as e:
     if e.code in (401, 403):
-        die("Token do Codex expirado ou inválido. Abra o `codex` uma vez (ele renova) ou rode `codex-login`.")
-    die(f"API respondeu {e.code}: {e.read().decode()[:300]}")
+        die("Codex token expired or invalid. Open `codex` once (it renews the token) or run `codex-login`.")
+    die(f"API answered {e.code}: {e.read().decode()[:300]}")
 
 
-# ---- barra com marcador de ritmo (estilo CodexBar) ----------------------
+# ---- bar with pace marker (CodexBar style) ------------------------------
 BAR_W = 20
 COLOR = sys.stdout.isatty()
 def c(code, s): return f"\033[{code}m{s}\033[0m" if COLOR else s
 
 def bar(p, pace=None):
-    """p = % usado; pace = % da janela já decorrida (onde a barra 'deveria' estar)."""
+    """p = % used; pace = % of the window already elapsed (where the bar 'should' be)."""
     p = max(0.0, min(100.0, float(p or 0)))
     n = int(round(p / 100 * BAR_W))
     cells = ["█"] * n + ["░"] * (BAR_W - n)
@@ -69,13 +69,13 @@ def bar(p, pace=None):
     return "".join(cells)
 
 def pace_info(p, pace):
-    """Texto do desvio em relação ao ritmo esperado."""
+    """Text for the deviation from the expected pace."""
     if pace is None: return ""
     d = (p or 0) - pace
-    if abs(d) < 3:  s = c("32", "no ritmo")
-    elif d > 0:     s = c("31" if d >= 15 else "33", f"▲{d:+.0f} acima do ritmo")
-    else:           s = c("32", f"▼{d:+.0f} abaixo do ritmo")
-    return f"  ritmo {pace:3.0f}% ({s})"
+    if abs(d) < 3:  s = c("32", "on pace")
+    elif d > 0:     s = c("31" if d >= 15 else "33", f"▲{d:+.0f} above pace")
+    else:           s = c("32", f"▼{d:+.0f} below pace")
+    return f"  pace {pace:3.0f}% ({s})"
 
 def pace_for(w):
     win = w.get("limit_window_seconds") or 0
@@ -90,8 +90,8 @@ def fmt_reset(ts):
     return datetime.datetime.fromtimestamp(ts, TZ).strftime("%d/%m %H:%M")
 
 def fmt_left(secs, win=None):
-    """Tempo até o reset, largura fixa: 00h45, 04h45, 6d03h.
-    Janela não iniciada: a duração cheia (win) em cinza, pois o relógio só começa no primeiro uso."""
+    """Time until the reset, fixed width: 00h45, 04h45, 6d03h.
+    Window not started: the full duration (win) in grey, since the clock only starts on first use."""
     if secs is None: return c("2", fmt_left(win)) if win else "  —  "
     secs = max(0, int(secs)); d, r = divmod(secs, 86400); h, m = divmod(r // 60, 60)
     return f"{d}d{h:02d}h" if d else f"{h:02d}h{m:02d}"
@@ -103,20 +103,20 @@ def left_w(w):
     return rem
 
 LABEL_W, CELL_BAR, SEP = 10, 10, "  "
-LEGEND = ["█ usado  ┃ ritmo (quanto da janela já passou)  à direita: falta até o reset",
-          "verde = abaixo do ritmo · amarelo = acima · vermelho = 15+ pontos acima"]
+LEGEND = ["█ used  ┃ pace (how much of the window has passed)  on the right: time left until the reset",
+          "green = below pace · yellow = above · red = 15+ points above"]
 def print_legend():
     if os.environ.get("USAGE_NO_LEGEND"): return
     for l in LEGEND: print(c("2", l))
 
 def print_header(titles):
-    """Nome das janelas centrado sobre cada coluna (dim)."""
+    """Window names centred over each column (dim)."""
     if os.environ.get("USAGE_NO_LEGEND") or not titles: return
     print(c("2", (" " * (LABEL_W + 1) + SEP.join(f"{t:^{CELL_BAR + 11}}" for t in titles)).rstrip()))
 
 def cell(p, pace, secs, win):
-    """Uma janela do resumo, 21 colunas: ' 32% ███████┃░░ 2d02h'.
-    Barra = usado (verde/amarelo/vermelho pelo desvio do ritmo); ┃ = ritmo; depois, falta até o reset."""
+    """One window of the brief view, 21 columns: ' 32% ███████┃░░ 2d02h'.
+    Bar = used (green/yellow/red by the deviation from the pace); ┃ = pace; then, time left until the reset."""
     pi = int(round(p))
     n = int(round(max(0.0, min(100.0, float(p))) / 100 * CELL_BAR))
     col = None
@@ -126,12 +126,12 @@ def cell(p, pace, secs, win):
     cells = [c(col, "█") if col else "█"] * n + [c("2", "░")] * (CELL_BAR - n)
     if pace is not None:
         i = min(CELL_BAR - 1, int(pace / 100 * CELL_BAR))
-        cells[i] = c(f"1;{col}", "┃") if i < n else c("1", "┃")   # dentro da barra: entalhe na cor dela
+        cells[i] = c(f"1;{col}", "┃") if i < n else c("1", "┃")   # inside the bar: a notch in the bar's colour
     pct = f"{pi:3d}%"
     return f"{c(col, pct) if col else pct} {''.join(cells)} {fmt_left(secs, win)}"
 
 def brief_pace(secs, win):
-    """% da janela decorrida para o brief: 0 se a janela nem começou; None se o dado está vencido."""
+    """% of the window elapsed, for the brief view: 0 if the window has not even started; None if the data is stale."""
     if secs is None or (win and secs > win): return 0.0
     if secs <= 0 or not win: return None
     return 100 * (1 - secs / win)
@@ -142,7 +142,7 @@ def brief_name(w):
 
 def win_name(w):
     h = (w.get("limit_window_seconds") or 0) // 3600
-    return f"⏱  Sessão {h}h" if h < 48 else f"📅 Semanal {h // 24}d (todos)"
+    return f"⏱  Session {h}h" if h < 48 else f"📅 Weekly {h // 24}d (all)"
 
 rl = d.get("rate_limit") or {}
 if JSON:
@@ -164,27 +164,27 @@ if BRIEF:
         secs, win = left_w(w), w.get("limit_window_seconds")
         cells.append(cell(p, brief_pace(secs, win), secs, win))
         h = (win or 0) // 3600
-        titles.append(f"sessão {h}h" if h < 48 else f"semana {h // 24}d")
-    if rl.get("limit_reached"): cells.append(c("31", "⚠️ limite atingido"))
+        titles.append(f"session {h}h" if h < 48 else f"week {h // 24}d")
+    if rl.get("limit_reached"): cells.append(c("31", "⚠️ limit reached"))
     print_legend(); print_header(titles)
     print(f"{'Codex':<{LABEL_W}} " + SEP.join(cells))
     sys.exit(0)
 
 now = datetime.datetime.now(TZ).strftime("%d/%m %H:%M")
 plan = (d.get("plan_type") or "?").capitalize()
-print(f"\n📊 Codex — {d.get('email', '?')} (plano {plan}) — {now}   (┃ = onde a barra deveria estar para ficar no ritmo)\n")
+print(f"\n📊 Codex — {d.get('email', '?')} ({plan} plan) — {now}   (┃ = where the bar should be to stay on pace)\n")
 for key in ("primary_window", "secondary_window"):
     w = rl.get(key)
     if not w: continue
     p = w.get("used_percent") or 0
     pace = pace_for(w)
-    print(f"{win_name(w):<22} {p:>3.0f}% [{bar(p, pace)}]  reseta {fmt_reset(w.get('reset_at'))}{pace_info(p, pace)}")
+    print(f"{win_name(w):<22} {p:>3.0f}% [{bar(p, pace)}]  resets {fmt_reset(w.get('reset_at'))}{pace_info(p, pace)}")
 if rl.get("limit_reached"):
-    print("\n⚠️  Limite atingido.")
+    print("\n⚠️  Limit reached.")
 cr = d.get("credits") or {}
 if cr.get("has_credits"):
-    print(f"\n💳 Créditos extras: {cr.get('balance')}")
+    print(f"\n💳 Extra credits: {cr.get('balance')}")
 rc = d.get("rate_limit_reset_credits") or {}
 if rc.get("available_count"):
-    print(f"🔄 Resets de limite disponíveis: {rc['available_count']}")
+    print(f"🔄 Limit resets available: {rc['available_count']}")
 print()

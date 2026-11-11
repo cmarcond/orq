@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Mostra qual conta está em cada diretório de config e qual o `claude` puro abre.
-Usa `claude auth status` (JSON) por conta; não imprime tokens."""
+"""Shows which account is in each config directory and which one plain `claude` opens.
+Uses `claude auth status` (JSON) per account; it does not print tokens."""
 import json, os, sys, subprocess, pathlib, shutil
 
 CONF = pathlib.Path(os.environ.get("CLAUDE_MULTICONTA_CONF",
@@ -8,7 +8,7 @@ CONF = pathlib.Path(os.environ.get("CLAUDE_MULTICONTA_CONF",
 try:
     conf = json.loads(CONF.read_text())
 except Exception as e:
-    sys.exit(f"Não consegui ler {CONF} ({e}). Rode o install.sh do claude-multiconta.")
+    sys.exit(f"Could not read {CONF} ({e}). Run the claude-multiconta install.sh.")
 
 bin_ = shutil.which("claude") or str(pathlib.Path.home() / ".local/bin/claude")
 default = conf.get("default_account")
@@ -28,9 +28,9 @@ for a in conf["accounts"]:
         who = f"{st.get('email','?')}  ({st.get('subscriptionType','?')}, {st.get('orgName','?')})"
         ok = "✓"
     else:
-        who = f"deslogado — rode claude-{a['name']}-login"
+        who = f"logged out — run claude-{a['name']}-login"
         ok = "✗"
-    mark = "  ← `claude` puro" if a["name"] == default else ""
+    mark = "  ← plain `claude`" if a["name"] == default else ""
     rows.append((f"claude-{a['name']}", d.replace(str(pathlib.Path.home()), "~"), ok, who + mark))
 w = max(len(r[0]) for r in rows)
 print()

@@ -1,7 +1,7 @@
-"""O fluxo de eventos de um run: numeração, histórico e fan-out.
+"""The event stream of a run: numbering, history and fan-out.
 
-Todo evento recebe um `seq` monotônico. É ele que permite reconectar sem furo nem
-repetição: quem volta diz o último `seq` que viu e recebe só o que perdeu.
+Every event gets a monotonic `seq`. That is what allows reconnecting with no gap and
+no repetition: whoever comes back says the last `seq` it saw and receives only what it missed.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class Bus:
         self._seq = 0
         self._sink = ndjson.open("a", encoding="utf-8") if ndjson else None
 
-    # ------------------------------------------------------------- publicar
+    # -------------------------------------------------------------- publish
 
     def publish(self, event: Event) -> dict[str, Any]:
         with self._lock:
@@ -42,7 +42,7 @@ class Bus:
             sub.put(data)
         return data
 
-    # ------------------------------------------------------------- consumir
+    # -------------------------------------------------------------- consume
 
     def since(self, seq: int) -> list[dict[str, Any]]:
         with self._lock:
@@ -54,10 +54,10 @@ class Bus:
             return self._seq
 
     def subscribe(self, since: int = 0) -> tuple[queue.Queue, list[dict[str, Any]]]:
-        """Inscreve e devolve, atomicamente, o atraso a repor e a fila do que vier.
+        """Subscribes and returns, atomically, the backlog to replay and the queue of what comes next.
 
-        Fazer as duas coisas sob o mesmo lock é o que garante que nenhum evento caia
-        no vão entre "ler o histórico" e "começar a escutar".
+        Doing both under the same lock is what guarantees that no event falls into
+        the gap between "reading the history" and "starting to listen".
         """
         sub: queue.Queue = queue.Queue()
         with self._lock:

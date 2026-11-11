@@ -1,119 +1,121 @@
 # HighLevel
 
-Rodar, assistir e conversar com um **pipeline de Claude Codes em múltiplos níveis de
-abstração**. O nível de cima traduz; os de baixo trabalham.
+Run, watch and talk to a **pipeline of Claude Codes at several levels of abstraction**.
+The top level translates; the lower ones do the work.
 
 ```
-       VOCÊ (navegador)
+       YOU (browser)
             │  chat
             ▼
-   nível 1: professor    interface + narração, nunca executa a tarefa
-            │  SendMessage / ListAgents   (canal nativo do Claude Code)
+   level 1: professor    interface + narration, never does the task
+            │  SendMessage / ListAgents   (Claude Code's native channel)
             ▼
-   nível 2: executor     faz o trabalho, reporta só marcos
+   level 2: executor     does the work, reports milestones only
 ```
 
-A ideia não é nova aqui: são duas sessões Claude Code conversando pelo canal que elas já
-têm. O que este projeto resolve é o resto — em vez de três janelas de Terminal e um
-`tail -f | jq`, uma tela só, com a fala limpa do professor no centro e a conversa entre
-os níveis do lado.
+The idea is not new here: it is two Claude Code sessions talking over the channel they
+already have. What this project solves is the rest — instead of three Terminal windows
+and a `tail -f | jq`, a single screen, with the professor's clean speech in the center
+and the conversation between the levels on the side.
 
-**Sem dependência externa.** Só a biblioteca padrão do Python 3.11+ e o `claude` no PATH.
+**No external dependency.** Only the Python 3.11+ standard library and `claude` on the
+PATH.
 
-## Começando
+## Getting started
 
 ```bash
-python3 -m hl serve            # abre em http://127.0.0.1:7333
+python3 -m hl serve            # opens at http://127.0.0.1:7333
 ```
 
-Ou, sem navegador:
+Or, without a browser:
 
 ```bash
 python3 -m hl run \
   --cwd /private/tmp/demo \
-  --task "Crie um hello.py que recebe um nome e imprime 'Olá, <nome>!', com 3 testes." \
+  --task "Create a hello.py that takes a name and prints 'Hello, <name>!', with 3 tests." \
   --show fios
 ```
 
 ```bash
-python3 -m hl pipelines        # as receitas disponíveis
+python3 -m hl pipelines        # the available recipes
 ```
 
-## A tela
+## The screen
 
-| painel | o que mostra |
+| panel | what it shows |
 |---|---|
-| **níveis** | um cartão por nível, com cor própria e estado: ocioso, trabalhando, **bloqueado**, morto. Clicar abre o terminal cru daquele nível |
-| **palco** | só a narração do nível de cima. Sem tool call, sem thinking, sem a fala dos níveis de baixo |
-| **fios** | as mensagens entre os níveis; a mesma mensagem aparece uma vez e a segunda vira "entregue" |
-| **compositor** | fala com o nível que você escolher — por padrão, o de cima |
+| **levels** | one card per level, with its own color and state: idle, working, **blocked**, dead. Clicking opens the raw terminal of that level |
+| **stage** | only the narration of the top level. No tool call, no thinking, nothing said by the lower levels |
+| **wires** | the messages between the levels; the same message appears once and the second copy becomes "delivered" |
+| **composer** | talks to the level you choose — by default, the top one |
 
-Quando um nível trava pedindo permissão, o cartão fica vermelho com as opções reais do
-diálogo, e um clique responde. Isso importa porque **o transcript não registra esse
-estado**: o `tool_use` já foi gravado, o `tool_result` nunca chega, e a sessão fica em
-silêncio. Quem sabe é o terminal — por isso o PTY continua sendo capturado mesmo com o
-JSONL sendo a fonte da verdade.
+When a level gets stuck asking for permission, the card turns red with the real options
+of the dialog, and one click answers. This matters because **the transcript does not
+record this state**: the `tool_use` has already been written, the `tool_result` never
+arrives, and the session goes silent. The one that knows is the terminal — that is why
+the PTY keeps being captured even though the JSONL is the source of truth.
 
-## Pipelines são dados
+## Pipelines are data
 
-Cada receita é um `.toml` em `pipelines/`. Acrescentar um nível é escrever um
-`[[niveis]]` a mais — nada de Python:
+Each recipe is a `.toml` in `pipelines/`. Adding a level means writing one more
+`[[niveis]]` — no Python:
 
 ```toml
 [[niveis]]
 nome = "arquiteto"
 cor = "35"
 papel = """
-Você é o ARQUITETO… Acima está `{acima}`, abaixo está `{abaixo}`.
+You are the ARCHITECT… Above you is `{acima}`, below is `{abaixo}`.
 """
 ```
 
-`{acima}` e `{abaixo}` viram os nomes reais das sessões vizinhas, já com o sufixo do run
-(`arquiteto-a3f1`) — é o que deixa dois runs rodarem ao mesmo tempo sem disputar nomes.
+`{acima}` and `{abaixo}` become the real names of the neighboring sessions, already with
+the run suffix (`arquiteto-a3f1`) — that is what lets two runs go at the same time
+without fighting over names.
 
-Acompanham o projeto `professor-executor` e `professor-arquiteto-executor`.
+The project ships with `professor-executor` and `professor-arquiteto-executor`.
 
-## Modo de permissão
+## Permission mode
 
-É escolha do **run**, não do nível. Níveis em classes de permissão diferentes fazem o
-Claude Code **reter** a mensagem de um para o outro esperando revisão humana, e o
-pipeline trava antes de começar.
+It is a choice of the **run**, not of the level. Levels in different permission classes
+make Claude Code **hold** the message from one to the other waiting for human review, and
+the pipeline stalls before it starts.
 
-- `auto` — resolve os pedidos comuns sozinho (padrão, e o que faz o pipeline andar)
-- `acceptEdits` — aceita edições, pergunta o resto
-- `manual` — pergunta tudo; útil para ver o bloqueio funcionando
-- `bypassPermissions` — não pergunta nada
+- `auto` — resolves the common requests by itself (the default, and what keeps the pipeline moving)
+- `acceptEdits` — accepts edits, asks about the rest
+- `manual` — asks about everything; useful to see the blocking at work
+- `bypassPermissions` — asks nothing
 
-O executor escreve no diretório de trabalho que você escolher. Escolha um diretório
-descartável enquanto estiver experimentando.
+The executor writes in the working directory you choose. Choose a throwaway directory
+while you are experimenting.
 
-## Como funciona por dentro
+## How it works inside
 
-Cada nível é uma sessão Claude Code interativa num PTY que o app controla:
+Each level is an interactive Claude Code session in a PTY that the app controls:
 
 ```
-claude -n <nome>-<tag> --session-id <uuid> --permission-mode <modo> \
-       --append-system-prompt <papel do nível>
+claude -n <name>-<tag> --session-id <uuid> --permission-mode <mode> \
+       --append-system-prompt <the level's role>
 ```
 
-Como nós escolhemos o `--session-id`, sabemos o caminho do transcript antes do processo
-subir: `~/.claude/projects/<chave do cwd>/<uuid>.jsonl`. Um tailer segue esse arquivo e
-um normalizador transforma cada registro em evento — `narration`, `wire_out`, `wire_in`,
-`activity`, `prompt` — que o navegador recebe por SSE.
+Since we choose the `--session-id`, we know the path of the transcript before the process
+starts: `~/.claude/projects/<cwd key>/<uuid>.jsonl`. A tailer follows that file and a
+normalizer turns each record into an event — `narration`, `wire_out`, `wire_in`,
+`activity`, `prompt` — which the browser receives over SSE.
 
-## Testes
+## Tests
 
 ```bash
-python3 -m pytest -m "not slow"    # rápido, sem subir sessão
-python3 -m pytest -m slow -s       # ponta a ponta: minutos e tokens de verdade
+python3 -m pytest -m "not slow"    # fast, starts no session
+python3 -m pytest -m slow -s       # end to end: real minutes and tokens
 ```
 
-## Onde ficam as coisas
+## Where things live
 
 ```
-hl/          o código: sessão em PTY, portões, tailer, eventos, servidor
-web/         a interface (HTML, CSS e JS puro, sem build)
-pipelines/   as receitas .toml
-runs/<id>/   por run: run.json, events.ndjson e o PTY cru de cada nível
-docs/        ARQUITETURA.md e PLANO.md
+hl/          the code: session in a PTY, gates, tailer, events, server
+web/         the interface (plain HTML, CSS and JS, no build)
+pipelines/   the .toml recipes
+runs/<id>/   per run: run.json, events.ndjson and the raw PTY of each level
+docs/        ARCHITECTURE.md and PLAN.md
 ```
