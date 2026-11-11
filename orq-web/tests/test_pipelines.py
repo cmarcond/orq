@@ -1,4 +1,4 @@
-"""Receitas de níveis: leitura do TOML (tomllib e leitor mínimo), rótulos e plano de subida."""
+"""Level recipes: reading the TOML (tomllib and minimal reader), labels and plan for adding levels."""
 
 import sys
 
@@ -7,21 +7,21 @@ import pytest
 from orqweb.server import pipelines as P
 
 SAMPLE = '''
-titulo = "a → b"   # comentário
+titulo = "a → b"   # comment
 descricao = 'simples'
 
-# comentário solto
+# stray comment
 [[niveis]]
 nome = "chefe"
 cor = "#123456"
 papel = """
-Você manda em `{abaixo}`.
-Linha com "aspas" e barra \\\\ no meio.
+You are in charge of `{abaixo}`.
+Line with "quotes" and a backslash \\\\ in the middle.
 """
 
 [[niveis]]
 nome = "meio"
-papel = """Acima `{acima}`, abaixo `{abaixo}`."""
+papel = """Above `{acima}`, below `{abaixo}`."""
 '''
 
 
@@ -29,13 +29,15 @@ def test_minimal_reader_covers_the_subset():
     d = P._parse_minimal(SAMPLE)
     assert d["titulo"] == "a → b" and d["descricao"] == "simples"
     assert [n["nome"] for n in d["niveis"]] == ["chefe", "meio"]
-    assert d["niveis"][0]["papel"] == 'Você manda em `{abaixo}`.\nLinha com "aspas" e barra \\ no meio.\n'
-    assert d["niveis"][1]["papel"] == "Acima `{acima}`, abaixo `{abaixo}`."
+    assert d["niveis"][0]["papel"] == (
+        'You are in charge of `{abaixo}`.\nLine with "quotes" and a backslash \\ in the middle.\n'
+    )
+    assert d["niveis"][1]["papel"] == "Above `{acima}`, below `{abaixo}`."
     with pytest.raises(ValueError):
-        P._parse_minimal("x = 1")  # número não é suportado (e não é usado)
+        P._parse_minimal("x = 1")  # a number is not supported (and is not used)
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="tomllib só no 3.11+")
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="tomllib only on 3.11+")
 def test_minimal_reader_matches_tomllib_on_shipped_recipes():
     import tomllib
 
@@ -79,12 +81,12 @@ def test_plan_levels_resolves_neighbors_with_session_names():
     arq, prof = plan
     assert arq["parent"] == "kaggle@server0" and prof["parent"] == "kaggle~arquiteto@server0"
     assert arq["level"] == "arquiteto" and prof["level"] == "professor"
-    # os vizinhos entram com o nome de sessão (sem @), que é o que o SendMessage aceita
+    # the neighbours go in with the session name (without @), which is what SendMessage accepts
     assert "`kaggle-server0`" in arq["role"] and "`kaggle-professor-server0`" in arq["role"]
     assert "`kaggle-arquiteto-server0`" in prof["role"]
     assert "{abaixo}" not in prof["role"] and "{acima}" not in arq["role"]
     assert "{eu}" not in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
-    assert "`kaggle-arquiteto-server0`" in arq["role"]  # {eu} do arquiteto
+    assert "`kaggle-arquiteto-server0`" in arq["role"]  # the architect's {eu}
     assert "@" not in arq["role"].split("`")[1]
     assert prof["color"] == "#2b6cb0"
 
@@ -107,15 +109,15 @@ def test_multi_recipe_lists_executors_only_in_bottom_level():
     base = {"label": "kaggle@server0", "name": "kaggle-server0", "host": "server0", "dir": "/h/k"}
     others = [
         {"label": "dados@laptop", "host": "laptop", "dir": "/Users/c/dados"}
-    ]  # sem nome: rótulo saneado
+    ]  # no name: sanitised label
     lst = P.executors_list(base, others)
     assert lst.splitlines() == [
-        "- `kaggle-server0` (o da aba): máquina server0, pasta /h/k",
-        "- `dados-laptop`: máquina laptop, pasta /Users/c/dados",
+        "- `kaggle-server0` (the one in the tab): machine server0, folder /h/k",
+        "- `dados-laptop`: machine laptop, folder /Users/c/dados",
     ]
     (prof,) = P.plan_levels(p, "kaggle@server0", lst)
-    assert "- `dados-laptop`: máquina laptop" in prof["role"] and "{executores}" not in prof["role"]
-    assert "`kaggle-server0` é o principal" in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
-    # receita de três níveis: só o de baixo recebe a lista; o de cima fica sem o marcador
+    assert "- `dados-laptop`: machine laptop" in prof["role"] and "{executores}" not in prof["role"]
+    assert "`kaggle-server0` is the main one" in prof["role"] and "`kaggle-professor-server0`" in prof["role"]
+    # three-level recipe: only the bottom one gets the list; the top one is left without the marker
     arq, top = P.plan_levels(P.get("professor-arquiteto-executor"), "k@laptop", "- `x`")
     assert "{executores}" not in top["role"] and "{executores}" not in arq["role"]

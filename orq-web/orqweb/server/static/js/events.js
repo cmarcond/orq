@@ -1,13 +1,13 @@
-// Redutor puro: um evento do stream do agente -> lista de ações de interface.
-// Não toca no DOM, por isso roda nos testes do Node. app.js aplica as ações.
+// Pure reducer: one event from the agent stream -> list of interface actions.
+// It does not touch the DOM, so it runs in the Node tests. app.js applies the actions.
 //
-// Ações: {kind, ...}:
+// Actions: {kind, ...}:
 //   ignore | sys{level,text} | permissionAnswered{requestId,behavior} | interrupted
 //   bubble{text,pending} | machine{text,origin} | toolResult{toolUseId,text,isError}
 //   text{text} | toolUse{id,name,summary} | streamStart | streamDelta{text}
 //   permission{requestId,request} | ask{requestId,request} | result{isError,text}
-//   wireOut{id,to,summary,message} (SendMessage para outra sessão) | wireIn{from,text,msgId} (chegou de outra)
-// Cada ação pode trazer `state` ('working' | 'permission' | 'waiting' | 'error') e `msg`.
+//   wireOut{id,to,summary,message} (SendMessage to another session) | wireIn{from,text,msgId} (arrived from another)
+// Each action may carry `state` ('working' | 'permission' | 'waiting' | 'error') and `msg`.
 
 import { clean, internal, isMachine, toolSummary } from './classify.js';
 
@@ -16,7 +16,7 @@ const blocks = (e) => {
   return Array.isArray(c) ? c : [];
 };
 
-/** ctx.pending: textos enviados pela página ainda sem eco. É mutado quando um eco casa. */
+/** ctx.pending: texts sent by the page that have no echo yet. It is mutated when an echo matches. */
 export function reduce(e, ctx = { pending: [] }) {
   const t = e.type;
   if (t === 'orq') return reduceOrq(e);
@@ -26,7 +26,7 @@ export function reduce(e, ctx = { pending: [] }) {
   if (t === 'control_request' && e.request?.subtype === 'can_use_tool') return reducePermission(e);
   if (t === 'result') {
     const isError = Boolean(e.is_error);
-    const text = isError ? String(e.result || e.subtype || 'erro').slice(0, 300) : '';
+    const text = isError ? String(e.result || e.subtype || 'error').slice(0, 300) : '';
     return [{ kind: 'result', isError, text, state: isError ? 'error' : 'waiting', msg: text.slice(0, 80) }];
   }
   return [{ kind: 'ignore' }];
@@ -43,7 +43,7 @@ function reduceUser(e, ctx) {
   if (e.orq_origin === 'agent' || e.origin?.kind === 'peer') {
     const o = e.origin || {};
     const text = o.body ?? peerBody(clean(typeof e.message?.content === 'string' ? e.message.content : ''));
-    const a = { kind: 'wireIn', from: o.name || 'outra sessão', text, msgId: o.msg_id || '' };
+    const a = { kind: 'wireIn', from: o.name || 'another session', text, msgId: o.msg_id || '' };
     if (!e.replay) a.state = 'working';
     return [a];
   }
@@ -101,13 +101,13 @@ function reducePermission(e) {
   return [a];
 }
 
-/** Texto de dentro do embrulho <cross-session-message>; sem embrulho, o texto inteiro. */
+/** Text inside the <cross-session-message> wrapper; without a wrapper, the whole text. */
 export function peerBody(text) {
   const m = /<cross-session-message[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(text || '');
   return (m ? m[1] : String(text || '')).trim();
 }
 
-/** msg_id de um tool_result do SendMessage (JSON em texto), ou ''. */
+/** msg_id of a SendMessage tool_result (JSON as text), or ''. */
 export function sentMsgId(text) {
   try {
     const j = JSON.parse(String(text || '').trim());
@@ -117,7 +117,7 @@ export function sentMsgId(text) {
   }
 }
 
-/** Respostas de um formulário AskUserQuestion -> {pergunta: "opção, opção"}; null se faltou alguma. */
+/** Answers of an AskUserQuestion form -> {question: "option, option"}; null if any is missing. */
 export function collectAnswers(questions, picked) {
   const answers = {};
   for (let i = 0; i < questions.length; i++) {

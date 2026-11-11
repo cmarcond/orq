@@ -1,4 +1,4 @@
-"""Conversão de um claude interativo em tmux para agente da página, com um tmux simulado."""
+"""Converting an interactive claude in tmux into a page agent, with a simulated tmux."""
 
 import json
 import subprocess
@@ -8,13 +8,13 @@ from orqweb.agent import convert as C
 
 
 class FakeTmux(C.Tmux):
-    """Simula um painel: `script` diz como o claude reage a cada tecla; o estado muda quando 'fecha'."""
+    """Simulates a pane: `script` says how claude reacts to each key; the state changes when it 'closes'."""
 
     def __init__(self, exits_on=("Enter",), has_shell_after=False):
         super().__init__(run=lambda *a, **k: None)
         self.exits_on = exits_on
         self.has_shell_after = has_shell_after
-        self.alive = True  # claude rodando no painel
+        self.alive = True  # claude running in the pane
         self.session = True
         self.sent = []
         self.killed = False
@@ -96,7 +96,7 @@ def test_close_recognizes_macos_binary_name():
     t = FakeTmux(exits_on=("Enter",))
     t.pane_command = lambda sess: "2.1.296" if t.alive else "zsh"
     assert C.close_claude(t, "s", sleep=nosleep) == "exit"
-    assert "Enter" in t.sent, "não pode achar que já saiu só porque o nome não é 'claude'"
+    assert "Enter" in t.sent, "must not think it already exited just because the name is not 'claude'"
 
 
 def test_terminal_sessions_filter():
@@ -104,7 +104,7 @@ def test_terminal_sessions_filter():
         {"label": "a", "tmux": "claude-gmail-a", "state": "waiting"},
         {"label": "b@h", "kind": "sdk", "state": "waiting"},
         {"label": "c", "tmux": "x", "state": "closed"},
-        {"label": "d", "state": "menu"},  # sem tmux: painel da grade, fora
+        {"label": "d", "state": "menu"},  # no tmux: grid pane, left out
     ]
     assert [s["label"] for s in C.terminal_sessions(status)] == ["a"]
 
@@ -123,7 +123,7 @@ def test_convert_happy_path_kills_leftover_shell_and_spawns():
 
     def spawn(label, folder, acc, mode):
         calls.append((label, folder, acc, mode))
-        return "aberto na sessão tmux orqs-kaggle"
+        return "opened in tmux session orqs-kaggle"
 
     entry = {
         "label": "kaggle",
@@ -134,16 +134,18 @@ def test_convert_happy_path_kills_leftover_shell_and_spawns():
     }
     res = C.convert(entry, "server0", spawn, tmux=t, bin_dir=Path("/b"), sleep=nosleep)
     assert res["ok"] and res["label"] == "kaggle@server0" and res["how"] == "exit"
-    assert t.killed, "o shell que sobrou no tmux antigo é fechado"
+    assert t.killed, "the shell left over in the old tmux is closed"
     assert calls == [("kaggle@server0", "/home/c/kaggle", "gmail", "resume")]
-    assert "conta gmail" in res["msg"]
+    assert "account gmail" in res["msg"]
 
 
 def test_convert_refuses_without_account_and_on_failed_close():
     t = FakeTmux(exits_on=("Enter",))
     entry = {"label": "x", "tmux": "s", "dir": "/nada", "account": "?"}
     res = C.convert(entry, "h", lambda *a: "", tmux=t, bin_dir=Path("/b"), sleep=nosleep)
-    assert not res["ok"] and "conta" in res["msg"] and t.sent == [], "não fecha nada se não sabe a conta"
+    assert not res["ok"] and "account" in res["msg"] and t.sent == [], (
+        "closes nothing if it does not know the account"
+    )
 
     t2 = FakeTmux(exits_on=())
     ps = subprocess.CompletedProcess([], 0, "", "")
@@ -166,7 +168,7 @@ def test_convert_reports_spawn_error():
     t = FakeTmux(exits_on=("Enter",))
 
     def spawn(*a):
-        raise RuntimeError("socket não apareceu")
+        raise RuntimeError("socket did not appear")
 
     entry = {"label": "x", "tmux": "s", "dir": "/p", "account": "gmail"}
     res = C.convert(entry, "h", spawn, tmux=t, bin_dir=Path("/b"), sleep=nosleep)
@@ -194,4 +196,4 @@ def test_others_in_folder_and_refusal():
         others=[status[1]],
         sleep=nosleep,
     )
-    assert not res["ok"] and "tmux b" in res["msg"] and t.sent == [], "com ambiguidade não fecha nada"
+    assert not res["ok"] and "tmux b" in res["msg"] and t.sent == [], "with ambiguity it closes nothing"

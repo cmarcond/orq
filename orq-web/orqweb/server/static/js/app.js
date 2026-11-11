@@ -1,4 +1,4 @@
-// Estado da página, API e DOM. A lógica pura está em format.js, classify.js e events.js.
+// Page state, API and DOM. The pure logic lives in format.js, classify.js and events.js.
 import { esc, left, ago, md, withAttachments, fmtBytes, fileKind, sparkSvg, histSummary, freshAlerts, badgeFor, fleetBadge } from './format.js';
 import { firstLine, originLabel, permissionBody, toolName, toolSummary } from './classify.js';
 import { reduce, collectAnswers, sentMsgId } from './events.js';
@@ -9,21 +9,21 @@ const T = new URLSearchParams(location.search).get('t') || '';
 const H = { 'X-Orq-Token': T, 'Content-Type': 'application/json' };
 const $ = (id) => document.getElementById(id);
 const ST = {
-  working: 'trabalhando…',
-  waiting: 'esperando você',
-  permission: 'pede permissão',
-  error: 'erro',
-  starting: 'abrindo…',
-  closed: 'fechado',
-  quota: 'sem cota: trocando de conta…',
+  working: 'working…',
+  waiting: 'waiting for you',
+  permission: 'asks permission',
+  error: 'error',
+  starting: 'opening…',
+  closed: 'closed',
+  quota: 'out of quota: switching account…',
 };
 
-// ---------------------------------------------------------------- notificações
-// Título da aba com quantos agentes esperam você (permissão, pergunta, resposta pronta), e notificação
-// do navegador quando a página não está visível. O sino no topo pede a permissão uma vez.
-const attn = new Set(); // rótulos que precisam de você desde a última vez que olhou
-// Bipe curto pela própria página (o som da notificação do sistema nem sempre toca). O AudioContext nasce
-// no clique do sino: o navegador só libera áudio depois de um gesto na página.
+// ---------------------------------------------------------------- notifications
+// Tab title with how many agents are waiting for you (permission, question, answer ready), and a browser
+// notification when the page is not visible. The bell at the top asks for the permission once.
+const attn = new Set(); // labels that have needed you since the last time you looked
+// Short beep from the page itself (the system notification sound does not always play). The AudioContext is
+// created on the bell click: the browser only allows audio after a gesture on the page.
 let audio = null;
 function beep() {
   try {
@@ -43,18 +43,18 @@ function beep() {
       o.stop(t0 + at + 0.12);
     }
   } catch (_) {
-    /* sem áudio */
+    /* no audio */
   }
 }
 function updateTitle() {
   document.title = attn.size ? `(${attn.size}) orq` : 'orq';
 }
 function needsYou(label, why, body) {
-  if (label === cur && !document.hidden) return; // você está olhando
+  if (label === cur && !document.hidden) return; // you are looking at it
   attn.add(label);
   updateTitle();
   if (!document.hidden) return;
-  beep(); // mesmo sem permissão de notificação (em http o navegador nunca dá): o bipe basta
+  beep(); // even without notification permission (on http the browser never grants it): the beep is enough
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     try {
       const n = new Notification(`${label.split('@')[0]}: ${why}`, { body: (body || '').slice(0, 120), tag: label });
@@ -64,7 +64,7 @@ function needsYou(label, why, body) {
         n.close();
       };
     } catch (_) {
-      /* navegador sem suporte */
+      /* browser without support */
     }
   }
 }
@@ -75,24 +75,24 @@ document.addEventListener('visibilitychange', () => !document.hidden && cur && s
 function testNotify() {
   beep();
   try {
-    new Notification('orq: teste', { body: 'se você vê isto, as notificações do navegador funcionam', tag: 'orq-teste' });
-    toast('notificação de teste enviada; se nada apareceu, confira Ajustes do Sistema → Notificações → seu navegador');
+    new Notification('orq: test', { body: 'if you can see this, browser notifications work', tag: 'orq-teste' });
+    toast('test notification sent; if nothing showed up, check System Settings → Notifications → your browser');
   } catch (e) {
-    toast('o navegador recusou a notificação: ' + e.message);
+    toast('the browser refused the notification: ' + e.message);
   }
 }
 function askNotify() {
-  // Fora de https/localhost o navegador recusa sem perguntar; o clique ao menos destrava o áudio do bipe.
+  // Outside https/localhost the browser refuses without asking; the click at least unlocks the beep audio.
   if (!window.isSecureContext) {
     beep();
-    return toast('notificações do navegador só em https ou localhost; nesta página (http) ficam o bipe e a contagem no título — bipe ligado');
+    return toast('browser notifications only work on https or localhost; on this page (http) you get the beep and the count in the title — beep on');
   }
-  if (typeof Notification === 'undefined') return toast('este navegador não tem notificações');
+  if (typeof Notification === 'undefined') return toast('this browser has no notifications');
   if (Notification.permission === 'granted') return testNotify();
   Notification.requestPermission().then((p) => {
     if (p === 'granted') return testNotify();
     beep();
-    toast('notificações recusadas pelo navegador (libere no cadeado da barra de endereço); o bipe fica ligado');
+    toast('notifications refused by the browser (allow them at the padlock in the address bar); the beep stays on');
   });
 }
 
@@ -112,9 +112,9 @@ async function api(path, body) {
 }
 const agentApi = (label, op, body = {}) => api(`/api/agent/${encodeURIComponent(label)}/${op}`, body);
 
-// ---------------------------------------------------------------- cota
+// ---------------------------------------------------------------- quota
 let LAB = {};
-let COL = {}; // cor por conta, vinda do accounts.json (ou da paleta padrão)
+let COL = {}; // color per account, from accounts.json (or from the default palette)
 const colorOf = (acc) => COL[acc] || 'var(--mute)';
 function meter(u, k) {
   if (u[k] == null) return '';
@@ -125,26 +125,26 @@ function meter(u, k) {
     <i style="width:${Math.min(100, p)}%"></i><b style="left:${Math.min(99, m)}%"></b></div>
     <span class="pct">${Math.round(p)}%</span><span>${left(u[k + '_left'])}</span></div>`;
 }
-// ---------------------------------------------------------------- histórico de uso (banco do usage-hist)
-// O servidor manda `history` no /api/state (usage-hist painel --json): por conta, hoje, ritmo, previsão e as
-// 24 h por hora; alertas; quando foi a coleta. Sem banco, vem {} e os cartões ficam só com a cota.
+// ---------------------------------------------------------------- usage history (usage-hist database)
+// The server sends `history` in /api/state (usage-hist painel --json): per account, today, pace, forecast and
+// the 24 h by hour; alerts; when the collection ran. Without a database, {} comes and the cards show only the quota.
 function histBlock(h, name, top) {
   const a = h && h.accounts && h.accounts[name];
   if (!a) return '';
   const s = histSummary(a);
-  return `<div class="hrow" title="pontos da semana gastos por hora nas últimas 24 h (passe o mouse numa barra)">${sparkSvg(a.last_24h || [], top, h.t24)}</div>
-    <div class="hsum ${s.warn ? 'bad' : ''}" title="hoje: pontos da semana gastos desde a meia-noite · ritmo: pontos por hora nas últimas 6 h · previsão: quando chega a 100% nesse ritmo (⚠ = antes do reset) · * = desde o início da coleta">${esc(s.text)}</div>`;
+  return `<div class="hrow" title="weekly points spent per hour in the last 24 h (hover over a bar)">${sparkSvg(a.last_24h || [], top, h.t24)}</div>
+    <div class="hsum ${s.warn ? 'bad' : ''}" title="today: weekly points spent since midnight · pace: points per hour in the last 6 h · forecast: when it reaches 100% at this pace (⚠ = before the reset) · * = since collection started">${esc(s.text)}</div>`;
 }
-// selo de alerta: fica no cartão enquanto o alerta existir (o toast só passa); o título traz o texto completo
+// alert badge: stays on the card while the alert exists (the toast just goes by); the title carries the full text
 const seloHtml = (b) => (b ? `<span class="selo ${b.level}" title="${esc(b.title)}">${esc(b.label)}</span>` : '');
 function histTotal(h) {
   if (!h || !h.accounts) return '';
   const age = h.collected ? (Date.now() - new Date(h.collected).getTime()) / 60e3 : null;
-  const stale = age != null && age > 15 ? ` · <span class="bad">coleta parada há ${left(Math.round(age * 60))}</span>` : '';
-  const used = h.used_24h != null ? `24 h: ${h.used_24h.toFixed(1).replace('.', ',')} pts gastos` : '';
-  return `<div class="small mute hsum" title="histórico do usage-hist (coletor a cada 5 min)">${used}${stale}</div>`;
+  const stale = age != null && age > 15 ? ` · <span class="bad">collection stalled for ${left(Math.round(age * 60))}</span>` : '';
+  const used = h.used_24h != null ? `24 h: ${h.used_24h.toFixed(1)} pts spent` : '';
+  return `<div class="small mute hsum" title="usage-hist history (collector every 5 min)">${used}${stale}</div>`;
 }
-let ALERTS_SEEN = null; // texto -> quando foi mostrado (ms), para não repetir o mesmo alerta a cada 5 s
+let ALERTS_SEEN = null; // text -> when it was shown (ms), so the same alert is not repeated every 5 s
 function showAlerts(h) {
   if (!h || !Array.isArray(h.alerts)) return;
   if (ALERTS_SEEN === null) {
@@ -159,34 +159,35 @@ function showAlerts(h) {
   try {
     localStorage.setItem('orq.alertas', JSON.stringify(r.seen));
   } catch (_) {
-    /* sem armazenamento: o alerta volta a aparecer ao recarregar */
+    /* no storage: the alert shows up again on reload */
   }
   if (r.fresh.length) toast(r.fresh.slice(0, 2).join('  ·  ') + (r.fresh.length > 2 ? `  (+${r.fresh.length - 2})` : ''));
 }
 function totalCard(t, h) {
-  // consolidado da semana da frota (`_total` do usage-all), no formato das contas: barra do usado médio com
-  // o ritmo médio; à direita, quando zera (∞ = com os resets, não zera nesta semana); queima 1,0× = no ritmo
+  // fleet-wide summary of the week (`_total` of usage-all), in the same format as the accounts: bar of the average
+  // used with the average pace; on the right, when it runs out (∞ = given the resets, it does not run out this
+  // week); burn 1.0× = on pace
   if (!t) return '';
   const d = t['7d'] - t['7d_pace'];
   const burn = t['7d_burn'] ?? 0;
   const bcls = burn < 0.9 ? 'ok' : burn <= 1.15 ? 'warn' : 'bad';
   const runs = t['7d_runs_out'] != null ? left(t['7d_runs_out']) : '∞';
-  return `<div class="ucard total" title="semana da frota: barra = usado médio, ┃ = ritmo médio; à direita, quando zera (∞ = não zera com os resets); queima 1,0× = no ritmo das janelas"><div class="name"><span>TOTAL · semana ${seloHtml(h && fleetBadge(h.alert_items))}</span><span class="burn ${bcls}">queima ${burn.toFixed(1).replace('.', ',')}×</span></div>
+  return `<div class="ucard total" title="fleet week: bar = average used, ┃ = average pace; on the right, when it runs out (∞ = does not run out given the resets); burn 1.0× = at the pace of the windows"><div class="name"><span>TOTAL · week ${seloHtml(h && fleetBadge(h.alert_items))}</span><span class="burn ${bcls}">burn ${burn.toFixed(1)}×</span></div>
     <div class="urow"><span>7d</span><div class="meter ${d >= 15 ? 'far' : d > 0 ? 'over' : ''}"><i style="width:${Math.min(100, t['7d'])}%"></i><b style="left:${Math.min(99, t['7d_pace'])}%"></b></div>
     <span class="pct">${Math.round(t['7d'])}%</span><span>${runs}</span></div>
-    <div class="small mute">${Math.round(t['7d_free'])}% livre na média das ${t.accounts} contas</div>${histTotal(h)}</div>`;
+    <div class="small mute">${Math.round(t['7d_free'])}% free on average across the ${t.accounts} accounts</div>${histTotal(h)}</div>`;
 }
 function renderUsage(us, hist) {
   const h = hist && hist.accounts ? hist : null;
   const top = h ? Math.max(0, ...Object.values(h.accounts).flatMap((a) => a.last_24h || [])) : 0;
   $('usage').innerHTML =
-    `<span class="tools"><button id="uso" class="ghost" title="uso: quem está gastando cada conta agora, em todas as máquinas (do histórico do usage-hist)">📊 uso</button><button id="sets" class="ghost" title="conjuntos: abrir vários agentes de uma vez (cada um com prompt próprio, com ou sem professor), salvar as abas abertas como conjunto ou enviar um JSON pronto">⊞ conjuntos</button><button id="bell" class="ghost" title="notificações do navegador quando um agente pedir permissão ou terminar; clique para testar">🔔</button></span>` +
+    `<span class="tools"><button id="uso" class="ghost" title="usage: who is spending each account right now, on all machines (from the usage-hist history)">📊 usage</button><button id="sets" class="ghost" title="sets: open several agents at once (each with its own prompt, with or without a teacher), save the open tabs as a set or upload a ready-made JSON">⊞ sets</button><button id="bell" class="ghost" title="browser notifications when an agent asks permission or finishes; click to test">🔔</button></span>` +
     totalCard(us._total, h) +
     Object.entries(us)
     .filter(([n]) => !n.startsWith('_'))
     .map(
-      ([n, u]) => `<div class="ucard${h && h.accounts && h.accounts[n] ? ' clickable' : ''}" data-acc="${esc(n)}" style="--acc:${colorOf(n)}" title="${h ? 'clique: painel da conta (24 h, 7 dias, semana até o reset, o que mais gastou)' : ''}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)} ${seloHtml(h && badgeFor(h.alert_items, n))}</span>${
-        u.err ? '<span class="small bad">erro</span>' : ''
+      ([n, u]) => `<div class="ucard${h && h.accounts && h.accounts[n] ? ' clickable' : ''}" data-acc="${esc(n)}" style="--acc:${colorOf(n)}" title="${h ? 'click: account panel (24 h, 7 days, week up to the reset, what spent the most)' : ''}"><div class="name"><span><i class="sw" style="background:${colorOf(n)}"></i>${esc(LAB[n] || n)} ${seloHtml(h && badgeFor(h.alert_items, n))}</span>${
+        u.err ? '<span class="small bad">error</span>' : ''
       }</div>${u.err ? `<div class="small mute">${esc(u.err).slice(0, 80)}</div>` : meter(u, '5h') + meter(u, '7d')}${histBlock(h, n, top)}</div>`,
     )
     .join('');
@@ -198,16 +199,16 @@ function renderUsage(us, hist) {
   if (tot) tot.onclick = () => $('usage').classList.toggle('open');
 }
 
-// ---------------------------------------------------------------- abas e níveis
-// Um nível (professor, arquiteto…) é um agente com `parent` = rótulo do agente logo abaixo. A aba é
-// sempre a do agente base; o chat mostrado (`cur`) é um rótulo da cadeia, por padrão o do topo.
+// ---------------------------------------------------------------- tabs and levels
+// A level (professor, arquiteto…) is an agent with `parent` = label of the agent right below it. The tab is
+// always that of the base agent; the chat shown (`cur`) is a label in the chain, by default the top one.
 const tabs = {}; // label -> {a, el, seq, es, pending, chips, perms, live, buf, follow, wires}
 let cur = null;
 let agents = [];
-let links = []; // vínculos entre agentes (orq-agent links), de todas as máquinas
+let links = []; // links between agents (orq-agent links), from all machines
 const samePair = (lk, a, b) => (lk.local === a && lk.remote === b) || (lk.local === b && lk.remote === a);
 const dropLink = (a, b) => (links = links.filter((lk) => !samePair(lk, a, b)));
-/** Vínculos vivos de `label`: [{other, host, kind, local, remote}]. */
+/** Live links of `label`: [{other, host, kind, local, remote}]. */
 function linksOf(label) {
   return links
     .filter((lk) => lk.up && (lk.local === label || lk.remote === label))
@@ -239,28 +240,28 @@ function baseOf(label) {
   }
   return a ? a.label : label;
 }
-const chainOf = (base) => [base, ...levelsAbove(base)]; // de baixo para cima
+const chainOf = (base) => [base, ...levelsAbove(base)]; // bottom to top
 const levelName = (l) => agentOf(l)?.level || (isLevel(agentOf(l)) ? l.split('@')[0].split('~').pop() : 'executor');
 const levelColor = (l) => LEVEL_COLORS[levelName(l)] || 'var(--mute)';
 const curBase = () => (cur ? baseOf(cur) : null);
-/** Destinatário de um SendMessage para mostrar: nome, ou, se for um endereço `uds:`, o nível logo acima
- *  de quem mandou (é para quem uma resposta vai), senão "resposta". */
+/** Recipient of a SendMessage to display: the name, or, if it is a `uds:` address, the level right above
+ *  the sender (that is who a reply goes to), otherwise "reply". */
 function wireTo(from, to) {
   if (!to.startsWith('uds:')) return to;
   const chain = chainOf(baseOf(from));
   const i = chain.indexOf(from);
-  return i >= 0 && i + 1 < chain.length ? `↑ ${levelName(chain[i + 1])}` : 'resposta';
+  return i >= 0 && i + 1 < chain.length ? `↑ ${levelName(chain[i + 1])}` : 'reply';
 }
 
 function tabOrder() {
-  // sdk e terminal (este só para converter); agente fechado, sumido ou nível de outro não ocupa aba
+  // sdk and terminal (the latter only to convert); a closed or vanished agent, or one that is another's level, takes no tab
   return agents.filter((a) => live(a) && !isLevel(a)).map((a) => a.label);
 }
 function renderTabs() {
   const nav = $('tabs');
   const order = tabOrder();
   const onTab = curBase();
-  // uma linha por máquina: o rótulo da máquina à esquerda, as abas dela na linha, e um + que já abre ali
+  // one row per machine: the machine label on the left, its tabs on the row, and a + that opens right there
   const hosts = [];
   for (const l of order) if (!hosts.includes(hostOf(l))) hosts.push(hostOf(l));
   if (!hosts.includes('laptop')) hosts.unshift('laptop');
@@ -276,19 +277,19 @@ function renderTabs() {
           const lv = levelsAbove(l);
           const nl = linksOf(l);
           const tail = sdk
-            ? `${lv.length ? `<span class="lv" title="${esc(lv.map(levelName).reverse().join(' → '))} → executor">⇅${lv.length}</span>` : ''}${nl.length ? `<span class="lv lk" title="vinculado a ${esc(nl.map((k) => k.other).join(', '))}">🔗${nl.length}</span>` : ''}${n < 9 ? `<span class="kbd">⌘${n + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="encerrar agente">✕</span>`
+            ? `${lv.length ? `<span class="lv" title="${esc(lv.map(levelName).reverse().join(' → '))} → executor">⇅${lv.length}</span>` : ''}${nl.length ? `<span class="lv lk" title="linked to ${esc(nl.map((k) => k.other).join(', '))}">🔗${nl.length}</span>` : ''}${n < 9 ? `<span class="kbd">⌘${n + 1}</span>` : ''}<span class="x" data-x="${esc(l)}" title="close agent">✕</span>`
             : a.tmux
-              ? `<span class="cv" data-cv="${esc(l)}" title="converter: fecha o claude do terminal e reabre a conversa aqui">⇄</span>`
-              : `<span class="small mute" title="painel da grade antiga do orq, sem tmux próprio">grade</span>`;
+              ? `<span class="cv" data-cv="${esc(l)}" title="convert: closes the claude in the terminal and reopens the conversation here">⇄</span>`
+              : `<span class="small mute" title="pane of the old orq grid, without its own tmux">grid</span>`;
           const col = colorOf(a.account);
-          const tip = `${a.dir || ''}\nconta ${LAB[a.account] || a.account || '?'}`;
-          // o ponto da aba segue o estado do nível que está no chat (o topo), não só o do base
+          const tip = `${a.dir || ''}\naccount ${LAB[a.account] || a.account || '?'}`;
+          // the tab dot follows the state of the level shown in the chat (the top), not only that of the base
           const shown = lv.length && l === onTab ? agentOf(cur) || a : lv.length ? agentOf(lv[lv.length - 1]) || a : a;
           return `<div class="tab ${shown.state || ''} ${sdk ? '' : 'term'} ${l === onTab ? 'on' : ''}" data-l="${esc(l)}" title="${esc(tip)}" style="--acc:${col}">
           <span class="dot"></span><span class="meta"><b>${esc(l.split('@')[0])}</b>${sdk ? '' : ' · <i>terminal</i>'}</span><i class="sw" style="background:${col}" title="${esc(LAB[a.account] || a.account || '')}"></i>${tail}</div>`;
         })
         .join('');
-      return `<div class="trow"><span class="host" title="máquina">${esc(h)}</span><div class="tline">${row}<div class="tab plus" data-host="${esc(h)}" title="abrir projeto em ${esc(h)}">+</div></div></div>`;
+      return `<div class="trow"><span class="host" title="machine">${esc(h)}</span><div class="tline">${row}<div class="tab plus" data-host="${esc(h)}" title="open project on ${esc(h)}">+</div></div></div>`;
     })
     .join('');
   nav.querySelectorAll('.tab[data-l]').forEach(
@@ -306,12 +307,12 @@ function askStop(l) {
   const t = tabs[l];
   if (t && t._confirm) {
     const lv = levelsAbove(l);
-    (lv.length ? agentApi(l, 'downgrade') : Promise.resolve()).then(() => agentApi(l, 'stop')).then(() => toast('encerrando ' + l));
+    (lv.length ? agentApi(l, 'downgrade') : Promise.resolve()).then(() => agentApi(l, 'stop')).then(() => toast('closing ' + l));
     t._confirm = false;
     return;
   }
   if (t) t._confirm = true;
-  toast('clique no ✕ de novo para encerrar ' + l.split('@')[0] + (levelsAbove(l).length ? ' e seus níveis' : ''));
+  toast('click ✕ again to close ' + l.split('@')[0] + (levelsAbove(l).length ? ' and its levels' : ''));
   setTimeout(() => t && (t._confirm = false), 4000);
 }
 function tab(l) {
@@ -328,7 +329,7 @@ function ensureEl(t) {
   });
   $('chats').appendChild(t.el);
 }
-/** Mostra a aba de `l`. `exact` mostra esse rótulo mesmo que seja um nível ou um base com níveis. */
+/** Shows the tab of `l`. `exact` shows that label even if it is a level or a base with levels. */
 function show(l, exact = false) {
   const ag = agentOf(l);
   if (ag && ag.kind !== 'sdk') return showTerminal(l, ag);
@@ -349,7 +350,7 @@ function show(l, exact = false) {
       tabs[k].es = null;
     }
   $('composer').hidden = false;
-  for (const k of chain) if (!tabs[k].es) stream(k); // todos os níveis ficam ligados: os fios vêm de todos
+  for (const k of chain) if (!tabs[k].es) stream(k); // all the levels stay connected: the wires come from all of them
   renderTabs();
   renderLevels(base);
   status();
@@ -367,15 +368,15 @@ function showTerminal(l, a) {
     t.el.className = 'chat';
     $('chats').appendChild(t.el);
   }
-  t.el.innerHTML = `<div class="inner"><div class="perm term"><div class="t">Sessão do claude no terminal</div>
+  t.el.innerHTML = `<div class="inner"><div class="perm term"><div class="t">Claude session in the terminal</div>
     <div class="small mute">tmux <code>${esc(a.tmux || '?')}</code> · <i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '?')} · <code>${esc(a.dir || '')}</code>${
       a.msg ? ` · ${esc(a.msg)}` : ''
     }</div>
-    <p>A conversa dela não passa pela página. <b>Converter</b> dá <code>/exit</code> nela (ou Ctrl-C, se não responder) e reabre a mesma conversa aqui, como agente da página. Nada se perde: o Claude Code grava cada mensagem em disco.</p>
+    <p>Its conversation does not go through the page. <b>Convert</b> sends <code>/exit</code> to it (or Ctrl-C, if it does not respond) and reopens the same conversation here, as an agent of the page. Nothing is lost: Claude Code writes every message to disk.</p>
     <div class="btns">${
       a.tmux
-        ? '<button class="ok">⇄ Converter para a página</button>'
-        : '<span class="small mute">painel da grade antiga do orq: feche-o no terminal (q no menu)</span>'
+        ? '<button class="ok">⇄ Convert to the page</button>'
+        : '<span class="small mute">pane of the old orq grid: close it in the terminal (q in the menu)</span>'
     }</div></div></div>`;
   const ok = t.el.querySelector('.ok');
   if (ok) ok.onclick = () => convertAgent(l);
@@ -392,10 +393,10 @@ function showTerminal(l, a) {
   renderLevels(null);
 }
 async function convertAgent(l) {
-  toast(`convertendo ${l.split('@')[0]}… (fecha o claude do terminal e reabre aqui)`);
+  toast(`converting ${l.split('@')[0]}… (closes the claude in the terminal and reopens it here)`);
   const j = await api('/api/agent/convert', { label: l });
   if (!j.label) return;
-  toast(`${j.label} convertido${j.how ? ` (fechado por ${j.how})` : ''}`);
+  toast(`${j.label} converted${j.how ? ` (closed by ${j.how})` : ''}`);
   for (const k of [l, j.label]) {
     if (tabs[k]) {
       tabs[k].el?.remove();
@@ -407,7 +408,7 @@ async function convertAgent(l) {
   show(j.label);
 }
 function dropClosed() {
-  // abas cujo agente fechou (✕, /exit, claude saiu, downgrade) ou sumiu da lista: fecham o stream e saem
+  // tabs whose agent closed (✕, /exit, claude exited, downgrade) or vanished from the list: they close the stream and go away
   const liveLabels = new Set(agents.filter(live).map((a) => a.label));
   const base = curBase();
   for (const l of Object.keys(tabs)) {
@@ -431,7 +432,7 @@ function status() {
   const a = t && (agentOf(cur) || t.a);
   const st = a ? a.state : '';
   const lv = cur && (isLevel(a) || levelsAbove(cur).length) ? ` · <b style="color:${levelColor(cur)}">${esc(levelName(cur))}</b>` : '';
-  const st8 = a && a.set ? ` · <span title="aberto pelo conjunto ${esc(a.set)}">⊞ ${esc(a.set)}</span>` : '';
+  const st8 = a && a.set ? ` · <span title="opened by the set ${esc(a.set)}">⊞ ${esc(a.set)}</span>` : '';
   $('cstate').innerHTML = a
     ? `<i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '')}${lv}${st8} · ${esc(ST[st] || st)}${
         a.msg && st !== 'working' ? ' · ' + esc(a.msg) : ''
@@ -444,11 +445,11 @@ function status() {
   $('out').hidden = $('lvl').hidden;
   $('lnk').hidden = $('lvl').hidden;
   const nl = base ? linksOf(base).length : 0;
-  $('lnk').innerHTML = nl ? `🔗 ${nl}` : '🔗<span class="lbl"> vincular</span>';
-  $('lnk').title = nl ? 'vínculos deste agente (clique para ver; vincular a mais um pelo painel)' : 'vincular a outro agente da página (qualquer máquina): um pode pedir coisas ao outro pelo SendMessage';
+  $('lnk').innerHTML = nl ? `🔗 ${nl}` : '🔗<span class="lbl"> link</span>';
+  $('lnk').title = nl ? 'links of this agent (click to see them; link to one more from the panel)' : 'link to another agent on the page (any machine): each can ask the other for things through SendMessage';
   outBadge(base);
-  $('lvl').innerHTML = `⇅<span class="lbl"> ${has ? 'níveis' : 'subir nível'}</span>`;
-  $('lvl').title = has ? 'mostrar/esconder o painel dos níveis' : 'subir um professor (ou mais níveis) acima deste agente';
+  $('lvl').innerHTML = `⇅<span class="lbl"> ${has ? 'levels' : 'add level'}</span>`;
+  $('lvl').title = has ? 'show/hide the levels panel' : 'add a teacher (or more levels) above this agent';
 }
 function setState(t, st, msg) {
   if (!t.a) t.a = { label: cur };
@@ -481,9 +482,9 @@ function add(t, html) {
   return n;
 }
 
-// ---------------------------------------------------------------- painel de níveis e fios
-// Fica na aba base: cartões (um por nível, do topo para baixo, clicáveis para ver o chat cru daquele
-// nível) e a lista de fios: cada SendMessage que sai de um nível, marcado "entregue" quando chega no outro.
+// ---------------------------------------------------------------- levels and wires panel
+// It lives on the base tab: cards (one per level, from the top down, clickable to see the raw chat of that
+// level) and the list of wires: each SendMessage leaving a level, marked "delivered" when it reaches the other.
 function wiresOf(base) {
   const t = tab(base);
   if (!t.wires) {
@@ -496,8 +497,8 @@ function renderLevels(base) {
   const panel = $('levels');
   const lv = base ? levelsAbove(base) : [];
   if (lv.length) {
-    panel.innerHTML = `<div class="lhead"><b>níveis</b><button id="down" class="ghost" title="encerra os níveis de cima; a aba volta a falar com o executor">↓ desfazer</button></div>
-    <div class="lcards"></div><div class="lhead"><b>fios</b><span class="small mute">mensagens entre os níveis</span></div>`;
+    panel.innerHTML = `<div class="lhead"><b>levels</b><button id="down" class="ghost" title="closes the levels above; the tab goes back to talking to the executor">↓ undo</button></div>
+    <div class="lcards"></div><div class="lhead"><b>wires</b><span class="small mute">messages between the levels</span></div>`;
     panel.appendChild(wiresOf(base).el);
     panel.querySelector('#down').onclick = () => askDowngrade(base);
     renderLevelCards(base);
@@ -505,10 +506,10 @@ function renderLevels(base) {
   renderSide(base);
 }
 
-// ---------------------------------------------------------------- painel lateral: níveis ou arquivos
-// O painel à direita da aba base mostra os níveis (sempre que existem) ou a lista de arquivos que o agente
-// compartilhou (📂 abre). Só uma vista por vez; as abinhas no topo trocam.
-const SIDE = { view: 'levels', files: false }; // vista pedida e se a lista de arquivos está aberta
+// ---------------------------------------------------------------- side panel: levels or files
+// The panel to the right of the base tab shows the levels (whenever they exist) or the list of files the agent
+// shared (📂 opens it). Only one view at a time; the small tabs at the top switch between them.
+const SIDE = { view: 'levels', files: false }; // requested view and whether the file list is open
 function renderSide(base) {
   const main = $('chats');
   const side = $('side');
@@ -528,10 +529,10 @@ function renderSide(base) {
   main.classList.add('withside');
   const n = tabs[base]?.files?.items.length || 0;
   side.querySelector('.stabs').innerHTML =
-    (hasLv ? `<button data-v="levels" class="${view === 'levels' ? 'on' : ''}">⇅ níveis</button>` : '') +
-    (nLinks ? `<button data-v="links" class="${view === 'links' ? 'on' : ''}">🔗 vínculos <span class="n">${nLinks}</span></button>` : '') +
-    `<button data-v="files" class="${view === 'files' ? 'on' : ''}">📂 arquivos${n ? ` <span class="n">${n}</span>` : ''}</button>` +
-    (view === 'files' ? '<button class="ghost sx" title="fechar a lista de arquivos">✕</button>' : '');
+    (hasLv ? `<button data-v="levels" class="${view === 'levels' ? 'on' : ''}">⇅ levels</button>` : '') +
+    (nLinks ? `<button data-v="links" class="${view === 'links' ? 'on' : ''}">🔗 links <span class="n">${nLinks}</span></button>` : '') +
+    `<button data-v="files" class="${view === 'files' ? 'on' : ''}">📂 files${n ? ` <span class="n">${n}</span>` : ''}</button>` +
+    (view === 'files' ? '<button class="ghost sx" title="close the file list">✕</button>' : '');
   side.querySelectorAll('.stabs [data-v]').forEach((b) => {
     b.onclick = () => {
       SIDE.view = b.dataset.v;
@@ -551,18 +552,18 @@ function renderSide(base) {
   if (view === 'links') renderLinks(base);
   if (view === 'levels' && !$('levels').contains(wiresOf(base).el)) $('levels').appendChild(wiresOf(base).el);
 }
-/** Vista dos vínculos: um cartão por agente ligado a `base` (clique abre a aba dele; ✕ desfaz) e os fios. */
+/** Links view: one card per agent linked to `base` (click opens its tab; ✕ removes the link) and the wires. */
 function renderLinks(base) {
   const box = $('links');
   const items = linksOf(base);
-  box.innerHTML = `<div class="lhead"><b>vínculos</b><button class="ghost more" title="vincular a mais um agente">+ vincular</button></div>
+  box.innerHTML = `<div class="lhead"><b>links</b><button class="ghost more" title="link to one more agent">+ link</button></div>
     <div class="lcards">${items
       .map((lk) => {
         const a = agentOf(lk.other) || { label: lk.other };
         const st = a.state || '';
-        return `<div class="lcard link ${st}" data-l="${esc(lk.other)}" title="${esc(lk.other)}: abrir a aba dele"><div class="lrow"><span class="dot"></span><b>${esc(lk.other.split('@')[0])}</b><span class="small mute">${esc(hostOf(lk.other))}${lk.kind === 'ssh' ? ' · ssh' : ''} · ${esc(ST[st] || st)}</span><button class="ghost ul" data-u="${esc(lk.other)}" title="desfazer o vínculo">✕</button></div></div>`;
+        return `<div class="lcard link ${st}" data-l="${esc(lk.other)}" title="${esc(lk.other)}: open its tab"><div class="lrow"><span class="dot"></span><b>${esc(lk.other.split('@')[0])}</b><span class="small mute">${esc(hostOf(lk.other))}${lk.kind === 'ssh' ? ' · ssh' : ''} · ${esc(ST[st] || st)}</span><button class="ghost ul" data-u="${esc(lk.other)}" title="remove the link">✕</button></div></div>`;
       })
-      .join('')}</div><div class="lhead"><b>fios</b><span class="small mute">pedidos e respostas pelo SendMessage</span></div>`;
+      .join('')}</div><div class="lhead"><b>wires</b><span class="small mute">requests and replies through SendMessage</span></div>`;
   box.appendChild(wiresOf(base).el);
   box.querySelector('.more').onclick = () => openLinkPicker(base);
   box.querySelectorAll('.lcard').forEach((el) => {
@@ -579,7 +580,7 @@ function askUnlink(base, other) {
     t._unlink = null;
     agentApi(base, 'unlink', { to: other }).then((j) => {
       if (!j.ok) return;
-      toast(`vínculo com ${other.split('@')[0]} desfeito`);
+      toast(`link with ${other.split('@')[0]} removed`);
       dropLink(base, other);
       renderSide(base);
       renderTabs();
@@ -588,37 +589,37 @@ function askUnlink(base, other) {
     return;
   }
   t._unlink = other;
-  toast(`clique de novo em ✕ para desfazer o vínculo com ${other.split('@')[0]}`);
+  toast(`click ✕ again to remove the link with ${other.split('@')[0]}`);
   setTimeout(() => (t._unlink = null), 4000);
 }
-/** Escolhe outro agente da página (qualquer máquina) para vincular a `base`. */
+/** Picks another agent on the page (any machine) to link to `base`. */
 function openLinkPicker(base) {
   const linked = new Set(linksOf(base).map((lk) => lk.other));
   const chain = new Set(chainOf(base));
   const rows = agents.filter((a) => live(a) && a.kind === 'sdk' && a.label !== base && !linked.has(a.label) && !chain.has(a.label) && !isLevel(a));
   picker(
-    `Vincular ${base.split('@')[0]} a…`,
-    'Os dois passam a se ver no ListAgents e a pedir coisas um ao outro pelo SendMessage (em máquinas diferentes, o orq estica o socket por ssh). Cada um recebe uma nota dizendo como falar com o outro.',
+    `Link ${base.split('@')[0]} to…`,
+    'The two start seeing each other in ListAgents and asking each other for things through SendMessage (on different machines, orq stretches the socket over ssh). Each one receives a note saying how to talk to the other.',
     rows.length
       ? rows
           .map(
             (a) => `<div class="p" data-l="${esc(a.label)}"><span class="mute">${esc(hostOf(a.label))}</span><span class="path"><b>${esc(a.label.split('@')[0])}</b> <span class="mute">${esc(a.dir || '')}</span></span><span><i class="sw" style="background:${colorOf(a.account)}"></i>${esc(LAB[a.account] || a.account || '')}</span><span class="small mute">${esc(ST[a.state] || a.state || '')}</span></div>`,
           )
           .join('')
-      : '<div class="mute">Nenhum outro agente da página para vincular. Abra outro projeto no <b>+</b> antes.</div>',
+      : '<div class="mute">No other agent on the page to link to. Open another project with <b>+</b> first.</div>',
   );
   $('plist').querySelectorAll('.p').forEach((el) => {
     el.onclick = async () => {
       const to = el.dataset.l;
       $('picker').hidden = true;
-      toast(`vinculando ${base.split('@')[0]} a ${to.split('@')[0]}…${hostOf(base) !== hostOf(to) ? ' (túnel ssh)' : ''}`);
+      toast(`linking ${base.split('@')[0]} to ${to.split('@')[0]}…${hostOf(base) !== hostOf(to) ? ' (ssh tunnel)' : ''}`);
       const j = await agentApi(base, 'link', { to });
       if (!j.ok) return;
       if (j.link) {
         dropLink(base, to);
         links.push(j.link);
       }
-      toast(`${base.split('@')[0]} ⇄ ${to.split('@')[0]} vinculados${(j.note_errors || []).length ? ' (a nota não chegou a um deles)' : ''}`);
+      toast(`${base.split('@')[0]} ⇄ ${to.split('@')[0]} linked${(j.note_errors || []).length ? ' (the note did not reach one of them)' : ''}`);
       SIDE.view = 'links';
       renderSide(base);
       renderTabs();
@@ -633,7 +634,7 @@ function filesOf(base) {
   if (!t.files) t.files = { items: [], loaded: false, known: null, fresh: new Set(), dir: '', err: null, busy: false };
   return t.files;
 }
-/** Lê a _outbox/ do agente base. Arquivo que não estava na leitura anterior vira aviso e destaque. */
+/** Reads the _outbox/ of the base agent. A file that was not in the previous read becomes a notice and a highlight. */
 async function loadFiles(base) {
   if (!base || agentOf(base)?.kind !== 'sdk') return;
   const fl = filesOf(base);
@@ -642,10 +643,10 @@ async function loadFiles(base) {
   try {
     const r = await fetch(`/api/agent/${encodeURIComponent(base)}/files`, { headers: H });
     if (r.status === 404) {
-      fl.busy = false; // o servidor ainda não conhece o agente (acabou de abrir): fica para a próxima
+      fl.busy = false; // the server does not know the agent yet (it has just opened): left for the next time
       return;
     }
-    const j = await r.json().catch(() => ({ err: 'resposta inválida' }));
+    const j = await r.json().catch(() => ({ err: 'invalid response' }));
     fl.err = j.err || null;
     fl.dir = j.dir || fl.dir;
     if (j.items) {
@@ -656,14 +657,14 @@ async function loadFiles(base) {
         const novo = fl.items.filter((f) => !fl.known.has(key(f)));
         if (novo.length) {
           novo.forEach((f) => fl.fresh.add(f.name));
-          toast(`📂 ${base.split('@')[0]}: ${novo.length === 1 ? `novo arquivo ${novo[0].name}` : `${novo.length} arquivos novos`}`);
+          toast(`📂 ${base.split('@')[0]}: ${novo.length === 1 ? `new file ${novo[0].name}` : `${novo.length} new files`}`);
         }
       }
       fl.known = now;
     }
     fl.loaded = true;
   } catch (_) {
-    /* servidor fora; fica a lista anterior */
+    /* server down; the previous list stays */
   }
   fl.busy = false;
   if (base === curBase()) {
@@ -681,17 +682,17 @@ function renderOutbox(base) {
   const box = $('outbox');
   const fl = filesOf(base);
   const dir = fl.dir || `${agentOf(base)?.dir || ''}/_outbox`;
-  const head = `<div class="lhead"><b>arquivos</b><span class="small mute"><code title="${esc(dir)}">_outbox/</code> <button class="ghost rf" title="atualizar a lista">↻</button></span></div>`;
+  const head = `<div class="lhead"><b>files</b><span class="small mute"><code title="${esc(dir)}">_outbox/</code> <button class="ghost rf" title="refresh the list">↻</button></span></div>`;
   let body;
-  if (!fl.loaded) body = '<div class="small mute">carregando…</div>';
+  if (!fl.loaded) body = '<div class="small mute">loading…</div>';
   else if (fl.err && !fl.items.length) body = `<div class="small bad">${esc(fl.err)}</div>`;
   else if (!fl.items.length)
-    body = `<div class="fempty"><div>📂</div><p>Nada compartilhado ainda.</p><p class="small">Peça ao agente para copiar o arquivo para <code>_outbox/</code> na pasta do projeto; ele aparece aqui para ver ou baixar.</p></div>`;
+    body = `<div class="fempty"><div>📂</div><p>Nothing shared yet.</p><p class="small">Ask the agent to copy the file to <code>_outbox/</code> in the project folder; it shows up here to view or download.</p></div>`;
   else
     body = `<div class="flist">${fl.items
       .map((f) => {
         const k = fileKind(f.name);
-        return `<div class="frow ${fl.fresh.has(f.name) ? 'fresh' : ''}" data-n="${esc(f.name)}" title="${k.view ? 'ver' : 'baixar'} ${esc(f.name)}"><span class="fico">${k.icon}</span><div class="fmeta"><b>${esc(f.name)}</b><span class="small mute">${fmtBytes(f.size)} · ${ago(f.mtime)}</span></div><a class="fdl" href="${fileUrl(base, f.name, true)}" download="${esc(f.name)}" title="baixar">⬇</a></div>`;
+        return `<div class="frow ${fl.fresh.has(f.name) ? 'fresh' : ''}" data-n="${esc(f.name)}" title="${k.view ? 'view' : 'download'} ${esc(f.name)}"><span class="fico">${k.icon}</span><div class="fmeta"><b>${esc(f.name)}</b><span class="small mute">${fmtBytes(f.size)} · ${ago(f.mtime)}</span></div><a class="fdl" href="${fileUrl(base, f.name, true)}" download="${esc(f.name)}" title="download">⬇</a></div>`;
       })
       .join('')}</div>`;
   box.innerHTML = head + body;
@@ -703,10 +704,10 @@ function renderOutbox(base) {
       if (f) openView(base, f);
     };
   });
-  fl.fresh.clear(); // visto: o destaque fica até a próxima leitura
+  fl.fresh.clear(); // seen: the highlight stays until the next read
   outBadge(base);
 }
-/** Prévia de um arquivo: imagem, PDF (visualizador do navegador), vídeo, áudio, texto/markdown; o resto baixa. */
+/** Preview of a file: image, PDF (the browser's viewer), video, audio, text/markdown; the rest is downloaded. */
 function openView(base, f) {
   const k = fileKind(f.name);
   if (!k.view) {
@@ -728,9 +729,9 @@ function openView(base, f) {
   else if (k.view === 'pdf') body.innerHTML = `<iframe src="${url}" title="${esc(f.name)}"></iframe>`;
   else if (k.view === 'video') body.innerHTML = `<video src="${url}" controls autoplay></video>`;
   else if (k.view === 'audio') body.innerHTML = `<audio src="${url}" controls autoplay></audio>`;
-  else if (f.size > 2 * 1024 * 1024) body.innerHTML = '<p class="small mute">texto grande demais para mostrar aqui; baixe.</p>';
+  else if (f.size > 2 * 1024 * 1024) body.innerHTML = '<p class="small mute">text too large to show here; download it.</p>';
   else {
-    body.innerHTML = '<div class="small mute">carregando…</div>';
+    body.innerHTML = '<div class="small mute">loading…</div>';
     fetch(url, { headers: H })
       .then((r) => r.text())
       .then((txt) => {
@@ -741,21 +742,21 @@ function openView(base, f) {
           body.querySelector('pre').textContent = txt;
         }
       })
-      .catch(() => (body.innerHTML = '<p class="small bad">não consegui ler o arquivo</p>'));
+      .catch(() => (body.innerHTML = '<p class="small bad">could not read the file</p>'));
   }
 }
-// ---------------------------------------------------------------- painel de uma conta (histórico de uso)
-// Clicar no cartão de uma conta abre, na mesma janela da prévia de arquivos, o usage-hist da conta: a semana até o
-// reset (com o ritmo ideal e a projeção), as últimas 24 h por hora, os 7 dias e o que mais gastou.
-const ptsTxt = (x, d = 1) => (x == null ? '—' : x.toFixed(d).replace('.', ','));
+// ---------------------------------------------------------------- panel of one account (usage history)
+// Clicking the card of an account opens, in the same window as the file preview, the usage-hist of the account: the
+// week up to the reset (with the ideal pace and the projection), the last 24 h by hour, the 7 days and what spent the most.
+const ptsTxt = (x, d = 1) => (x == null ? '—' : x.toFixed(d));
 async function openAccountPanel(name) {
   const v = $('view');
   v.hidden = false;
-  v.querySelector('.vname').textContent = `Painel · ${LAB[name] || name}`;
+  v.querySelector('.vname').textContent = `Panel · ${LAB[name] || name}`;
   v.querySelector('.vsize').textContent = '';
   v.querySelector('.vdl').hidden = true;
   const body = v.querySelector('.vbody');
-  body.innerHTML = '<div class="apanel"><div class="small mute">carregando…</div></div>';
+  body.innerHTML = '<div class="apanel"><div class="small mute">loading…</div></div>';
   const d = await api(`/api/conta/${encodeURIComponent(name)}`);
   if (v.hidden || !v.querySelector('.vname').textContent.endsWith(LAB[name] || name)) return;
   if (d.err) {
@@ -771,9 +772,9 @@ async function openAccountPanel(name) {
       }),
   );
 }
-// ---------------------------------------------------------------- aba "uso": quem está gastando cada conta
-// A tabela do usage-sessoes, a partir do banco do usage-hist (GET /api/uso?horas=5|24|168), na mesma janela do
-// painel. Uma linha de um agente aberto aqui leva à aba dele.
+// ---------------------------------------------------------------- "usage" tab: who is spending each account
+// The usage-sessoes table, from the usage-hist database (GET /api/uso?horas=5|24|168), in the same window as the
+// panel. A row of an agent that is open here leads to its tab.
 const normDir = (d) => (d || '').replace(/\/+$/, '');
 const agentAt = (host, cwd) => {
   const a = agents.find((x) => live(x) && !isLevel(x) && x.host === host && x.dir && normDir(x.dir) === normDir(cwd));
@@ -782,15 +783,15 @@ const agentAt = (host, cwd) => {
 async function openUsageView(hours) {
   const v = $('view');
   v.hidden = false;
-  v.querySelector('.vname').textContent = 'Uso · quem está gastando cada conta';
+  v.querySelector('.vname').textContent = 'Usage · who is spending each account';
   v.querySelector('.vsize').textContent = '';
   v.querySelector('.vdl').hidden = true;
   const body = v.querySelector('.vbody');
-  const tabs = [5, 24, 168].map((h) => `<button class="ghost ${h === hours ? 'on' : ''}" data-h="${h}">${h === 168 ? '7 dias' : `${h} h`}</button>`).join('');
-  body.innerHTML = `<div class="apanel"><div class="ptabs">${tabs}</div><div class="uwrap small mute">carregando…</div></div>`;
+  const tabs = [5, 24, 168].map((h) => `<button class="ghost ${h === hours ? 'on' : ''}" data-h="${h}">${h === 168 ? '7 days' : `${h} h`}</button>`).join('');
+  body.innerHTML = `<div class="apanel"><div class="ptabs">${tabs}</div><div class="uwrap small mute">loading…</div></div>`;
   body.querySelectorAll('.ptabs button').forEach((b) => (b.onclick = () => openUsageView(Number(b.dataset.h))));
   const d = await api(`/api/uso?horas=${hours}`);
-  if (v.hidden || !v.querySelector('.vname').textContent.startsWith('Uso')) return;
+  if (v.hidden || !v.querySelector('.vname').textContent.startsWith('Usage')) return;
   const wrap = body.querySelector('.uwrap');
   if (!wrap) return;
   if (d.err) {
@@ -799,11 +800,11 @@ async function openUsageView(hours) {
   }
   wrap.classList.remove('small', 'mute');
   const down = Object.keys(d.errors || {});
-  const when = d.collected ? new Date(d.collected).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '?';
+  const when = d.collected ? new Date(d.collected).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '?';
   wrap.innerHTML =
     usageTableHtml(d, { color: colorOf, agentFor: agentAt }) +
-    `<p class="small mute">parte: fatia de cada linha no consumo da conta na janela · ≈pts: pontos da semana estimados pelos tokens · ●: respondeu nos últimos 10 min · linhas em destaque: agentes abertos aqui (clique para ir à aba)</p>
-     <p class="small mute">coleta das ${esc(when)}${down.length ? ` · sem resposta: ${esc(down.join(', '))}` : ''}</p>`;
+    `<p class="small mute">share: each row's slice of the account's usage in the window · ≈pts: weekly points estimated from the tokens · ●: responded in the last 10 min · highlighted rows: agents open here (click to go to the tab)</p>
+     <p class="small mute">collected at ${esc(when)}${down.length ? ` · no response: ${esc(down.join(', '))}` : ''}</p>`;
   wrap.querySelectorAll('tr.go').forEach(
     (tr) =>
       (tr.onclick = () => {
@@ -818,43 +819,43 @@ function accountPanelHtml(d) {
   const star = (p) => (p ? '*' : '');
   const resetIn = w7.resets_at ? left(Math.max(0, (new Date(w7.resets_at) - Date.now()) / 1e3)) : '';
   const kpis = [
-    ['semana', `${ptsTxt(w7.pct, 0)}%`, resetIn ? `reset em ${resetIn}` : ''],
-    ['5 h', `${ptsTxt(w5.pct, 0)}%`, w5.resets_at ? `reset em ${left(Math.max(0, (new Date(w5.resets_at) - Date.now()) / 1e3))}` : 'janela não iniciada'],
-    ['hoje', `+${ptsTxt(d.today_7d)}${star(d.today_partial)}`, 'pontos da semana'],
-    ['ritmo', `${ptsTxt(d.rate_6h, 2)}${star(d.rate_partial)}`, 'pontos/h, últimas 6 h'],
-    ['previsão', d.hours_to_100 == null ? '—' : left(Math.round(d.hours_to_100 * 3600)), d.hours_to_100 == null ? 'ritmo baixo demais para prever' : d.before_reset ? '⚠ até 100%, antes do reset' : 'até 100%, depois do reset'],
+    ['week', `${ptsTxt(w7.pct, 0)}%`, resetIn ? `reset in ${resetIn}` : ''],
+    ['5 h', `${ptsTxt(w5.pct, 0)}%`, w5.resets_at ? `reset in ${left(Math.max(0, (new Date(w5.resets_at) - Date.now()) / 1e3))}` : 'window not started'],
+    ['today', `+${ptsTxt(d.today_7d)}${star(d.today_partial)}`, 'weekly points'],
+    ['pace', `${ptsTxt(d.rate_6h, 2)}${star(d.rate_partial)}`, 'points/h, last 6 h'],
+    ['forecast', d.hours_to_100 == null ? '—' : left(Math.round(d.hours_to_100 * 3600)), d.hours_to_100 == null ? 'pace too low to forecast' : d.before_reset ? '⚠ until 100%, before the reset' : 'until 100%, after the reset'],
   ]
-    .map(([k, val, sub]) => `<div class="kpi${k === 'previsão' && d.before_reset ? ' bad' : ''}"><span class="k">${k}</span>${val ? `<b>${esc(val)}</b>` : ''}<span class="s">${esc(sub)}</span></div>`)
+    .map(([k, val, sub]) => `<div class="kpi${k === 'forecast' && d.before_reset ? ' bad' : ''}"><span class="k">${k}</span>${val ? `<b>${esc(val)}</b>` : ''}<span class="s">${esc(sub)}</span></div>`)
     .join('');
   const rows = (list) =>
     (list || []).length
-      ? `<table><tr><th>máquina</th><th>pasta</th><th>tipo</th><th class="r">sessões</th><th class="r">≈pts</th></tr>${list
+      ? `<table><tr><th>machine</th><th>folder</th><th>type</th><th class="r">sessions</th><th class="r">≈pts</th></tr>${list
           .map(
             (r) =>
               `<tr><td>${esc(r.host)}</td><td title="${esc(r.folder)}">${esc(r.folder)}</td><td>${esc(r.kind)}</td><td class="r">${r.sessions}</td><td class="r">${r.pts == null ? '?' : ptsTxt(r.pts)}</td></tr>`,
           )
           .join('')}</table>`
-      : '<p class="small mute">nada no período</p>';
+      : '<p class="small mute">nothing in the period</p>';
   const cal = d.calibration && d.calibration.tokens_per_point;
   const notes = [
-    cal ? `1 ponto ≈ ${(cal / 1e6).toFixed(2).replace('.', ',')}M tokens ponderados (calibração com ${ptsTxt(d.calibration.points)} pontos em 7 dias)` : '≈pts aparece quando a calibração tiver 3 pontos de amostra',
-    d.first_sample ? `cota coletada desde ${new Date(d.first_sample).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}; * = desde o início da coleta` : '',
+    cal ? `1 point ≈ ${(cal / 1e6).toFixed(2)}M weighted tokens (calibration with ${ptsTxt(d.calibration.points)} points over 7 days)` : '≈pts shows up once the calibration has 3 sample points',
+    d.first_sample ? `quota collected since ${new Date(d.first_sample).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}; * = since collection started` : '',
   ].filter(Boolean);
   return `<div class="kpis">${kpis}</div>
     ${(d.alerts || []).map((a) => `<div class="palert">${esc(a)}</div>`).join('')}
-    <h4>semana até o reset <span class="mute small">— linha cheia: % usada · tracejado cinza: ritmo da janela · tracejado colorido: projeção no ritmo atual</span></h4>
+    <h4>week up to the reset <span class="mute small">— solid line: % used · gray dashes: window pace · colored dashes: projection at the current pace</span></h4>
     ${weekChart(d.week, d.now, d.rate_6h, window.innerWidth < 600 ? { w: 360, h: 220 } : undefined)}
-    <div class="pcols"><div><h4>últimas 24 h <span class="mute small">pontos por hora</span></h4>${hourChart(d.hourly_24h || [], d.t24)}</div>
-      <div><h4>últimos 7 dias <span class="mute small">pontos por dia</span></h4>${dayChart(d.days_7 || [])}</div></div>
-    <h4>o que mais gastou</h4>
-    <div class="ptabs"><button class="ghost on" data-p="24">24 h</button><button class="ghost" data-p="7">7 dias</button></div>
+    <div class="pcols"><div><h4>last 24 h <span class="mute small">points per hour</span></h4>${hourChart(d.hourly_24h || [], d.t24)}</div>
+      <div><h4>last 7 days <span class="mute small">points per day</span></h4>${dayChart(d.days_7 || [])}</div></div>
+    <h4>what spent the most</h4>
+    <div class="ptabs"><button class="ghost on" data-p="24">24 h</button><button class="ghost" data-p="7">7 days</button></div>
     <div class="ptable" data-p="24">${rows(d.projects_24h)}</div><div class="ptable" data-p="7" hidden>${rows(d.projects_7d)}</div>
     ${notes.map((n) => `<p class="small mute">${esc(n)}</p>`).join('')}`;
 }
 function closeView() {
   const v = $('view');
   v.hidden = true;
-  v.querySelector('.vbody').innerHTML = ''; // para o vídeo e solta a conexão
+  v.querySelector('.vbody').innerHTML = ''; // stops the video and releases the connection
 }
 function renderLevelCards(base) {
   const box = $('levels').querySelector('.lcards');
@@ -867,13 +868,13 @@ function renderLevelCards(base) {
       const a = agentOf(l) || tabs[l]?.a || {};
       const st = a.state || '';
       const pend = st === 'permission' && tabs[l]?.pend;
-      // permissão pendente num nível que não está no chat: responde aqui mesmo (pergunta abre o chat dele)
+      // permission pending on a level that is not in the chat: answer right here (a question opens its chat)
       const ask = pend
         ? pend.ask
-          ? `<div class="lask"><span class="small">pergunta: ${esc((pend.request.input?.questions || [])[0]?.question || '').slice(0, 80)}</span><button class="go">responder</button></div>`
-          : `<div class="lask"><code>${esc(toolName(pend.request.tool_name))} ${esc(toolSummary(pend.request.input)).slice(0, 80)}</code><span class="lbtns"><button data-ok="1">Permitir</button><button data-ok="0">Negar</button></span></div>`
+          ? `<div class="lask"><span class="small">question: ${esc((pend.request.input?.questions || [])[0]?.question || '').slice(0, 80)}</span><button class="go">answer</button></div>`
+          : `<div class="lask"><code>${esc(toolName(pend.request.tool_name))} ${esc(toolSummary(pend.request.input)).slice(0, 80)}</code><span class="lbtns"><button data-ok="1">Allow</button><button data-ok="0">Deny</button></span></div>`
         : '';
-      return `<div class="lcard ${st} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" style="--lc:${levelColor(l)}" title="${esc(l)}: ver o chat cru deste nível">
+      return `<div class="lcard ${st} ${l === cur ? 'on' : ''}" data-l="${esc(l)}" style="--lc:${levelColor(l)}" title="${esc(l)}: see the raw chat of this level">
         <div class="lrow"><span class="dot"></span><b>${esc(levelName(l))}</b><span class="small mute">${esc(ST[st] || st)}${a.msg && st !== 'working' ? ' · ' + esc(a.msg).slice(0, 40) : ''}</span></div>${ask}</div>`;
     })
     .join('');
@@ -900,7 +901,7 @@ function askDowngrade(base) {
     t._down = false;
     agentApi(base, 'downgrade').then((j) => {
       if (!j.stopped) return;
-      toast(`níveis encerrados: ${j.stopped.map(levelName).join(', ')}`);
+      toast(`levels closed: ${j.stopped.map(levelName).join(', ')}`);
       for (const l of j.stopped) {
         const a = agentOf(l);
         if (a) a.state = 'closed';
@@ -911,10 +912,10 @@ function askDowngrade(base) {
     return;
   }
   t._down = true;
-  toast('clique de novo em ↓ desfazer para encerrar os níveis (o executor continua)');
+  toast('click ↓ undo again to close the levels (the executor keeps going)');
   setTimeout(() => (t._down = false), 4000);
 }
-/** Um fio: SendMessage saindo de `from` (wireOut) ou chegando (wireIn); a mesma mensagem vira "entregue". */
+/** A wire: SendMessage leaving `from` (wireOut) or arriving (wireIn); the same message becomes "delivered". */
 function wire(t, a) {
   const base = baseOf(t.a?.label || cur);
   const w = wiresOf(base);
@@ -925,7 +926,7 @@ function wire(t, a) {
     const el = document.createElement('div');
     el.className = 'wire out';
     el.style.setProperty('--lc', levelColor(from));
-    el.innerHTML = `<div class="wh"><b>${esc(levelName(from))}</b><span>→ ${esc(to)}</span><span class="st" title="enviado">…</span></div>${
+    el.innerHTML = `<div class="wh"><b>${esc(levelName(from))}</b><span>→ ${esc(to)}</span><span class="st" title="sent">…</span></div>${
       a.summary ? `<div class="sum">${esc(a.summary)}</div>` : ''
     }<pre></pre>`;
     el.querySelector('pre').textContent = a.message;
@@ -942,7 +943,7 @@ function wire(t, a) {
     if (sent) {
       sent.classList.add('delivered');
       sent.querySelector('.st').textContent = '✓✓';
-      sent.querySelector('.st').title = 'entregue em ' + levelName(from);
+      sent.querySelector('.st').title = 'delivered to ' + levelName(from);
       return;
     }
     const el = document.createElement('div');
@@ -983,21 +984,21 @@ function stream(l) {
 function apply(t, a) {
   if (a.state) setState(t, a.state, a.msg);
   const lab = t.a?.label || cur;
-  if (a.kind === 'permission' && !a.replayed) needsYou(lab, 'pede permissão', toolName(a.request.tool_name) + ' ' + toolSummary(a.request.input));
-  else if (a.kind === 'ask' && !a.replayed) needsYou(lab, 'pergunta', (a.request.input?.questions || [])[0]?.question);
-  else if (a.kind === 'result' && !t.a?.replaying) needsYou(lab, a.isError ? 'erro' : 'terminou', a.text || t.lastText || '');
+  if (a.kind === 'permission' && !a.replayed) needsYou(lab, 'asks permission', toolName(a.request.tool_name) + ' ' + toolSummary(a.request.input));
+  else if (a.kind === 'ask' && !a.replayed) needsYou(lab, 'question', (a.request.input?.questions || [])[0]?.question);
+  else if (a.kind === 'result' && !t.a?.replaying) needsYou(lab, a.isError ? 'error' : 'finished', a.text || t.lastText || '');
   if (a.kind === 'text') t.lastText = a.text;
-  if (a.kind === 'result' && !t.a?.replaying) setTimeout(() => loadFiles(baseOf(lab)), 800); // a rodada pode ter deixado arquivo na _outbox
+  if (a.kind === 'result' && !t.a?.replaying) setTimeout(() => loadFiles(baseOf(lab)), 800); // the round may have left a file in _outbox
   switch (a.kind) {
     case 'sys':
       add(t, `<div class="sys ${esc(a.level)}">${esc(a.text)}</div>`);
-      if (/agente encerrado|claude saiu/.test(a.text)) {
+      if (/agent closed|claude exited|agente encerrado|claude saiu/.test(a.text)) {
         setState(t, 'closed', '');
         setTimeout(refresh, 1500);
       }
       return;
     case 'interrupted':
-      return add(t, `<div class="sys">interrompido por você</div>`);
+      return add(t, `<div class="sys">interrupted by you</div>`);
     case 'permissionAnswered': {
       if (t.pend?.requestId === a.requestId) t.pend = null;
       renderLevelCards(baseOf(t.a?.label || cur));
@@ -1005,7 +1006,7 @@ function apply(t, a) {
       if (!p) return;
       p.classList.add('done');
       const ask = p.classList.contains('ask');
-      const txt = a.behavior === 'allow' ? (ask ? 'respondido' : 'permitido') : ask ? 'cancelado' : 'negado';
+      const txt = a.behavior === 'allow' ? (ask ? 'answered' : 'allowed') : ask ? 'canceled' : 'denied';
       p.querySelector('.btns').innerHTML = `<span class="small mute">${txt}</span>`;
       return;
     }
@@ -1028,10 +1029,10 @@ function apply(t, a) {
       return;
     }
     case 'wireIn': {
-      // no chat deste nível: um chip "de <quem>"; no painel: entrega do fio
+      // in the chat of this level: a "from <who>" chip; in the panel: delivery of the wire
       const ch = add(
         t,
-        `<div class="chip peer"><div class="head"><b>de ${esc(a.from)}</b><span class="sum">${esc(firstLine(a.text))}</span><span class="st">▸</span></div><pre></pre></div>`,
+        `<div class="chip peer"><div class="head"><b>from ${esc(a.from)}</b><span class="sum">${esc(firstLine(a.text))}</span><span class="st">▸</span></div><pre></pre></div>`,
       );
       ch.querySelector('pre').textContent = a.text;
       ch.querySelector('.head').onclick = () => ch.classList.toggle('open');
@@ -1064,9 +1065,9 @@ function apply(t, a) {
       if (ch.dataset.wire) {
         const msgId = sentMsgId(a.text);
         wire(t, { kind: 'sent', id: a.toolUseId, msgId });
-        if (!a.isError && msgId) return; // o JSON do envio não interessa; o chip mantém a mensagem
+        if (!a.isError && msgId) return; // the JSON of the send is of no interest; the chip keeps the message
       }
-      ch.querySelector('pre').textContent = a.text || '(sem saída)';
+      ch.querySelector('pre').textContent = a.text || '(no output)';
       return;
     }
     case 'text': {
@@ -1126,14 +1127,14 @@ function apply(t, a) {
   }
 }
 
-// ---------------------------------------------------------------- permissões
+// ---------------------------------------------------------------- permissions
 function permCard(t, a) {
   const r = a.request;
   const p = add(
     t,
-    `<div class="perm"><div class="t">Permissão: ${esc(r.display_name || r.tool_name)}</div>${
+    `<div class="perm"><div class="t">Permission: ${esc(r.display_name || r.tool_name)}</div>${
       r.description ? `<div class="small mute">${esc(r.description)}</div>` : ''
-    }<pre>${esc(permissionBody(r.input))}</pre><div class="btns"><button data-ok="1">Permitir</button><button data-ok="0">Negar</button></div></div>`,
+    }<pre>${esc(permissionBody(r.input))}</pre><div class="btns"><button data-ok="1">Allow</button><button data-ok="0">Deny</button></div></div>`,
   );
   t.perms[a.requestId] = p;
   p.querySelectorAll('button').forEach(
@@ -1151,15 +1152,15 @@ function askForm(t, a) {
     `<label class="opt"><input type="${q.multiSelect ? 'checkbox' : 'radio'}" name="q${i}" value="${esc(label)}"><span>${inner}</span></label>`;
   const p = add(
     t,
-    `<div class="perm ask"><div class="t">O agente pergunta</div>${qs
+    `<div class="perm ask"><div class="t">The agent asks</div>${qs
       .map(
         (q, i) => `<div class="q"><div class="qh">${esc(q.header || '')}</div><div class="qt">${esc(q.question)}</div><div class="opts">${(
           q.options || []
         )
           .map((o) => opt(q, i, o.label, `<b>${esc(o.label)}</b>${o.description ? `<small>${esc(o.description)}</small>` : ''}`))
-          .join('')}${opt(q, i, '__other__', '<input type="text" class="otxt" placeholder="Outro…">')}</div></div>`,
+          .join('')}${opt(q, i, '__other__', '<input type="text" class="otxt" placeholder="Other…">')}</div></div>`,
       )
-      .join('')}<div class="btns"><button class="ok">Responder</button><button class="no">Cancelar</button></div></div>`,
+      .join('')}<div class="btns"><button class="ok">Answer</button><button class="no">Cancel</button></div></div>`,
   );
   t.perms[a.requestId] = p;
   p.querySelectorAll('.otxt').forEach((tx) =>
@@ -1175,19 +1176,19 @@ function askForm(t, a) {
       ),
     );
     const answers = collectAnswers(qs, picked);
-    if (!answers) return toast('responda todas as perguntas');
+    if (!answers) return toast('answer all the questions');
     agentApi(t.a.label, 'permission', { request_id: a.requestId, allow: true, input: { ...inp, answers } });
   };
   p.querySelector('.no').onclick = () => agentApi(t.a.label, 'permission', { request_id: a.requestId, allow: false });
 }
 
-// ---------------------------------------------------------------- anexos
-let queue = []; // arquivos escolhidos, ainda não enviados (File[])
+// ---------------------------------------------------------------- attachments
+let queue = []; // files chosen, not uploaded yet (File[])
 function renderFiles() {
   const box = $('files');
   box.hidden = !queue.length;
   box.innerHTML = queue
-    .map((f, i) => `<span class="fchip" title="${esc(f.name)}">📄 ${esc(f.name)} <small>${fmtBytes(f.size)}</small><b data-i="${i}" title="remover">✕</b></span>`)
+    .map((f, i) => `<span class="fchip" title="${esc(f.name)}">📄 ${esc(f.name)} <small>${fmtBytes(f.size)}</small><b data-i="${i}" title="remove">✕</b></span>`)
     .join('');
   box.querySelectorAll('b[data-i]').forEach((b) => (b.onclick = () => { queue.splice(+b.dataset.i, 1); renderFiles(); }));
 }
@@ -1199,7 +1200,7 @@ function addFiles(list) {
 async function uploadAll(label) {
   const paths = [];
   for (const f of queue) {
-    toast(`enviando ${f.name}…`);
+    toast(`uploading ${f.name}…`);
     const r = await fetch(`/api/agent/${encodeURIComponent(label)}/upload`, {
       method: 'POST',
       headers: { 'X-Orq-Token': T, 'X-Filename': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' },
@@ -1207,7 +1208,7 @@ async function uploadAll(label) {
     });
     const j = await r.json().catch(() => ({}));
     if (j.err) {
-      toast(`falhou ${f.name}: ${j.err}`);
+      toast(`${f.name} failed: ${j.err}`);
       return null;
     }
     paths.push(j.path);
@@ -1218,7 +1219,7 @@ $('attach').onclick = () => $('fileinput').click();
 $('fileinput').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
 for (const ev of ['dragenter', 'dragover']) document.addEventListener(ev, (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); document.body.classList.add('drag'); } });
 for (const ev of ['dragleave', 'drop']) document.addEventListener(ev, (e) => { if (ev === 'drop' || e.relatedTarget === null) document.body.classList.remove('drag'); });
-document.addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); if (cur) addFiles(e.dataTransfer.files); else toast('abra uma aba antes de soltar arquivos'); } });
+document.addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); if (cur) addFiles(e.dataTransfer.files); else toast('open a tab before dropping files'); } });
 
 // ---------------------------------------------------------------- composer
 async function send() {
@@ -1228,7 +1229,7 @@ async function send() {
   let paths = [];
   if (queue.length) {
     paths = await uploadAll(cur);
-    if (!paths) return; // falhou: mantém texto e fila para tentar de novo
+    if (!paths) return; // failed: keeps the text and the queue to try again
     queue = [];
     renderFiles();
   }
@@ -1303,16 +1304,16 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ---------------------------------------------------------------- abrir projeto / subir nível
+// ---------------------------------------------------------------- open project / add level
 function picker(title, hint, rowsHtml) {
   $('picker').hidden = false;
   $('ptitle').textContent = title;
   $('phint').innerHTML = hint;
   $('pnewrow').hidden = !rowsHtml ? false : true;
-  $('plist').innerHTML = rowsHtml || 'carregando…';
+  $('plist').innerHTML = rowsHtml || 'loading…';
 }
 async function openPicker(host) {
-  picker(host ? `Abrir projeto em ${host}` : 'Abrir projeto', 'Projetos recentes em todas as máquinas. Ou uma pasta nova: <code>maquina:/caminho</code>');
+  picker(host ? `Open project on ${host}` : 'Open project', 'Recent projects on all machines. Or a new folder: <code>machine:/path</code>');
   $('pnew').value = host ? `${host}:~/` : '';
   const s = await api('/api/projects');
   $('plist').innerHTML =
@@ -1323,23 +1324,23 @@ async function openPicker(host) {
       <span>${esc(p.host)}</span><span class="path" title="${esc(p.cwd)}">${esc(p.short || p.cwd)}</span>
       <span class="mute">${esc(p.account || '')}</span><span class="mute small">${ago(p.mtime)}</span><span class="ttl">${esc(p.title || '')}</span></div>`,
       )
-      .join('') || '<div class="mute">nenhum projeto recente</div>';
+      .join('') || '<div class="mute">no recent projects</div>';
   $('plist').querySelectorAll('.p').forEach((el) => (el.onclick = () => openAgent(JSON.parse(el.dataset.p), 'resume')));
 }
 async function openLevelPicker(base) {
   picker(
-    `Níveis sobre ${base.split('@')[0]}`,
-    'Sobe um nível de cima (professor etc.) na mesma máquina, pasta e conta. A aba passa a falar com ele; o agente atual vira o executor e recebe o trabalho pelo SendMessage.',
+    `Levels above ${base.split('@')[0]}`,
+    'Adds a level above (teacher etc.) on the same machine, folder and account. The tab starts talking to it; the current agent becomes the executor and receives the work through SendMessage.',
     '…',
   );
   if (agentOf(base) && !agentOf(base).name) {
-    // aberto antes de os agentes subirem com -n: sem nome o SendMessage não o acha. Reabre na mesma conversa.
-    $('plist').innerHTML = `<div class="mute">Este agente abriu sem nome e os níveis não conseguiriam falar com ele.
-      <b>Reabrir</b> fecha e reabre a mesma conversa, já com nome (leva uns segundos).</div>
-      <div class="prow"><button class="ok">↻ Reabrir com nome</button></div>`;
+    // opened before agents were started with -n: without a name SendMessage cannot find it. Reopens in the same conversation.
+    $('plist').innerHTML = `<div class="mute">This agent was opened without a name and the levels would not be able to talk to it.
+      <b>Reopen</b> closes and reopens the same conversation, now with a name (takes a few seconds).</div>
+      <div class="prow"><button class="ok">↻ Reopen with a name</button></div>`;
     $('plist').querySelector('.ok').onclick = async () => {
       $('picker').hidden = true;
-      toast(`reabrindo ${base.split('@')[0]}…`);
+      toast(`reopening ${base.split('@')[0]}…`);
       const j = await agentApi(base, 'reopen');
       if (!j.label) return;
       if (tabs[base]) {
@@ -1349,7 +1350,7 @@ async function openLevelPicker(base) {
       cur = null;
       await refresh();
       show(base);
-      toast(`${base.split('@')[0]} reaberto com nome; agora ⇅ subir nível`);
+      toast(`${base.split('@')[0]} reopened with a name; now ⇅ add level`);
     };
     return;
   }
@@ -1359,47 +1360,47 @@ async function openLevelPicker(base) {
       .map(
         (p) => {
           const nl = p.multi ? linksOf(base).length : 0;
-          const tail = p.multi ? (nl ? ` → ${nl + 1} executores (este + ${nl} vinculados)` : ' → executor (nenhum vinculado ainda: 🔗 antes)') : ' → executor';
+          const tail = p.multi ? (nl ? ` → ${nl + 1} executors (this one + ${nl} linked)` : ' → executor (none linked yet: 🔗 first)') : ' → executor';
           return `<div class="p lvp" data-id="${esc(p.id)}"><span class="path"><b>${esc(p.titulo)}</b></span><span class="mute small">${esc(
             p.niveis.join(' → '),
           )}${esc(tail)}</span><span class="ttl">${esc(p.descricao)}</span></div>`;
         },
       )
-      .join('') || '<div class="mute">nenhuma receita em orqweb/pipelines</div>';
+      .join('') || '<div class="mute">no recipe in orqweb/pipelines</div>';
   $('plist').querySelectorAll('.p').forEach((el) => (el.onclick = () => upgrade(base, el.dataset.id)));
 }
 async function upgrade(base, pipeline) {
   $('picker').hidden = true;
-  toast(`subindo níveis sobre ${base.split('@')[0]}…`);
+  toast(`adding levels above ${base.split('@')[0]}…`);
   const j = await agentApi(base, 'upgrade', { pipeline });
   if (!j.top) return;
-  SIDE.view = 'levels'; // o painel mostra os níveis recém-subidos, mesmo que estivesse nos vínculos
+  SIDE.view = 'levels'; // the panel shows the newly added levels, even if it was on the links
   const nl = (j.links || []).length;
   const le = Object.keys(j.link_errors || {}).length;
-  toast(`${j.levels.map(levelName).reverse().join(' → ')} → ${nl ? `${nl + 1} executores` : 'executor'}; a aba fala com ${levelName(j.top)}${le ? ` (${le} vínculo(s) falharam)` : ''}`);
+  toast(`${j.levels.map(levelName).reverse().join(' → ')} → ${nl ? `${nl + 1} executors` : 'executor'}; the tab talks to ${levelName(j.top)}${le ? ` (${le} link(s) failed)` : ''}`);
   await refresh();
   show(base);
 }
 async function openAgent(p, mode) {
   $('picker').hidden = true;
-  toast(`abrindo ${p.cwd.split('/').pop() || p.cwd} em ${p.host}…`);
+  toast(`opening ${p.cwd.split('/').pop() || p.cwd} on ${p.host}…`);
   const j = await api('/api/agent/open', { ...p, mode });
   if (j.label) {
-    toast(`${j.label} · conta ${j.acc} (${j.why})`);
+    toast(`${j.label} · account ${j.acc} (${j.why})`);
     await refresh();
     show(j.label);
   }
 }
-// ---------------------------------------------------------------- conjuntos
-// ⊞ no topo: um conjunto é um JSON (em ~/.config/orq-web/conjuntos, no servidor) com vários agentes para
-// abrir de uma vez, cada um com prompt e tarefa próprios, com ou sem um professor líder. O servidor abre numa
-// thread; o andamento chega pelo /api/state (conjuntos_abrindo) e vira toast aqui.
-const SETS = { seen: {} }; // id -> última etapa vista, para avisar cada passo uma vez
+// ---------------------------------------------------------------- sets
+// ⊞ at the top: a set is a JSON (in ~/.config/orq-web/conjuntos, on the server) with several agents to
+// open at once, each with its own prompt and task, with or without a lead teacher. The server opens them in a
+// thread; the progress arrives through /api/state (conjuntos_abrindo) and becomes a toast here.
+const SETS = { seen: {} }; // id -> last step seen, to announce each step once
 const setApi = (id, op, body) => api(`/api/conjuntos/${encodeURIComponent(id)}${op ? '/' + op : ''}`, body);
 async function openSetsPicker() {
   picker(
-    'Conjuntos',
-    'Vários agentes de uma vez, cada um com prompt e tarefa próprios, com ou sem um professor líder. Clique para abrir; ⬇ baixa o JSON; ✕ apaga. Se algum agente do conjunto já estiver aberto, a página recusa e diz quais.',
+    'Sets',
+    'Several agents at once, each with its own prompt and task, with or without a lead teacher. Click to open; ⬇ downloads the JSON; ✕ deletes. If any agent of the set is already open, the page refuses and says which ones.',
     '…',
   );
   const s = await api('/api/conjuntos');
@@ -1407,19 +1408,19 @@ async function openSetsPicker() {
   const rows = (s.items || [])
     .map((c) => {
       const open = c.abertos.length;
-      const tag = [`${c.n} agente${c.n === 1 ? '' : 's'}`, c.maquinas.join(', '), c.lider ? '👨‍🏫 professor' : 'independentes', c.permissao]
+      const tag = [`${c.n} agent${c.n === 1 ? '' : 's'}`, c.maquinas.join(', '), c.lider ? '👨‍🏫 teacher' : 'independent', c.permissao]
         .filter(Boolean)
         .join(' · ');
-      return `<div class="p setp" data-id="${esc(c.id)}" title="abrir o conjunto ${esc(c.nome)}">
+      return `<div class="p setp" data-id="${esc(c.id)}" title="open the set ${esc(c.nome)}">
         <span class="path"><b>${esc(c.nome)}</b> <span class="mute small">${esc(tag)}</span></span>
-        <span class="small ${open ? 'bad' : 'mute'}">${open ? `${open} já aberto${open > 1 ? 's' : ''}` : ''}</span>
-        <span class="sbtns"><button class="ghost" data-dl="${esc(c.id)}" title="baixar o JSON">⬇</button><button class="ghost" data-del="${esc(c.id)}" title="apagar o conjunto">✕</button></span>
+        <span class="small ${open ? 'bad' : 'mute'}">${open ? `${open} already open` : ''}</span>
+        <span class="sbtns"><button class="ghost" data-dl="${esc(c.id)}" title="download the JSON">⬇</button><button class="ghost" data-del="${esc(c.id)}" title="delete the set">✕</button></span>
         ${c.descricao ? `<span class="ttl">${esc(c.descricao)}</span>` : ''}</div>`;
     })
     .join('');
   $('plist').innerHTML =
-    `<div class="prow stools"><button id="setup">📄 enviar JSON</button><button id="setsnap">📷 salvar abas abertas</button><span class="mute small">pasta: <code>${esc(s.dir)}</code></span></div>` +
-    (rows || '<div class="mute">nenhum conjunto salvo. Envie um JSON pronto ou fotografe as abas abertas.</div>');
+    `<div class="prow stools"><button id="setup">📄 upload JSON</button><button id="setsnap">📷 save open tabs</button><span class="mute small">folder: <code>${esc(s.dir)}</code></span></div>` +
+    (rows || '<div class="mute">no saved sets. Upload a ready-made JSON or take a snapshot of the open tabs.</div>');
   $('setup').onclick = uploadSet;
   $('setsnap').onclick = snapshotSet;
   $('plist').querySelectorAll('.setp').forEach((el) => {
@@ -1432,18 +1433,18 @@ async function openSetsPicker() {
 }
 async function openSet(id) {
   const j = await setApi(id, 'open', {});
-  if (j.err) return; // o api() já mostrou o motivo (inclusive "já aberto: …")
+  if (j.err) return; // api() has already shown the reason (including "already open: …")
   $('picker').hidden = true;
   SETS.seen[id] = 'abrindo';
-  toast(`⊞ ${j.nome}: abrindo ${j.agentes.map((a) => `${a.label.split('@')[0]} (${LAB[a.acc] || a.acc})`).join(', ')}…`);
+  toast(`⊞ ${j.nome}: opening ${j.agentes.map((a) => `${a.label.split('@')[0]} (${LAB[a.acc] || a.acc})`).join(', ')}…`);
 }
-const SET_STEPS = { abrindo: 'abrindo os agentes…', vínculos: 'vinculando os executores…', professor: 'subindo o professor…', tarefas: 'enviando as tarefas…' };
+const SET_STEPS = { abrindo: 'opening the agents…', vínculos: 'linking the executors…', professor: 'adding the teacher…', tarefas: 'sending the tasks…' };
 function setsProgress(jobs) {
   for (const j of jobs || []) {
     const prev = SETS.seen[j.id];
     if (prev === j.etapa) continue;
     SETS.seen[j.id] = j.etapa;
-    if (prev === undefined && j.etapa === 'pronto') continue; // terminou antes de esta página existir
+    if (prev === undefined && j.etapa === 'pronto') continue; // finished before this page existed
     if (j.etapa !== 'pronto') {
       toast(`⊞ ${j.nome}: ${SET_STEPS[j.etapa] || j.etapa}`);
       continue;
@@ -1451,8 +1452,8 @@ function setsProgress(jobs) {
     const errs = Object.entries(j.erros || {});
     const n = j.labels.length;
     toast(
-      `⊞ ${j.nome}: ${j.feitos.length} de ${n} agente${n === 1 ? '' : 's'} no ar${j.top ? ', com professor' : ''}${
-        errs.length ? `; ${errs.length} problema${errs.length > 1 ? 's' : ''}: ${errs.map(([k, v]) => `${k}: ${v}`).join('; ').slice(0, 240)}` : ''
+      `⊞ ${j.nome}: ${j.feitos.length} of ${n} agent${n === 1 ? '' : 's'} up${j.top ? ', with a teacher' : ''}${
+        errs.length ? `; ${errs.length} problem${errs.length > 1 ? 's' : ''}: ${errs.map(([k, v]) => `${k}: ${v}`).join('; ').slice(0, 240)}` : ''
       }`,
     );
     const first = j.feitos.includes(j.labels[0]) ? j.labels[0] : j.feitos[0];
@@ -1473,13 +1474,13 @@ function deleteSet(id, el) {
   if (el._confirm) {
     setApi(id, 'delete', {}).then((j) => {
       if (j.err) return;
-      toast(`conjunto ${id} apagado`);
+      toast(`set ${id} deleted`);
       openSetsPicker();
     });
     return;
   }
   el._confirm = true;
-  toast(`clique no ✕ de novo para apagar o conjunto ${id}`);
+  toast(`click ✕ again to delete the set ${id}`);
   setTimeout(() => (el._confirm = false), 4000);
 }
 function uploadSet() {
@@ -1493,12 +1494,12 @@ function uploadSet() {
     try {
       data = JSON.parse(await f.text());
     } catch (e) {
-      return toast(`${f.name}: JSON inválido (${e.message})`);
+      return toast(`${f.name}: invalid JSON (${e.message})`);
     }
     if (data && typeof data === 'object' && !data.nome) data.nome = f.name.replace(/\.json$/i, '');
     const j = await api('/api/conjuntos', data);
     if (j.err) return;
-    toast(`conjunto ${j.id} salvo`);
+    toast(`set ${j.id} saved`);
     openSetsPicker();
   };
   inp.click();
@@ -1508,8 +1509,8 @@ async function snapshotSet() {
   if (j.err) return;
   const c = j.conjunto;
   $('phint').innerHTML =
-    'As abas abertas como conjunto: confira o JSON, dê um nome e salve. Só o primeiro professor entra como líder (os outros agentes viram executores dele); o prompt só aparece em agentes que subiram com um.';
-  $('plist').innerHTML = `<div class="prow"><input id="snapname" placeholder="nome do conjunto" value="${esc(c.nome || '')}"><button id="snapsave">salvar</button><button class="ghost" id="snapback">voltar</button></div>
+    'The open tabs as a set: check the JSON, give it a name and save. Only the first teacher goes in as the lead (the other agents become its executors); the prompt only shows up for agents that were started with one.';
+  $('plist').innerHTML = `<div class="prow"><input id="snapname" placeholder="set name" value="${esc(c.nome || '')}"><button id="snapsave">save</button><button class="ghost" id="snapback">back</button></div>
     ${(j.avisos || []).map((w) => `<div class="small bad">${esc(w)}</div>`).join('')}
     <textarea id="snapjson" rows="18" spellcheck="false">${esc(JSON.stringify(c, null, 2))}</textarea>`;
   $('snapback').onclick = openSetsPicker;
@@ -1518,13 +1519,13 @@ async function snapshotSet() {
     try {
       data = JSON.parse($('snapjson').value);
     } catch (e) {
-      return toast(`JSON inválido: ${e.message}`);
+      return toast(`invalid JSON: ${e.message}`);
     }
     const nome = $('snapname').value.trim();
     if (nome) data.nome = nome;
     const r = await api('/api/conjuntos', data);
     if (r.err) return;
-    toast(`conjunto ${r.id} salvo`);
+    toast(`set ${r.id} saved`);
     openSetsPicker();
   };
   $('snapname').focus();
@@ -1533,11 +1534,11 @@ $('pclose').onclick = () => ($('picker').hidden = true);
 $('picker').onclick = (e) => e.target === $('picker') && ($('picker').hidden = true);
 $('popen').onclick = () => {
   const m = $('pnew').value.trim().match(/^([\w.-]+):(.+)$/);
-  if (!m) return toast('use maquina:/caminho');
+  if (!m) return toast('use machine:/path');
   openAgent({ host: m[1], cwd: m[2], account: null }, 'new');
 };
 
-// ---------------------------------------------------------------- estado geral
+// ---------------------------------------------------------------- overall state
 async function refresh() {
   try {
     const s = await api('/api/state');
@@ -1552,40 +1553,41 @@ async function refresh() {
       const t = tabs[a.label];
       if (!t) continue;
       if (t.pid && a.pid && t.pid !== a.pid && a.state !== 'closed') {
-        // o supervisor foi reaberto (troca de conta, reabrir com nome): o log de eventos recomeça do zero
+        // the supervisor was reopened (account switch, reopen with a name): the event log starts again from scratch
         if (t.es) t.es.close();
         t.el?.remove();
         const was = t.was || t.a?.account;
         delete tabs[a.label];
-        if (was && a.account && was !== a.account) toast(`${a.label.split('@')[0]}: conta ${LAB[was] || was} sem cota; continua na ${LAB[a.account] || a.account}`);
+        if (was && a.account && was !== a.account) toast(`${a.label.split('@')[0]}: account ${LAB[was] || was} out of quota; continuing on ${LAB[a.account] || a.account}`);
         if (cur === a.label || chainOf(curBase() || '').includes(a.label)) setTimeout(() => show(curBase() || a.label, true), 0);
         continue;
       }
       if (t.a?.state === 'closed' && a.state !== 'closed' && (!a.pid || a.pid !== t.pid)) {
-        // o stream disse "agente encerrado", mas a lista o tem vivo sem pid (ou com outro): está sendo
-        // reaberto (troca de conta, reabrir com nome). A aba fica, 'abrindo…', até o pid novo chegar e
-        // o ramo acima recriá-la do zero; sem isto ela sumia e a página pulava para outra aba
-        t.was = t.was || t.a.account; // conta de antes, para o aviso de troca
+        // the stream said the agent was closed, but the list has it alive without a pid (or with another one): it
+        // is being reopened (account switch, reopen with a name). The tab stays, 'opening…', until the new pid
+        // arrives and the branch above recreates it from scratch; without this it vanished and the page jumped
+        // to another tab
+        t.was = t.was || t.a.account; // the previous account, for the switch notice
         t.a = a;
         continue;
       }
       if (a.pid) t.pid = a.pid;
-      if (t.a?.state === 'closed') a.state = 'closed'; // encerrado pela página: a máquina pode atrasar
+      if (t.a?.state === 'closed') a.state = 'closed'; // closed by the page: the machine may lag behind
       else if (t.es && a.state !== 'closed' && t.a?.state && t.a.state !== 'starting') {
-        // a aba sabe o estado pelos eventos; a consulta às máquinas atrasa até 15 s. Exceção: 'abrindo…'
-        // é o chute provisório da página, e só a máquina diz quando o agente de fato ficou pronto
+        // the tab knows the state from the events; polling the machines lags by up to 15 s. Exception:
+        // 'opening…' is the page's provisional guess, and only the machine says when the agent is really ready
         a.state = t.a.state;
         a.msg = t.a.msg ?? a.msg;
       }
-      // a lista pode trazer a conta nova (entrada provisória da troca) antes de o pid novo existir;
-      // guarda a de antes para o aviso de troca quando o ramo do pid recriar a aba
+      // the list may bring the new account (provisional entry of the switch) before the new pid exists;
+      // keep the previous one for the switch notice when the pid branch recreates the tab
       if (t.a?.account && a.account && a.account !== t.a.account) t.was = t.was || t.a.account;
       t.a = a;
     }
     dropClosed();
     const base = curBase();
     if (base && agentOf(base)?.kind === 'sdk') {
-      // níveis que apareceram (upgrade feito noutra janela, ou recém-subidos) entram na cadeia ligada
+      // levels that showed up (upgrade done in another window, or newly added) join the connected chain
       for (const k of chainOf(base)) {
         const t = tab(k);
         t.a = agentOf(k) || t.a;
@@ -1598,7 +1600,7 @@ async function refresh() {
     status();
     setsProgress(s.conjuntos_abrindo);
   } catch (_) {
-    /* servidor fora; tenta no próximo ciclo */
+    /* server down; tries again on the next cycle */
   }
 }
 refresh();

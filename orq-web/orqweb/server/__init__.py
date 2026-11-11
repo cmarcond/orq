@@ -1,1 +1,1 @@
-"""Servidor HTTP e página (orq-web)."""
+"""HTTP server and page (orq-web)."""

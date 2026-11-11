@@ -1,18 +1,19 @@
-"""Conjuntos: um JSON que descreve agentes para abrir juntos, com ou sem um professor líder.
+"""Sets: a JSON that describes agents to open together, with or without a leading teacher.
 
-Um conjunto é dado, como as receitas de níveis: fica em `~/.config/orq-web/conjuntos/<id>.json`
-(`ORQ_SETS_DIR`), e a página lista, abre, recebe um pronto ou fotografa as abas abertas num novo.
+A set is data, like the level recipes: it lives in `~/.config/orq-web/conjuntos/<id>.json`
+(`ORQ_SETS_DIR`), and the page lists, opens, receives a ready-made one or snapshots the open tabs into a
+new one.
 
 ```json
 {"nome": "artigo-kaggle", "descricao": "…", "permissao": "auto",
  "agentes": [{"maquina": "server0", "pasta": "~/Projects/kaggle", "modo": "resume",
-              "conta": "work3", "prompt": "Você cuida do modelo…", "tarefa": "Retome e reporte."}],
+              "conta": "work3", "prompt": "You look after the model…", "tarefa": "Resume and report."}],
  "lider": {"receita": "professor-executores", "prompt": "…", "tarefa": "…"}}
 ```
 
-Sem `lider`, cada agente sobe independente. Com `lider`, o professor sobe acima do primeiro agente e os
-demais são vinculados a ele (receita `professor-executores`), como o ⇅ da página já faz. Este módulo é
-puro (formato, validação, catálogo, plano e fotografia); quem abre de fato é `handlers.open_set_job`.
+Without `lider`, each agent starts independently. With `lider`, the teacher is added above the first agent
+and the others are linked to it (recipe `professor-executores`), as the page's ⇅ already does. This module is
+pure (format, validation, catalog, plan and snapshot); what actually opens is `handlers.open_set_job`.
 """
 
 import json
@@ -38,61 +39,59 @@ def sets_dir() -> Path:
 
 
 def set_id(nome: Any) -> str:
-    """Id (nome do arquivo) a partir do nome: minúsculas, `[a-z0-9_-]`, até 60 caracteres."""
+    """Id (file name) from the name: lower case, `[a-z0-9_-]`, up to 60 characters."""
     s = re.sub(r"[^a-z0-9_-]+", "-", str(nome or "").strip().lower()).strip("-")
     return s[:60].rstrip("-")
 
 
-# ------------------------------------------------------------------ validação
+# ------------------------------------------------------------------ validation
 def _text(v: Any) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
 def validate(data: Any, hosts: Iterable[str], accounts: Iterable[str], recipes: Iterable[str]) -> dict:
-    """Confere e normaliza um conjunto. Levanta ValueError com todos os problemas de uma vez."""
+    """Checks and normalises a set. Raises ValueError with all the problems at once."""
     errs: List[str] = []
     if not isinstance(data, dict):
-        raise ValueError("o conjunto precisa ser um objeto JSON")
+        raise ValueError("the set must be a JSON object")
     for k in data:
         if k not in SET_KEYS:
-            errs.append(f"campo desconhecido: {k}")
+            errs.append(f"unknown field: {k}")
     out: Dict[str, Any] = {"nome": _text(data.get("nome")), "descricao": _text(data.get("descricao"))}
     if not set_id(out["nome"]):
-        errs.append("`nome` é obrigatório (vira o id do arquivo)")
+        errs.append("`nome` is required (it becomes the id of the file)")
     perm = _text(data.get("permissao"))
     if perm and perm not in PERMISSIONS:
-        errs.append(f"`permissao` precisa ser um de {', '.join(PERMISSIONS)}: {perm!r}")
+        errs.append(f"`permissao` must be one of {', '.join(PERMISSIONS)}: {perm!r}")
     out["permissao"] = perm or None
     hosts, accounts, recipes = list(hosts), list(accounts), list(recipes)
     agentes = data.get("agentes")
     if not isinstance(agentes, list) or not agentes:
-        errs.append("`agentes` precisa ser uma lista com pelo menos um agente")
+        errs.append("`agentes` must be a list with at least one agent")
         agentes = []
     seen: List[Tuple[str, str]] = []
     out["agentes"] = []
     for i, a in enumerate(agentes, 1):
         if not isinstance(a, dict):
-            errs.append(f"agente {i}: precisa ser um objeto")
+            errs.append(f"agent {i}: must be an object")
             continue
         for k in a:
             if k not in AGENT_KEYS:
-                errs.append(f"agente {i}: campo desconhecido: {k}")
+                errs.append(f"agent {i}: unknown field: {k}")
         host, cwd = _text(a.get("maquina")), _text(a.get("pasta")).rstrip("/") or _text(a.get("pasta"))
         if host not in hosts:
-            errs.append(
-                f"agente {i}: `maquina` {host!r} não está configurada ({', '.join(hosts) or 'nenhuma'})"
-            )
+            errs.append(f"agent {i}: `maquina` {host!r} is not configured ({', '.join(hosts) or 'none'})")
         if not cwd:
-            errs.append(f"agente {i}: `pasta` é obrigatória")
+            errs.append(f"agent {i}: `pasta` is required")
         mode = _text(a.get("modo")) or "resume"
         if mode not in MODES:
-            errs.append(f"agente {i}: `modo` precisa ser resume ou new: {mode!r}")
+            errs.append(f"agent {i}: `modo` must be resume or new: {mode!r}")
         acc = _text(a.get("conta")) or None
         if acc and acc not in accounts:
-            errs.append(f"agente {i}: `conta` {acc!r} desconhecida ({', '.join(accounts) or 'nenhuma'})")
+            errs.append(f"agent {i}: unknown `conta` {acc!r} ({', '.join(accounts) or 'none'})")
         if host and cwd:
             if any(h == host and same_dir(c, cwd) for h, c in seen):
-                errs.append(f"agente {i}: {host}:{cwd} repetido no conjunto")
+                errs.append(f"agent {i}: {host}:{cwd} repeated in the set")
             seen.append((host, cwd))
         out["agentes"].append(
             {
@@ -108,14 +107,14 @@ def validate(data: Any, hosts: Iterable[str], accounts: Iterable[str], recipes: 
     out["lider"] = None
     if lider is not None:
         if not isinstance(lider, dict):
-            errs.append("`lider` precisa ser um objeto (ou ficar de fora)")
+            errs.append("`lider` must be an object (or be left out)")
         else:
             for k in lider:
                 if k not in LEADER_KEYS:
-                    errs.append(f"lider: campo desconhecido: {k}")
+                    errs.append(f"lider: unknown field: {k}")
             receita = _text(lider.get("receita")) or DEFAULT_RECIPE
             if receita not in recipes:
-                errs.append(f"lider: `receita` {receita!r} desconhecida ({', '.join(recipes) or 'nenhuma'})")
+                errs.append(f"lider: unknown `receita` {receita!r} ({', '.join(recipes) or 'none'})")
             out["lider"] = {
                 "receita": receita,
                 "prompt": _text(lider.get("prompt")),
@@ -127,8 +126,8 @@ def validate(data: Any, hosts: Iterable[str], accounts: Iterable[str], recipes: 
 
 
 def same_dir(a: str, b: str) -> bool:
-    """`~/Projects/x` e `/home/user/Projects/x` são a mesma pasta; o servidor não conhece o HOME remoto,
-    então compara o caminho relativo à pasta pessoal quando dá, e o caminho inteiro quando não."""
+    """`~/Projects/x` and `/home/user/Projects/x` are the same folder; the server does not know the remote
+    HOME, so it compares the path relative to the home folder when it can, and the whole path when not."""
 
     def rel(p: str) -> Tuple[bool, str]:
         p = p.strip().rstrip("/")
@@ -141,13 +140,13 @@ def same_dir(a: str, b: str) -> bool:
     return ra == rb
 
 
-# ------------------------------------------------------------------ catálogo em disco
+# ------------------------------------------------------------------ catalog on disk
 def _path(directory: Optional[Path], sid: str) -> Path:
     return (directory or sets_dir()) / f"{sid}.json"
 
 
 def catalog(directory: Optional[Path] = None) -> Dict[str, dict]:
-    """Conjuntos salvos, por id. Arquivo quebrado é pulado, não derruba a página."""
+    """Saved sets, by id. A broken file is skipped, it does not bring the page down."""
     out: Dict[str, dict] = {}
     d = directory or sets_dir()
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
@@ -164,18 +163,18 @@ def catalog(directory: Optional[Path] = None) -> Dict[str, dict]:
 
 def load(sid: str, directory: Optional[Path] = None) -> dict:
     if sid != set_id(sid) or not sid:
-        raise KeyError(f"conjunto desconhecido: {sid}")
+        raise KeyError(f"unknown set: {sid}")
     try:
         data = json.loads(_path(directory, sid).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raise KeyError(f"conjunto desconhecido: {sid}") from None
+        raise KeyError(f"unknown set: {sid}") from None
     if not isinstance(data, dict):
-        raise KeyError(f"conjunto desconhecido: {sid}")
+        raise KeyError(f"unknown set: {sid}")
     return data
 
 
 def save(data: dict, directory: Optional[Path] = None) -> str:
-    """Grava o conjunto (já validado) e devolve o id."""
+    """Writes the set (already validated) and returns the id."""
     sid = set_id(data.get("nome"))
     p = _path(directory, sid)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -196,7 +195,7 @@ def delete(sid: str, directory: Optional[Path] = None) -> bool:
 
 
 def clean(data: dict) -> dict:
-    """O JSON como vai para o arquivo: sem campos vazios, na ordem do formato."""
+    """The JSON as it goes to the file: without empty fields, in the order of the format."""
     out: Dict[str, Any] = {"nome": data.get("nome", "")}
     if data.get("descricao"):
         out["descricao"] = data["descricao"]
@@ -222,9 +221,9 @@ def clean(data: dict) -> dict:
     return out
 
 
-# ------------------------------------------------------------------ abrir: conflitos e plano
+# ------------------------------------------------------------------ open: conflicts and plan
 def live_in(agents: Iterable[dict], host: str, cwd: str) -> List[str]:
-    """Rótulos dos agentes vivos (da página ou de terminal) nessa máquina e pasta."""
+    """Labels of the live agents (page or terminal) on that machine and folder."""
     return [
         a["label"]
         for a in agents
@@ -237,7 +236,7 @@ def live_in(agents: Iterable[dict], host: str, cwd: str) -> List[str]:
 
 
 def conflicts(data: dict, agents: Iterable[dict]) -> List[str]:
-    """Agentes já abertos que ocupam alguma máquina:pasta do conjunto (a página recusa abrir)."""
+    """Agents already open that occupy some machine:folder of the set (the page refuses to open)."""
     agents = list(agents)
     out: List[str] = []
     for a in data.get("agentes") or []:
@@ -248,8 +247,8 @@ def conflicts(data: dict, agents: Iterable[dict]) -> List[str]:
 def plan(
     data: dict, taken: Iterable[str], usage: Dict[str, dict], accounts: List[str], running: Iterable[str]
 ) -> List[dict]:
-    """Um item por agente, na ordem do JSON: host, cwd, mode, label (único entre os vivos), acc (fixa
-    ou escolhida pela folga, para o conjunto inteiro de uma vez), why, prompt, tarefa."""
+    """One item per agent, in the order of the JSON: host, cwd, mode, label (unique among the live ones), acc
+    (fixed or chosen by slack, for the whole set at once), why, prompt, tarefa."""
     taken = set(taken)
     items = []
     for a in data["agentes"]:
@@ -265,13 +264,13 @@ def plan(
             "tarefa": a.get("tarefa") or "",
         }
         if a.get("conta"):
-            it["acc"], it["why"] = a["conta"], "fixa no conjunto"
+            it["acc"], it["why"] = a["conta"], "fixed in the set"
         items.append(it)
     assign(items, usage, accounts, running)
     return items
 
 
-# ------------------------------------------------------------------ resumo e fotografia
+# ------------------------------------------------------------------ summary and snapshot
 def summary(sid: str, data: dict, agents: Iterable[dict] = ()) -> dict:
     ag = data.get("agentes") or []
     ag = [a for a in ag if isinstance(a, dict)]
@@ -288,7 +287,7 @@ def summary(sid: str, data: dict, agents: Iterable[dict] = ()) -> dict:
 
 
 def infer_recipe(level_names: List[str], has_links: bool, cat: Dict[str, "pipelines.Pipeline"]) -> str:
-    """Receita cujos níveis (do topo para baixo) batem com os que estão de pé; com vinculados, a `multi`."""
+    """Recipe whose levels (from the top down) match the ones that are up; with linked agents, the `multi`."""
     match = [p for p in cat.values() if [n["nome"] for n in p.niveis] == level_names]
     for p in match:
         if p.multi == has_links:
@@ -299,9 +298,9 @@ def infer_recipe(level_names: List[str], has_links: bool, cat: Dict[str, "pipeli
 def snapshot(
     agents: List[dict], links: List[dict], cat: Optional[Dict[str, Any]] = None
 ) -> Tuple[dict, List[str]]:
-    """Um conjunto a partir do que está aberto: um agente por aba (modo resume, conta atual, prompt se
-    subiu com um), e, se alguma aba tem níveis acima, ela vira a primeira e o `lider` ganha a receita.
-    Devolve (conjunto, avisos)."""
+    """A set from what is open: one agent per tab (resume mode, current account, prompt if it
+    started with one), and, if some tab has levels above, it becomes the first and `lider` gets the recipe.
+    Returns (set, warnings)."""
     cat = cat if cat is not None else pipelines.catalog()
     live = [a for a in agents if a.get("state") != "closed" and a.get("kind") == "sdk" and a.get("label")]
     bases = [a for a in live if not a.get("parent")]
@@ -310,9 +309,9 @@ def snapshot(
     first = with_levels[0] if with_levels else None
     if len(with_levels) > 1:
         avisos.append(
-            "só o primeiro professor entra como líder; os de "
+            "only the first teacher goes in as leader; the ones of "
             + ", ".join(b["label"] for b in with_levels[1:])
-            + " ficam de fora"
+            + " are left out"
         )
     ordered = ([first] if first else []) + [b for b in bases if b is not first]
     perms = {b.get("permission") for b in ordered if b.get("permission")}
@@ -320,7 +319,7 @@ def snapshot(
     if len(perms) == 1:
         out["permissao"] = perms.pop()
     elif len(perms) > 1:
-        avisos.append("os agentes abertos têm modos de permissão diferentes; o conjunto fica sem `permissao`")
+        avisos.append("the open agents have different permission modes; the set is left without `permissao`")
     for b in ordered:
         item = {"maquina": b.get("host") or "?", "pasta": b.get("dir") or "", "modo": "resume"}
         if b.get("account"):
@@ -334,7 +333,7 @@ def snapshot(
         recorded = next((a.get("pipeline") for a in lv if a.get("pipeline") in cat), None)
         if recorded:
             receita = recorded
-        else:  # nível de antes desta versão, sem `pipeline` no estado: pelos nomes e pelos vínculos
+        else:  # level from before this version, without `pipeline` in the state: by the names and the links
             has_links = any(
                 first["label"] in (lk.get("local"), lk.get("remote")) and lk.get("up", True) for lk in links
             )

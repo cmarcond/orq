@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -14,25 +14,25 @@
   <nav id="tabs" class="tabs"></nav>
   <aside id="usage" class="usage"></aside>
 </header>
-<main id="chats"><div class="empty" id="empty">Abra um projeto no <b>+</b> para começar.</div>
+<main id="chats"><div class="empty" id="empty">Open a project with <b>+</b> to get started.</div>
 <aside id="side" class="side" hidden><div class="stabs"></div><div id="levels" class="sview" hidden></div><div id="links" class="sview" hidden></div><div id="outbox" class="sview" hidden></div></aside></main>
 <footer id="composer" class="composer" hidden>
-  <div class="cstatus"><span id="cstate"></span><span class="cbtns"><button id="lnk" class="ghost" hidden title="vincular a outro agente da página (qualquer máquina): um pode pedir coisas ao outro pelo SendMessage">🔗 vincular</button><button id="out" class="ghost" hidden title="arquivos que o agente compartilhou com você (pasta _outbox/ do projeto)">📂</button><button id="lvl" class="ghost" hidden title="subir um professor acima deste agente">⇅ subir nível</button><button id="stop" class="ghost" hidden title="interromper (Esc)">■ parar</button></span></div>
+  <div class="cstatus"><span id="cstate"></span><span class="cbtns"><button id="lnk" class="ghost" hidden title="link to another agent on the page (any machine): each can ask the other for things through SendMessage">🔗 link</button><button id="out" class="ghost" hidden title="files the agent shared with you (the project's _outbox/ folder)">📂</button><button id="lvl" class="ghost" hidden title="add a teacher above this agent">⇅ add level</button><button id="stop" class="ghost" hidden title="interrupt (Esc)">■ stop</button></span></div>
   <div id="files" class="files" hidden></div>
   <div class="crow">
-    <button id="attach" class="ghost" title="anexar arquivos (ou arraste para o chat): vão para _inbox/ na pasta do projeto">📎</button>
+    <button id="attach" class="ghost" title="attach files (or drag them onto the chat): they go to _inbox/ in the project folder">📎</button>
     <input id="fileinput" type="file" multiple hidden>
-    <textarea id="input" rows="1" placeholder="Escreva a mensagem… (Enter envia, Shift+Enter quebra linha; arraste arquivos aqui)"></textarea>
-    <button id="send" title="enviar">➤</button>
+    <textarea id="input" rows="1" placeholder="Write a message… (Enter sends, Shift+Enter adds a line break; drag files here)"></textarea>
+    <button id="send" title="send">➤</button>
   </div>
 </footer>
 <div id="picker" class="picker" hidden><div class="pbox">
-  <div class="prow"><b id="ptitle">Abrir projeto</b><button class="ghost" id="pclose">fechar</button></div>
-  <div class="prow small mute" id="phint">Projetos recentes em todas as máquinas. Ou uma pasta nova: <code>maquina:/caminho</code></div>
-  <div class="prow" id="pnewrow"><input id="pnew" placeholder="server0:~/Projects/novo"><button id="popen">abrir</button></div>
-  <div id="plist" class="plist mute">carregando…</div>
+  <div class="prow"><b id="ptitle">Open project</b><button class="ghost" id="pclose">close</button></div>
+  <div class="prow small mute" id="phint">Recent projects on all machines. Or a new folder: <code>machine:/path</code></div>
+  <div class="prow" id="pnewrow"><input id="pnew" placeholder="server0:~/Projects/new"><button id="popen">open</button></div>
+  <div id="plist" class="plist mute">loading…</div>
 </div></div>
-<div id="view" class="view" hidden><div class="vbox"><div class="vhead"><b class="vname"></b><span class="small mute vsize"></span><a class="vdl" href="#" download>⬇ baixar</a><button class="ghost vx" title="fechar (Esc)">✕</button></div><div class="vbody"></div></div></div>
+<div id="view" class="view" hidden><div class="vbox"><div class="vhead"><b class="vname"></b><span class="small mute vsize"></span><a class="vdl" href="#" download>⬇ download</a><button class="ghost vx" title="close (Esc)">✕</button></div><div class="vbody"></div></div></div>
 <div id="toast"></div>
 <script type="module" src="/static/js/app.js"></script>
 </body>

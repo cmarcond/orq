@@ -1,8 +1,8 @@
-"""Escolha da conta de cada projeto, espalhando a carga pelas contas com mais folga no 7d.
+"""Choice of each project's account, spreading the load over the accounts with the most slack on the 7d.
 
-Regras (as mesmas do `orq` do terminal): conta com 5h ou 7d em 95% está sem cota e nunca é
-escolhida; cada agente já rodando numa conta pesa 20 pontos contra ela; ficar na conta da
-conversa vale 10 pontos, para não copiar conversas à toa.
+Rules (the same as the terminal `orq`): an account with 5h or 7d at 95% is out of quota and is never
+chosen; each agent already running on an account weighs 20 points against it; staying on the
+conversation's account is worth 10 points, so as not to copy conversations for nothing.
 """
 
 import os
@@ -19,14 +19,14 @@ def exhausted(u: Optional[dict]) -> bool:
 
 
 def slack(u: dict) -> float:
-    """Pontos abaixo (negativo) ou acima (positivo) do ritmo no 7d."""
+    """Points below (negative) or above (positive) the pace on the 7d."""
     return u.get("7d", 0) - u.get("7d_pace", 0)
 
 
 def assign(
     projs: List[dict], usage: Dict[str, dict], accounts: List[str], running: Iterable[str] = ()
 ) -> List[dict]:
-    """Preenche p["acc"] e p["why"] em cada projeto. p["account"] é a conta da conversa, se houver."""
+    """Fills in p["acc"] and p["why"] in each project. p["account"] is the conversation's account, if any."""
     load = Counter(running)
     healthy = [n for n in accounts if n in usage and not exhausted(usage[n])]
     for p in projs:
@@ -35,7 +35,7 @@ def assign(
             load[p["acc"]] += 1
             continue
         if not healthy:
-            p["acc"], p["why"] = cur or (accounts[0] if accounts else "?"), "nenhuma conta com folga"
+            p["acc"], p["why"] = cur or (accounts[0] if accounts else "?"), "no account with slack"
         else:
             best = min(
                 healthy,
@@ -43,24 +43,24 @@ def assign(
             )
             p["acc"] = best
             if best == cur:
-                p["why"] = "a da conversa"
+                p["why"] = "the conversation's"
             elif not cur:
-                p["why"] = f"mais folga ({slack(usage[best]):+.0f} do ritmo)"
+                p["why"] = f"most slack ({slack(usage[best]):+.0f} from pace)"
             elif cur not in healthy:
-                p["why"] = f"{cur} sem cota"
+                p["why"] = f"{cur} out of quota"
             elif load[cur]:
                 p["why"] = (
-                    f"{cur} já tem {load[cur]} agente(s); {best} está {slack(usage[best]):+.0f} do ritmo"
+                    f"{cur} already has {load[cur]} agent(s); {best} is {slack(usage[best]):+.0f} from pace"
                 )
             else:
                 a, b = slack(usage[best]), slack(usage[cur])
-                p["why"] = f"{best} tem mais folga ({a:+.0f} contra {b:+.0f} da {cur})"
+                p["why"] = f"{best} has more slack ({a:+.0f} against {b:+.0f} for {cur})"
         load[p["acc"]] += 1
     return projs
 
 
 def label_for(cwd: str, host: str, taken: Set[str]) -> str:
-    """`pasta@maquina`, com sufixo -2, -3… se o nome já estiver em uso."""
+    """`folder@machine`, with a -2, -3… suffix if the name is already in use."""
     base = os.path.basename(cwd.rstrip("/")) or "home"
     lab, n = f"{base}@{host}", 1
     while lab in taken:

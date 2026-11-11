@@ -1,4 +1,4 @@
-"""Login por senha: unitários do Auth e do check_bind, e o fluxo HTTP completo com cookie."""
+"""Password login: unit tests of Auth and check_bind, and the full HTTP flow with cookie."""
 
 import http.client
 import json
@@ -33,7 +33,7 @@ def make_auth(tmp_path, password="segredo", **kw):
     return a, slept
 
 
-# ---------------------------------------------------------------- unitários
+# ---------------------------------------------------------------- unit tests
 def test_disabled_without_file_or_empty(tmp_path):
     a, _ = make_auth(tmp_path, password=None)
     assert not a.enabled and a.login("x", "ip") is None
@@ -46,7 +46,7 @@ def test_login_right_and_wrong(tmp_path):
     a, slept = make_auth(tmp_path)
     sid = a.login("segredo", "1.2.3.4")
     assert sid and a.valid(sid) and slept == []
-    assert a.login("errada", "1.2.3.4") is None and slept == [1.0], "falha dorme 1 s"
+    assert a.login("errada", "1.2.3.4") is None and slept == [1.0], "a failure sleeps 1 s"
     assert not a.valid("inexistente") and not a.valid(None)
 
 
@@ -56,7 +56,7 @@ def test_block_after_five_failures_and_release(tmp_path):
     for _ in range(5):
         a.login("errada", "ip")
     assert a.blocked("ip")
-    assert a.login("segredo", "ip") is None, "bloqueado não entra nem com a senha certa"
+    assert a.login("segredo", "ip") is None, "a blocked IP does not get in even with the right password"
     assert not a.blocked("outro-ip")
     clk.t += 61
     assert not a.blocked("ip") and a.login("segredo", "ip")
@@ -67,11 +67,11 @@ def test_session_ttl_and_logout(tmp_path):
     a, _ = make_auth(tmp_path, clock=clk, ttl=100)
     sid = a.login("segredo", "ip")
     clk.t += 90
-    assert a.valid(sid), "uso renova"
+    assert a.valid(sid), "use renews"
     clk.t += 90
     assert a.valid(sid)
     clk.t += 101
-    assert not a.valid(sid), "expirou sem uso"
+    assert not a.valid(sid), "expired without use"
     sid2 = a.login("segredo", "ip")
     a.logout(sid2)
     assert not a.valid(sid2)
@@ -87,14 +87,14 @@ def test_cookie_helpers(tmp_path):
 
 
 def test_login_page_escapes_nothing_dangerous_and_shows_message():
-    assert "<form" in login_page() and "senha incorreta" in login_page("senha incorreta")
+    assert "<form" in login_page() and "wrong password" in login_page("wrong password")
 
 
 def test_check_bind_and_local_host(monkeypatch):
     assert check_bind("127.0.0.1", False) is None
     assert check_bind("10.0.0.10", True) is None
-    assert "recusado" in check_bind("10.0.0.10", False)
-    assert "recusado" in check_bind("0.0.0.0", False)
+    assert "refused" in check_bind("10.0.0.10", False)
+    assert "refused" in check_bind("0.0.0.0", False)
     monkeypatch.delenv("ORQ_LOCAL_HOST", raising=False)
     assert local_host_from_env() == "laptop"
     for v in ("none", "nenhum", "-", ""):
@@ -167,9 +167,7 @@ def test_page_redirects_to_login_without_credentials(server):
     status, body, r = req(port, "GET", "/login")
     assert status == 200 and b"<form" in body
     csp = r.getheader("Content-Security-Policy")
-    assert "form-action 'self'" in csp, (
-        "form-action 'none' bloqueia o próprio formulário de login no navegador"
-    )
+    assert "form-action 'self'" in csp, "form-action 'none' blocks the login form itself in the browser"
     assert req(port, "GET", "/api/state")[0] == 403
 
 
@@ -181,7 +179,8 @@ def test_login_flow_sets_cookie_and_grants_api_and_sse(server):
     status, body, _ = req(port, "GET", "/api/state", headers={"Cookie": sid_cookie})
     assert status == 200 and json.loads(body)["accounts"] == ["gmail"]
     assert req(port, "GET", "/", headers={"Cookie": sid_cookie})[0] == 200
-    # SSE por cookie, sem ?t=: o handler aceita e abre o stream (a ponte vai falhar, mas o 200 vem antes)
+    # SSE by cookie, without ?t=: the handler accepts and opens the stream (the bridge will fail, but the 200
+    # comes first)
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     c.request("GET", "/api/agent/x%40server0/stream?since=0", headers={"Cookie": sid_cookie})
     r = c.getresponse()
@@ -196,7 +195,7 @@ def test_wrong_password_and_block(server):
     for _ in range(4):
         login(port, "errada")
     status, _, _ = login(port, "segredo")
-    assert status == 429, "quinta falha bloqueia o IP por um minuto"
+    assert status == 429, "the fifth failure blocks the IP for a minute"
 
 
 def test_logout_invalidates_cookie(server):
@@ -228,7 +227,7 @@ def test_without_password_file_login_is_off_and_page_is_open(tmp_path):
     try:
         port = srv.server_address[1]
         assert req(port, "GET", "/")[0] == 200, (
-            "sem senha configurada, a página abre como hoje (API segue pedindo o token)"
+            "with no password configured, the page opens as it does today (the API still asks for the token)"
         )
         assert req(port, "POST", "/login", body=b"password=x")[0] == 404
     finally:
@@ -236,7 +235,7 @@ def test_without_password_file_login_is_off_and_page_is_open(tmp_path):
         srv.server_close()
 
 
-# ---------------------------------------------------------------- host local configurável
+# ---------------------------------------------------------------- configurable local host
 def test_external_without_local_host_uses_ssh_for_everything_and_F_config():
     calls = []
 
@@ -254,7 +253,7 @@ def test_external_without_local_host_uses_ssh_for_everything_and_F_config():
     ext2 = External(Path("/b"), run, local_host="server0")
     assert ext2.all_hosts(["laptop"]) == ["server0", "laptop"]
     ext2.spawn("server0", "p@server0", "/p", "gmail", "new")
-    assert calls[-1][0] == "/b/orq-agent", "host local roda direto"
+    assert calls[-1][0] == "/b/orq-agent", "the local host runs directly"
 
 
 def test_pick_host_and_label_respects_local_host():
@@ -262,7 +261,7 @@ def test_pick_host_and_label_respects_local_host():
 
     assert (
         pick_host_and_label({"host": "laptop", "cwd": "/x"}, ["server0"], set(), local=None)[1]
-        == "projeto inválido"
+        == "invalid project"
     )
     p, err = pick_host_and_label({"host": "laptop", "cwd": "/x"}, ["server0", "laptop"], set(), local=None)
     assert err is None and p["label"] == "x@laptop"
@@ -280,14 +279,15 @@ def test_saved_token_comes_from_url_file(tmp_path, monkeypatch):
 
 
 def test_mobile_page_login_returns_to_it(server):
-    """/m sem cookie manda para /login?next=/m; o formulário leva o destino e o login volta para /m."""
+    """/m without a cookie sends to /login?next=/m; the form carries the destination and the login returns
+    to /m."""
     port, _ = server
     status, _, r = req(port, "GET", "/m")
     assert status == 303 and r.getheader("Location") == "/login?next=/m"
     status, body, _ = req(port, "GET", "/login?next=/m")
     assert status == 200 and b'name="next" value="/m"' in body
     status, body, _ = req(port, "GET", "/login?next=/etc/passwd")
-    assert b'name="next" value="/"' in body, "destino desconhecido vira a página normal"
+    assert b'name="next" value="/"' in body, "an unknown destination becomes the normal page"
     status, _, r = req(
         port,
         "POST",
@@ -303,4 +303,6 @@ def test_mobile_page_login_returns_to_it(server):
         body=b"password=errada&next=/m",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert status == 403 and b'name="next" value="/m"' in body, "errar a senha não perde o destino"
+    assert status == 403 and b'name="next" value="/m"' in body, (
+        "a wrong password does not lose the destination"
+    )

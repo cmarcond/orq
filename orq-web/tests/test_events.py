@@ -38,18 +38,18 @@ class TestStampOrigin:
         sent.add("oi")
         e = ev.stamp_origin(user("oi"), sent)
         assert e["orq_origin"] == "page"
-        # segunda ocorrência igual não é mais nossa
+        # a second identical occurrence is no longer ours
         assert ev.stamp_origin(user("oi"), sent).get("orq_origin") == "injected"
 
     def test_unmarked_message_is_injected(self):
-        assert ev.stamp_origin(user("aviso do cron"), ev.SentTexts())["orq_origin"] == "injected"
+        assert ev.stamp_origin(user("cron notice"), ev.SentTexts())["orq_origin"] == "injected"
 
     def test_human_typed_is_not_stamped(self):
-        e = ev.stamp_origin(user("digitei", origin={"kind": "human"}, promptSource="typed"), ev.SentTexts())
+        e = ev.stamp_origin(user("typed it", origin={"kind": "human"}, promptSource="typed"), ev.SentTexts())
         assert "orq_origin" not in e
 
     def test_sdk_source_is_not_stamped(self):
-        e = ev.stamp_origin(user("pela página", promptSource="sdk"), ev.SentTexts())
+        e = ev.stamp_origin(user("from the page", promptSource="sdk"), ev.SentTexts())
         assert "orq_origin" not in e
 
     def test_tool_result_and_meta_untouched(self):
@@ -73,7 +73,7 @@ class TestStampOrigin:
         assert e["orq_origin"] == "agent" and e["origin"]["name"] == "exe"
 
     def test_text_blocks_count_as_text(self):
-        e = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "bloco"}]}}
+        e = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "block"}]}}
         assert ev.stamp_origin(e, ev.SentTexts())["orq_origin"] == "injected"
 
 
@@ -88,8 +88,8 @@ class TestDeriveState:
 
     def test_result_ok_and_error(self):
         assert ev.derive_state({"type": "result", "subtype": "success"}) == ("waiting", "")
-        st, msg = ev.derive_state({"type": "result", "is_error": True, "result": "deu erro"})
-        assert st == "error" and msg == "deu erro"
+        st, msg = ev.derive_state({"type": "result", "is_error": True, "result": "it failed"})
+        assert st == "error" and msg == "it failed"
 
     def test_assistant_is_working_and_others_do_not_change(self):
         assert ev.derive_state({"type": "assistant"}) == ("working", "")
@@ -101,7 +101,7 @@ class TestDeriveState:
             "type": "rate_limit_event",
             "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour"},
         }
-        assert ev.quota_exhausted(rl) and ev.derive_state(rl) == ("quota", "cota esgotada (five_hour)")
+        assert ev.quota_exhausted(rl) and ev.derive_state(rl) == ("quota", "quota exhausted (five_hour)")
         assert not ev.quota_exhausted({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}})
         err = {"type": "result", "is_error": True, "result": "You've hit your usage limit · resets 3pm"}
         assert ev.derive_state(err)[0] == "quota"
@@ -145,13 +145,13 @@ class TestTranscript:
             },
             {
                 "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "olá"}]},
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
             },
             {"type": "assistant", "isSidechain": True, "message": {"content": []}},
             {"type": "queue-operation"},
             {"type": "user", "message": {"role": "user", "content": "x"}, "isMeta": True},
         ]
-        p.write_text("\n".join(json.dumps(x) for x in lines) + "\nlixo não json\n")
+        p.write_text("\n".join(json.dumps(x) for x in lines) + "\ngarbage, not json\n")
         out = ev.transcript_entries(p)
         assert [o["type"] for o in out] == ["user", "assistant", "user"]
         assert all(o["replay"] for o in out)
@@ -159,7 +159,7 @@ class TestTranscript:
         assert ev.transcript_entries(p, limit=1)[0]["isMeta"] is True
 
     def test_missing_file(self, tmp_path):
-        assert ev.transcript_entries(tmp_path / "nao-existe.jsonl") == []
+        assert ev.transcript_entries(tmp_path / "missing.jsonl") == []
 
 
 def re_sub(s):

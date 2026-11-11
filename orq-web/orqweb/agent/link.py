@@ -1,25 +1,28 @@
-"""Vínculo entre agentes: SendMessage/ListAgents entre contas e entre máquinas.
+"""Link between agents: SendMessage/ListAgents across accounts and across machines.
 
-Cada Claude Code vivo tem, em `<config_dir>/sessions/`, um cartão `<pid>.json` (nome, pasta, estado e
-`messagingSocketPath`, o socket Unix em que recebe mensagens) e um arquivo `<pid>.<hash>.key` ao lado,
-que quem manda mensagem apresenta ao socket. O ListAgents lê a pasta da PRÓPRIA conta; o SendMessage
-fala com o socket. Tudo pensado para uma conta numa máquina só.
+Every live Claude Code has, in `<config_dir>/sessions/`, a card `<pid>.json` (name, folder, state and
+`messagingSocketPath`, the Unix socket on which it receives messages) and a file `<pid>.<hash>.key` next
+to it, which whoever sends a message presents to the socket. ListAgents reads the folder of its OWN
+account; SendMessage talks to the socket. All of it designed for one account on a single machine.
 
-O vínculo estende isso. Na mesma máquina, entre contas: o cartão e a chave de cada agente são
-*espelhados* na pasta `sessions/` do outro (mesmo socket). Entre máquinas (spike de 2026-10-12): um
-`ssh -N` estica o socket de cada agente até a outra máquina (`-L` e `-R` com caminhos Unix) e o
-espelho aponta para o socket encaminhado, que tem nome próprio (`orq-<pid>.sock`) para nunca se
-confundir com o de uma sessão de verdade. Daí cada lado lista e endereça o outro como se fosse local.
+The link extends that. On the same machine, across accounts: the card and the key of each agent are
+*mirrored* into the other's `sessions/` folder (same socket). Across machines (spike of 2026-10-12): an
+`ssh -N` stretches each agent's socket to the other machine (`-L` and `-R` with Unix paths) and the
+mirror points to the forwarded socket, which has a name of its own (`orq-<pid>.sock`) so it is never
+mistaken for that of a real session. From then on each side lists and addresses the other as if it were
+local.
 
-Espelhos e sockets encaminhados são RECURSOS COMPARTILHADOS: dois vínculos que trazem o mesmo agente
-para a mesma pasta (o agente da aba e o professor acima dele, na mesma conta, ambos ligados ao mesmo
-executor remoto) usam o mesmo cartão e o mesmo socket. Cada vínculo anota os recursos de que depende
-(`resources` no seu arquivo em `~/.cache/orq/<agente>/links/`); ao morrer, só apaga o que nenhum outro
-vínculo vivo desta máquina ainda usa. Um encaminhamento que já está de pé (socket que aceita conexão) é
-reaproveitado em vez de refeito; se quem o mantinha sai, o vínculo que sobrou o refaz no próximo ciclo.
+Mirrors and forwarded sockets are SHARED RESOURCES: two links that bring the same agent into the same
+folder (the tab's agent and the teacher above it, on the same account, both linked to the same remote
+executor) use the same card and the same socket. Each link records the resources it depends on
+(`resources` in its file under `~/.cache/orq/<agent>/links/`); when it dies, it only deletes what no
+other live link of this machine still uses. A forward that is already up (a socket that accepts
+connections) is reused instead of redone; if whoever kept it leaves, the remaining link redoes it on the
+next cycle.
 
-`run_link` roda na máquina do agente local e fala com a outra por `orq-agent peer` (ssh). Sai, e
-desfaz o que é só seu, quando: unlink (SIGTERM), o agente local fecha, o remoto fecha, ou o túnel cai.
+`run_link` runs on the local agent's machine and talks to the other one through `orq-agent peer` (ssh).
+It exits, and undoes what is only its own, when: unlink (SIGTERM), the local agent closes, the remote one
+closes, or the tunnel drops.
 """
 
 import json
@@ -39,16 +42,16 @@ from .state import StateFile, pid_alive
 from .supervisor import socket_alive
 
 TUNNEL_WAIT = 20.0
-POLL = 5.0  # ciclo do vínculo: túnel, agente local, socket encaminhado
-REMOTE_POLL = 30.0  # de quanto em quanto pergunta à outra máquina se o remoto ainda vive
-ENTRY_WAIT = 40.0  # um agente recém-aberto leva alguns segundos para registrar a sessão
+POLL = 5.0  # link cycle: tunnel, local agent, forwarded socket
+REMOTE_POLL = 30.0  # how often it asks the other machine whether the remote is still alive
+ENTRY_WAIT = 40.0  # a freshly opened agent takes a few seconds to register the session
 KEY_RE = re.compile(r"^\d+\.[0-9a-fA-F]+\.key$")
 
 
-# ---------------------------------------------------------------- registro de sessões
+# ---------------------------------------------------------------- session registry
 @dataclass
 class Entry:
-    """Um cartão de sessão e o arquivo-chave ao lado dele."""
+    """A session card and the key file next to it."""
 
     path: Path
     key_path: Optional[Path]
@@ -67,7 +70,7 @@ class Entry:
         return os.path.dirname(self.sock)
 
     def record(self) -> Dict[str, Any]:
-        """O que viaja para a outra máquina: cartão, nome do arquivo-chave e seu conteúdo."""
+        """What travels to the other machine: card, name of the key file and its content."""
         return {
             "name": self.data.get("name"),
             "pid": self.pid,
@@ -80,10 +83,10 @@ class Entry:
 
 
 def agent_sessions_dir(label: str, conf: Optional[config.Config] = None) -> Path:
-    """Pasta sessions/ da conta do agente desta máquina (pelo state.json dele). RuntimeError se não há."""
+    """sessions/ folder of the account of this machine's agent (from its state.json). RuntimeError if none."""
     st = StateFile(config.state_dir(label) / "state.json").read()
     if not st.get("account"):
-        raise RuntimeError(f"{label} não é um agente desta máquina")
+        raise RuntimeError(f"{label} is not an agent of this machine")
     try:
         return (conf or config.load()).account(st["account"]).config_dir / "sessions"
     except KeyError as e:
@@ -100,8 +103,8 @@ def read_card(path: Path) -> Optional[Dict[str, Any]]:
 def find_entry(
     name: str, dirs: List[Path], alive: Optional[Callable[[Optional[int]], bool]] = None
 ) -> Optional[Entry]:
-    """Cartão da sessão viva com esse nome (`claude -n`), nas pastas dadas; nunca um espelho."""
-    alive = alive or pid_alive  # resolvido na chamada, não na definição (os testes trocam pid_alive)
+    """Card of the live session with this name (`claude -n`), in the given folders; never a mirror."""
+    alive = alive or pid_alive  # resolved at call time, not at definition (the tests swap pid_alive)
     for d in dirs:
         for f in sorted(d.glob("*.json")):
             data = read_card(f)
@@ -124,34 +127,37 @@ def wait_entry(name: str, dirs: List[Path], timeout: float = ENTRY_WAIT) -> Opti
         time.sleep(0.5)
 
 
-# ---------------------------------------------------------------- espelhos e sockets encaminhados
+# ---------------------------------------------------------------- mirrors and forwarded sockets
 def mirror_sock(sock_dir: str, pid: int) -> str:
-    """Onde o socket encaminhado de um agente de outra máquina fica aqui: nome que nenhuma sessão usa."""
+    """Where the forwarded socket of an agent from another machine lives here: a name no session uses."""
     return os.path.join(sock_dir, f"orq-{pid}.sock")
 
 
 def write_mirror(sessions_dir: Path, record: Dict[str, Any], sock: str, origin: str) -> List[Path]:
-    """Grava o cartão e a chave de uma sessão de outra conta/máquina, apontando para `sock`.
+    """Writes the card and the key of a session from another account/machine, pointing to `sock`.
 
-    Recusa (RuntimeError) se já há um cartão de sessão DE VERDADE com esse pid na pasta: pids se repetem
-    entre máquinas, e escrever por cima tiraria uma sessão local do ar. Idempotente sobre um espelho."""
+    Refuses (RuntimeError) if there is already a REAL session card with this pid in the folder: pids
+    repeat across machines, and writing over it would take a local session off the air. Idempotent over a
+    mirror."""
     pid = int(record["pid"])
     key_name = record.get("key_name")
     if key_name is not None and not (KEY_RE.match(key_name) and key_name.startswith(f"{pid}.")):
-        raise ValueError(f"nome de chave inválido: {key_name!r}")
+        raise ValueError(f"invalid key name: {key_name!r}")
     card = sessions_dir / f"{pid}.json"
     existing = read_card(card)
     if existing is not None and not existing.get("_orq_mirror"):
-        raise RuntimeError(f"há uma sessão local com pid {pid} em {sessions_dir}; não espelho por cima")
+        raise RuntimeError(
+            f"there is a local session with pid {pid} in {sessions_dir}; not mirroring over it"
+        )
     sessions_dir.mkdir(parents=True, exist_ok=True)
     data = dict(record["json"])
     data["messagingSocketPath"] = sock
-    data["_orq_mirror"] = origin  # de onde veio; `find_entry` nunca devolve um espelho
+    data["_orq_mirror"] = origin  # where it came from; `find_entry` never returns a mirror
     card.write_text(json.dumps(data))
     paths = [card]
     if key_name and record.get("key") is not None:
         p = sessions_dir / key_name
-        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # nunca legível por outros
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # never readable by others
         with os.fdopen(fd, "w") as fh:
             fh.write(record["key"])
         paths.append(p)
@@ -159,8 +165,8 @@ def write_mirror(sessions_dir: Path, record: Dict[str, Any], sock: str, origin: 
 
 
 def remove_mirror(sessions_dir: Path, pid: int, sock: Optional[str] = None) -> bool:
-    """Apaga o espelho de `pid` (cartão, chave e, se dado, o socket encaminhado). Não toca num cartão
-    de sessão de verdade com esse pid. Devolve se apagou."""
+    """Deletes the mirror of `pid` (card, key and, if given, the forwarded socket). Does not touch a real
+    session card with this pid. Returns whether it deleted."""
     card = sessions_dir / f"{pid}.json"
     existing = read_card(card)
     if existing is not None and not existing.get("_orq_mirror"):
@@ -178,9 +184,10 @@ def remove_mirror(sessions_dir: Path, pid: int, sock: Optional[str] = None) -> b
     return True
 
 
-# ---------------------------------------------------------------- arquivos de vínculo e recursos
-# Um recurso é uma string: "card:<pasta sessions>/<pid>" (espelho local), "sock:<caminho>" (socket
-# encaminhado aqui) ou "remote:<máquina>:<pasta sessions de lá>/<pid>" (espelho e socket na outra máquina).
+# ---------------------------------------------------------------- link files and resources
+# A resource is a string: "card:<sessions folder>/<pid>" (local mirror), "sock:<path>" (socket
+# forwarded here) or "remote:<machine>:<sessions folder there>/<pid>" (mirror and socket on the other
+# machine).
 def links_dir(label: str) -> Path:
     return config.state_dir(label) / "links"
 
@@ -194,8 +201,8 @@ def same_host(a: str, b: str) -> bool:
 
 
 def link_alive(st: Dict[str, Any], root: Path) -> bool:
-    """Um vínculo por ssh vive enquanto o processo dele vive; um local, enquanto os dois agentes vivem
-    com as MESMAS sessões de quando foi feito (agente reaberto = vínculo morto)."""
+    """An ssh link lives as long as its process lives; a local one, as long as both agents live with the
+    SAME sessions as when it was made (agent reopened = dead link)."""
     if not st.get("up"):
         return False
     if st.get("kind") != "local":
@@ -217,7 +224,7 @@ def read_links(root: Path) -> List[Tuple[Path, Dict[str, Any]]]:
 
 
 def resources_in_use(root: Path, except_file: Optional[Path] = None) -> set:
-    """Recursos de que os vínculos vivos desta máquina (menos `except_file`) dependem."""
+    """Resources that the live links of this machine (except `except_file`) depend on."""
     used: set = set()
     for f, st in read_links(root):
         if except_file is not None and f.resolve() == except_file.resolve():
@@ -233,8 +240,8 @@ def release(
     except_file: Optional[Path],
     remote_unmirror: Optional[Callable[[str, str, int], None]] = None,
 ) -> List[str]:
-    """Apaga os recursos que mais ninguém usa. `remote_unmirror(host, sessions_dir, pid)` cuida dos de
-    outra máquina. Devolve os que ficaram por estarem em uso."""
+    """Deletes the resources nobody else uses. `remote_unmirror(host, sessions_dir, pid)` takes care of
+    those on another machine. Returns the ones that stayed because they are in use."""
     used = resources_in_use(root, except_file)
     kept = []
     for r in resources:
@@ -258,32 +265,32 @@ def release(
 
 
 def list_links(root: Optional[Path] = None) -> List[dict]:
-    """Vínculos desta máquina (um arquivo por par), com `up` conferido agora. Um vínculo local que
-    morreu (agente fechado ou reaberto) tem os espelhos recolhidos aqui mesmo, já que não há processo
-    dele para fazê-lo."""
+    """Links of this machine (one file per pair), with `up` checked now. A local link that died (agent
+    closed or reopened) has its mirrors collected right here, since there is no process of its own to do
+    it."""
     root = root or config.state_root()
     out = []
     for f, st in read_links(root):
         alive = link_alive(st, root)
         if not alive and st.get("kind") == "local" and st.get("resources"):
             kept = release(st["resources"], root, f)
-            st = StateFile(f).write(up=False, why=st.get("why") or "agente fechou", resources=kept)
+            st = StateFile(f).write(up=False, why=st.get("why") or "agent closed", resources=kept)
         st["up"] = alive
         out.append(st)
     return out
 
 
-# ---------------------------------------------------------------- mesma máquina
+# ---------------------------------------------------------------- same machine
 def local_link(local_label: str, remote_label: str, conf: Optional[config.Config] = None) -> Dict[str, Any]:
-    """Vínculo entre dois agentes desta máquina, sem túnel: contas diferentes ganham o cartão e a chave
-    um do outro (mesmo socket). Devolve o estado a gravar; os espelhos entram em `resources`."""
+    """Link between two agents of this machine, without a tunnel: different accounts get each other's card
+    and key (same socket). Returns the state to write; the mirrors go into `resources`."""
     conf = conf or config.load()
     dirs, entries = {}, {}
     for lab in (local_label, remote_label):
         dirs[lab] = agent_sessions_dir(lab, conf)
         entries[lab] = wait_entry(config.session_name(lab), [dirs[lab]])
         if entries[lab] is None:
-            raise RuntimeError(f"{lab} não está rodando com nome {config.session_name(lab)}")
+            raise RuntimeError(f"{lab} is not running under the name {config.session_name(lab)}")
     resources: List[str] = []
     if dirs[local_label].resolve() != dirs[remote_label].resolve():
         for me, other in ((local_label, remote_label), (remote_label, local_label)):
@@ -305,11 +312,11 @@ def local_link(local_label: str, remote_label: str, conf: Optional[config.Config
     )
 
 
-# ---------------------------------------------------------------- entre máquinas
+# ---------------------------------------------------------------- across machines
 def tunnel_command(
     host: str, forwards: List[Tuple[str, str, str]], ssh: Optional[List[str]] = None
 ) -> List[str]:
-    """`ssh -N` com os encaminhamentos pedidos: (flag -L/-R, socket de escuta, socket de destino)."""
+    """`ssh -N` with the requested forwards: (flag -L/-R, listening socket, target socket)."""
     cmd = (ssh or ["ssh"]) + [
         "-N",
         "-o",
@@ -329,10 +336,10 @@ def tunnel_command(
 
 
 class Link:
-    """Um vínculo por ssh em execução (o que `orq-agent link-run` roda em primeiro plano).
+    """A running ssh link (what `orq-agent link-run` runs in the foreground).
 
-    `run_remote(args, input)` executa `orq-agent <args>` na outra máquina e devolve o stdout (os testes
-    trocam por uma função); `popen` abre o túnel; `root` é a raiz do estado (~/.cache/orq).
+    `run_remote(args, input)` executes `orq-agent <args>` on the other machine and returns the stdout (the
+    tests swap in a function); `popen` opens the tunnel; `root` is the state root (~/.cache/orq).
     """
 
     def __init__(
@@ -355,12 +362,12 @@ class Link:
         self.local: Optional[Entry] = None
         self.remote: Optional[Dict[str, Any]] = None
         self.tunnel: Any = None
-        self.forwards: List[str] = []  # flags do túnel de agora: "-L", "-R"
+        self.forwards: List[str] = []  # flags of the current tunnel: "-L", "-R"
         self.state = StateFile(link_file(local_label, remote_label))
         self.tunnel_log = self.state.path.with_suffix(".log")
         self._stop = False
 
-    # ---- a outra máquina
+    # ---- the other machine
     def _ssh_remote(self, args: List[str], input: Optional[str] = None) -> str:
         cmd = self.ssh + [
             "-o",
@@ -375,21 +382,21 @@ class Link:
         except (OSError, subprocess.SubprocessError) as e:
             raise RuntimeError(f"ssh {self.host}: {e}") from None
         if r.returncode:
-            raise RuntimeError((r.stderr.strip() or r.stdout.strip() or "falhou")[-300:])
+            raise RuntimeError((r.stderr.strip() or r.stdout.strip() or "failed")[-300:])
         return r.stdout
 
     def _peer(self, *extra: str, input: Optional[str] = None) -> Dict[str, Any]:
-        """`orq-agent peer REMOTO …` lá; o JSON da última linha. RuntimeError se vier `err`."""
+        """`orq-agent peer REMOTE …` over there; the JSON of the last line. RuntimeError if `err` comes."""
         out = self.run_remote(["peer", self.remote_label, *extra], input=input)
         try:
             data = json.loads(out.strip().splitlines()[-1])
         except (ValueError, IndexError):
-            raise RuntimeError(f"resposta inválida de {self.host}: {out[-200:]}") from None
+            raise RuntimeError(f"invalid response from {self.host}: {out[-200:]}") from None
         if data.get("err"):
             raise RuntimeError(f"{self.host}: {data['err']}")
         return data
 
-    # ---- caminhos
+    # ---- paths
     def local_mirror_sock(self) -> str:
         assert self.local and self.remote
         return mirror_sock(self.local.sock_dir, self.remote["pid"])
@@ -406,15 +413,15 @@ class Link:
             f"remote:{self.host}:{self.remote['sessions_dir']}/{self.local.pid}",
         ]
 
-    # ---- túnel
+    # ---- tunnel
     def _forward(self, flag: str) -> Tuple[str, str, str]:
-        """O encaminhamento de cada lado: -L traz o remoto até aqui, -R leva o local até lá."""
+        """The forward of each side: -L brings the remote here, -R takes the local there."""
         if flag == "-L":
             return ("-L", self.local_mirror_sock(), self.remote["sock"])
         return ("-R", self.remote_mirror_sock(), self.local.sock)
 
     def _needed_forwards(self, remote_alive: bool) -> List[str]:
-        """Quais encaminhamentos faltam agora: os que nenhum túnel (meu ou de outro vínculo) mantém."""
+        """Which forwards are missing now: those that no tunnel (mine or another link's) keeps up."""
         fw = []
         if "-L" in self.forwards or not socket_alive(Path(self.local_mirror_sock())):
             fw.append("-L")
@@ -423,7 +430,7 @@ class Link:
         return fw
 
     def _start_tunnel(self, flags: List[str]) -> None:
-        """Abre (ou troca) o túnel com esses encaminhamentos; o stderr vai para o log do vínculo."""
+        """Opens (or replaces) the tunnel with these forwards; the stderr goes to the link's log."""
         self._kill_tunnel()
         forwards = [self._forward(f) for f in flags]
         if not forwards:
@@ -441,12 +448,14 @@ class Link:
         deadline = time.time() + TUNNEL_WAIT
         while True:
             if self.tunnel.poll() is not None:
-                raise RuntimeError(f"o túnel ssh para {self.host} saiu: {self._tunnel_tail()}")
+                raise RuntimeError(f"the ssh tunnel to {self.host} exited: {self._tunnel_tail()}")
             if not wants_local or socket_alive(Path(self.local_mirror_sock())):
                 return
             if time.time() > deadline:
                 self._kill_tunnel()
-                raise RuntimeError(f"o túnel ssh não abriu {self.local_mirror_sock()} em {TUNNEL_WAIT:.0f} s")
+                raise RuntimeError(
+                    f"the ssh tunnel did not open {self.local_mirror_sock()} within {TUNNEL_WAIT:.0f} s"
+                )
             time.sleep(0.2)
 
     def _tunnel_tail(self) -> str:
@@ -454,7 +463,7 @@ class Link:
             lines = self.tunnel_log.read_text(errors="ignore").strip().splitlines()
         except OSError:
             lines = []
-        return (lines or ["sem mensagem"])[-1][-300:]
+        return (lines or ["no message"])[-1][-300:]
 
     def _kill_tunnel(self) -> None:
         if self.tunnel is not None and self.tunnel.poll() is None:
@@ -465,20 +474,20 @@ class Link:
                 self.tunnel.kill()
         self.tunnel, self.forwards = None, []
 
-    # ---- subir
+    # ---- bring up
     def up(self) -> None:
         name = config.session_name(self.local_label)
         self.local = wait_entry(name, [agent_sessions_dir(self.local_label, self.conf)])
         if self.local is None:
             raise RuntimeError(
-                f"{self.local_label} não está rodando com nome {name} (abra-o pela página antes)"
+                f"{self.local_label} is not running under the name {name} (open it from the page first)"
             )
         if not self.local.key_path:
-            raise RuntimeError(f"{self.local_label} não tem arquivo-chave em {self.local.path.parent}")
-        # cartão do remoto e se o espelho meu já está de pé lá (outro vínculo meu com aquela máquina)
+            raise RuntimeError(f"{self.local_label} has no key file in {self.local.path.parent}")
+        # the remote's card and whether my mirror is already up there (another link of mine with that machine)
         self.remote = self._peer("--probe", str(self.local.pid))
         if not self.remote.get("pid"):
-            raise RuntimeError(f"{self.host}: cartão sem pid")
+            raise RuntimeError(f"{self.host}: card without pid")
         self._start_tunnel(self._needed_forwards(bool(self.remote.get("probe_alive"))))
         write_mirror(self.local.path.parent, self.remote, self.local_mirror_sock(), self.remote_label)
         self._peer(
@@ -505,41 +514,41 @@ class Link:
             why=None,
         )
         rname = self.remote.get("name")
-        self.log(f"vínculo {self.local_label} ⇄ {self.remote_label}: {name} e {rname} se enxergam")
+        self.log(f"link {self.local_label} ⇄ {self.remote_label}: {name} and {rname} see each other")
 
-    # ---- ficar de pé
+    # ---- stay up
     def wait(self, poll: float = POLL, remote_poll: float = REMOTE_POLL) -> str:
-        """Fica até o unlink (SIGTERM), um dos agentes fechar ou o túnel cair. Refaz um encaminhamento
-        que outro vínculo mantinha e caiu. Devolve o motivo da saída."""
+        """Stays until the unlink (SIGTERM), one of the agents closes or the tunnel drops. Redoes a forward
+        that another link kept up and that dropped. Returns the reason for leaving."""
         assert self.local and self.remote
         last_remote = time.time()
         while not self._stop:
             if self.tunnel is not None and self.tunnel.poll() is not None:
-                return "túnel caiu: " + self._tunnel_tail()
+                return "tunnel dropped: " + self._tunnel_tail()
             if not self.local.path.exists() or not pid_alive(self.local.pid):
-                return f"{self.local_label} fechou"
+                return f"{self.local_label} closed"
             remote_alive = True
             if time.time() - last_remote >= remote_poll:
                 last_remote = time.time()
                 try:
                     probe = self._peer("--probe", str(self.local.pid))
                 except RuntimeError as e:
-                    return f"{self.remote_label} fechou ({e})"
+                    return f"{self.remote_label} closed ({e})"
                 if int(probe.get("pid") or 0) != int(self.remote["pid"]):
-                    return f"{self.remote_label} foi reaberto"
+                    return f"{self.remote_label} was reopened"
                 remote_alive = bool(probe.get("probe_alive"))
             needed = self._needed_forwards(remote_alive)
             if any(f not in self.forwards for f in needed):
-                # quem mantinha esse encaminhamento saiu: passa a ser meu (o túnel é trocado inteiro,
-                # com o que já era meu mais o que faltou)
+                # whoever kept this forward up left: it becomes mine (the tunnel is replaced whole,
+                # with what was already mine plus what was missing)
                 try:
                     self._start_tunnel(needed)
                     self.state.write(
                         forwards=self.forwards, tunnel_pid=self.tunnel.pid if self.tunnel else None
                     )
-                    self.log(f"vínculo {self.local_label} ⇄ {self.remote_label}: refiz {self.forwards}")
+                    self.log(f"link {self.local_label} ⇄ {self.remote_label}: redid {self.forwards}")
                 except RuntimeError as e:
-                    return f"não consegui refazer o túnel: {e}"
+                    return f"could not redo the tunnel: {e}"
             time.sleep(poll)
         return "unlink"
 
@@ -547,8 +556,8 @@ class Link:
         self._stop = True
 
     def down(self, why: str = "") -> None:
-        """Marca-se como fora primeiro (para os outros vínculos não contarem comigo), solta o que é só
-        meu e fecha o túnel."""
+        """Marks itself as down first (so the other links do not count on me), releases what is only
+        mine and closes the tunnel."""
         cur = self.state.read()
         self.state.write(up=False, why=why)
         kept: List[str] = []
@@ -557,32 +566,32 @@ class Link:
             def remote_unmirror(host: str, sessions_dir: str, pid: int) -> None:
                 try:
                     self._peer("--unmirror", str(pid), "--sock", self.remote_mirror_sock())
-                except RuntimeError as e:  # a outra máquina pode ter caído; o resto da limpeza segue
-                    self.log(f"aviso: não desfiz o espelho em {host}: {e}")
+                except RuntimeError as e:  # the other machine may be down; the rest of the cleanup goes on
+                    self.log(f"warning: could not undo the mirror on {host}: {e}")
 
             kept = release(
                 cur.get("resources") or self.resources(), self.root, self.state.path, remote_unmirror
             )
         self._kill_tunnel()
         self.state.write(resources=kept)
-        self.log(f"vínculo {self.local_label} ⇄ {self.remote_label} desfeito ({why})")
+        self.log(f"link {self.local_label} ⇄ {self.remote_label} undone ({why})")
 
 
 def run_link(local_label: str, remote_label: str, **kw: Any) -> int:
-    """`orq-agent link-run`: sobe, segura e desfaz. 0 se subiu; 1 se nem subiu. Qualquer erro, inclusive
-    inesperado, passa por `down`: um túnel órfão seria pior que a mensagem."""
+    """`orq-agent link-run`: brings up, holds and undoes. 0 if it came up; 1 if it never did. Any error,
+    even an unexpected one, goes through `down`: an orphan tunnel would be worse than the message."""
     link = Link(local_label, remote_label, **kw)
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, link.stop)
     try:
         link.up()
     except Exception as e:
-        link.log(f"vínculo falhou: {e}")
-        link.down("falhou: " + str(e)[:200])
+        link.log(f"link failed: {e}")
+        link.down("failed: " + str(e)[:200])
         return 1
     try:
         why = link.wait()
     except Exception as e:
-        why = f"erro: {e}"
+        why = f"error: {e}"
     link.down(why)
     return 0

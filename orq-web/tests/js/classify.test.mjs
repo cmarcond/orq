@@ -11,7 +11,7 @@ import {
   toolSummary,
 } from '../../orqweb/server/static/js/classify.js';
 
-test('internal reconhece registros do Claude Code que não são mensagens', () => {
+test('internal recognizes Claude Code records that are not messages', () => {
   for (const s of [
     '<local-command-caveat>The command below…',
     '  <command-name>/exit</command-name>',
@@ -26,54 +26,54 @@ test('internal reconhece registros do Claude Code que não são mensagens', () =
   assert.equal(internal(undefined), false);
 });
 
-test('clean troca pasted_content por 📋 e remove system-reminder', () => {
-  assert.equal(clean('veja <pasted_content id="a1">texto colado</pasted_content> fim'), 'veja 📋 texto colado fim');
-  assert.equal(clean('a <system-reminder>\nsegredo\n</system-reminder> b'), 'a  b');
+test('clean replaces pasted_content with 📋 and removes system-reminder', () => {
+  assert.equal(clean('see <pasted_content id="a1">pasted text</pasted_content> end'), 'see 📋 pasted text end');
+  assert.equal(clean('a <system-reminder>\nsecret\n</system-reminder> b'), 'a  b');
   assert.equal(clean(null), '');
 });
 
-test('isMachine: carimbo do supervisor manda', () => {
+test('isMachine: the supervisor stamp decides', () => {
   assert.equal(isMachine({ orq_origin: 'injected' }), true);
   assert.equal(isMachine({ orq_origin: 'page', origin: { kind: 'cron' } }), false);
 });
 
-test('isMachine: origin.kind diferente de human é máquina', () => {
+test('isMachine: origin.kind other than human is a machine', () => {
   assert.equal(isMachine({ origin: { kind: 'cron' } }), true);
   assert.equal(isMachine({ origin: { kind: 'human' } }), false);
 });
 
-test('isMachine: no replay, nenhuma marca é máquina; ao vivo, não', () => {
+test('isMachine: on replay, no mark means machine; live, it does not', () => {
   assert.equal(isMachine({ replay: true }), true);
   assert.equal(isMachine({ replay: true, promptSource: 'sdk' }), false);
   assert.equal(isMachine({}), false);
 });
 
 test('originLabel', () => {
-  assert.equal(originLabel('cron'), 'agendado');
+  assert.equal(originLabel('cron'), 'scheduled');
   assert.equal(originLabel('loop'), 'loop');
-  assert.equal(originLabel(undefined), 'sistema');
+  assert.equal(originLabel(undefined), 'system');
   assert.equal(originLabel('xyz'), 'xyz');
 });
 
-test('toolSummary escolhe o campo mais útil e compacta espaços', () => {
+test('toolSummary picks the most useful field and collapses whitespace', () => {
   assert.equal(toolSummary({ command: 'ls   -la\n  /x' }), 'ls -la /x');
   assert.equal(toolSummary({ file_path: '/a/b.py', content: 'x' }), '/a/b.py');
   assert.equal(toolSummary({ pattern: 'TODO' }), 'TODO');
-  assert.equal(toolSummary({ foo: 1, bar: 'texto' }), 'texto');
+  assert.equal(toolSummary({ foo: 1, bar: 'text' }), 'text');
   assert.equal(toolSummary({}), '');
   assert.equal(toolSummary(null), '');
   assert.equal(toolSummary({ command: 'x'.repeat(200) }).length, 140);
 });
 
-test('permissionBody: comando, arquivo com conteúdo, edição com diff, ou JSON', () => {
+test('permissionBody: command, file with content, edit with diff, or JSON', () => {
   assert.equal(permissionBody({ command: 'rm x' }), 'rm x');
   assert.equal(permissionBody({ file_path: '/f', content: 'abc' }), '/f\n\nabc');
   assert.equal(permissionBody({ file_path: '/f', old_string: 'a', new_string: 'b' }), '/f\n\n- a\n+ b');
   assert.equal(permissionBody({ url: 'http://x' }), JSON.stringify({ url: 'http://x' }, null, 1));
 });
 
-test('firstLine e toolName', () => {
-  assert.equal(firstLine('\n\n### Aviso de andamento\ncorpo'), 'Aviso de andamento');
+test('firstLine and toolName', () => {
+  assert.equal(firstLine('\n\n### Progress notice\nbody'), 'Progress notice');
   assert.equal(firstLine('a'.repeat(200)).length, 160);
   assert.equal(toolName('mcp__Claude_Browser__navigate'), 'Claude_Browser__navigate');
   assert.equal(toolName('Bash'), 'Bash');

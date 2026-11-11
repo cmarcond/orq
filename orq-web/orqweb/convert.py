@@ -1,8 +1,8 @@
-"""converte-web: converte um `claude` interativo rodando em tmux, em qualquer máquina, num agente da página.
+"""converte-web: converts an interactive `claude` running in tmux, on any machine, into a page agent.
 
-Uso: converte-web                      lista os claude interativos em tmux de todas as máquinas
-     converte-web NOME@MAQUINA [...]   converte um ou mais (o que a página faz pelo botão "converter")
-     converte-web --all                converte todos os listados
+Usage: converte-web                      lists the interactive claudes in tmux on all machines
+       converte-web NAME@MACHINE [...]   converts one or more (what the page does via the "convert" button)
+       converte-web --all                converts all the listed ones
 """
 
 import argparse
@@ -28,14 +28,14 @@ def main(argv=None) -> int:
         print(f"  {h}: {e}", file=sys.stderr)
     if not a.labels and not a.all:
         if not sessions:
-            print("nenhum claude interativo em tmux nas máquinas.")
+            print("no interactive claude in tmux on the machines.")
             return 0
-        print(f"  {'nome':<28} {'estado':<10} {'conta':<10} pasta")
+        print(f"  {'name':<28} {'state':<10} {'account':<10} folder")
         for s in sessions:
             print(
                 f"  {s['label']:<28} {s.get('state', '?'):<10} {s.get('account', '?'):<10} {s.get('dir', '')}"
             )
-        print("\nconverte-web NOME@MAQUINA   (ou --all)")
+        print("\nconverte-web NAME@MACHINE   (or --all)")
         return 0
     targets = [s["label"] for s in sessions] if a.all else a.labels
     rc = 0
@@ -43,9 +43,7 @@ def main(argv=None) -> int:
         host = label.rsplit("@", 1)[1] if "@" in label else "laptop"
         res = ext.convert(host, label)
         mark = "✓" if res.get("ok") else "✗"
-        print(
-            f"{mark} {label}: {res.get('msg')}" + (f" (fechado por {res['how']})" if res.get("how") else "")
-        )
+        print(f"{mark} {label}: {res.get('msg')}" + (f" (closed by {res['how']})" if res.get("how") else ""))
         rc |= 0 if res.get("ok") else 1
     return rc
 

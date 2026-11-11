@@ -1,11 +1,11 @@
-// Formatação pura: escape de HTML, tempos e Markdown sanitizado.
+// Pure formatting: HTML escaping, times and sanitized Markdown.
 
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-/** Segundos até o reset -> "45min", "4h05", "3d12h". null/undefined -> "". */
+/** Seconds until the reset -> "45min", "4h05", "3d12h". null/undefined -> "". */
 export function left(s) {
   if (s == null) return '';
   if (s < 3600) return `${Math.floor(s / 60)}min`;
@@ -13,40 +13,40 @@ export function left(s) {
   return `${Math.floor(s / 86400)}d${pad2(Math.floor((s % 86400) / 3600))}h`;
 }
 
-/** Instante (epoch s) -> "agora", "5 min", "3 h", "2 d". */
+/** Instant (epoch s) -> "now", "5 min", "3 h", "2 d". */
 export function ago(ts, now = Date.now() / 1e3) {
   const s = now - ts;
-  if (s < 60) return 'agora';
+  if (s < 60) return 'now';
   if (s < 3600) return `${Math.floor(s / 60)} min`;
   if (s < 86400) return `${Math.floor(s / 3600)} h`;
   return `${Math.floor(s / 86400)} d`;
 }
 
 /**
- * Markdown -> HTML seguro. Usa marked + DOMPurify quando carregados (CDN); sem eles, texto
- * escapado com quebras de linha. `libs` permite injetar nos testes.
+ * Markdown -> safe HTML. Uses marked + DOMPurify when loaded (CDN); without them, escaped
+ * text with line breaks. `libs` allows injecting them in the tests.
  */
 export function md(text, libs = globalThis) {
   try {
     if (libs.marked && libs.DOMPurify) return libs.DOMPurify.sanitize(libs.marked.parse(text, { breaks: true }));
   } catch (_) {
-    /* cai no texto puro */
+    /* falls back to plain text */
   }
   return esc(text).replace(/\n/g, '<br>');
 }
 
-/** Mensagem final com os caminhos dos arquivos enviados para a _inbox do projeto. */
+/** Final message with the paths of the files uploaded to the project's _inbox. */
 export function withAttachments(text, paths) {
   if (!paths || !paths.length) return text;
   const list = paths.map((p) => `- ${p}`).join('\n');
-  const head = text.trim() || (paths.length === 1 ? 'Veja o arquivo enviado.' : 'Veja os arquivos enviados.');
-  return `${head}\n\nArquivo(s) enviado(s) para a pasta _inbox do projeto:\n${list}`;
+  const head = text.trim() || (paths.length === 1 ? 'See the uploaded file.' : 'See the uploaded files.');
+  return `${head}\n\nFile(s) uploaded to the project's _inbox folder:\n${list}`;
 }
 
-/** Tamanho legível: 812 B, 3,4 KB, 12 MB. */
+/** Human-readable size: 812 B, 3.4 KB, 12 MB. */
 export function fmtBytes(n) {
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1).replace('.', ',')} KB`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${Math.round(n / 1024 / 1024)} MB`;
 }
 
@@ -61,24 +61,24 @@ const KINDS = [
   [['xlsx', 'xls', 'ods', 'numbers'], '📊', null],
   [['docx', 'doc', 'odt', 'pages', 'pptx', 'ppt', 'key'], '📑', null],
 ];
-/** Ícone e como mostrar um arquivo pelo nome: view = image|pdf|video|audio|text|null (null = só baixar). */
+/** Icon and how to show a file by its name: view = image|pdf|video|audio|text|null (null = download only). */
 export function fileKind(name) {
   const ext = (String(name).toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
   const row = KINDS.find(([exts]) => exts.includes(ext));
   return row ? { icon: row[1], view: row[2], md: Boolean(row[3]) } : { icon: '📄', view: null, md: false };
 }
 
-// ---------------------------------------------------------------- histórico de uso (usage-hist painel --json)
-const pts = (x, d = 1) => (x == null ? '—' : x.toFixed(d).replace('.', ','));
+// ---------------------------------------------------------------- usage history (usage-hist painel --json)
+const pts = (x, d = 1) => (x == null ? '—' : x.toFixed(d));
 
-/** Duração curta em horas: 45min, 3h20, 2d4h. */
+/** Short duration in hours: 45min, 3h20, 2d4h. */
 export function hours(h) {
   if (h == null) return '';
   return left(Math.round(h * 3600));
 }
 
-/** Barras das últimas 24 h (uma por hora, pontos da semana), em SVG, com o valor de cada hora no tooltip.
- *  `top` é a escala comum entre as contas; `t24` é o início da série (ISO), para rotular as horas. */
+/** Bars of the last 24 h (one per hour, weekly points), in SVG, with the value of each hour in the tooltip.
+ *  `top` is the scale shared by the accounts; `t24` is the start of the series (ISO), to label the hours. */
 export function sparkSvg(values, top, t24) {
   const n = values.length || 1;
   const max = top > 0 ? top : Math.max(0, ...values);
@@ -94,21 +94,21 @@ export function sparkSvg(values, top, t24) {
       return `<rect class="${cls}" x="${i * (w + gap)}" y="${h - bh}" width="${w}" height="${bh}"><title>${hour}h: ${pts(v)} pts</title></rect>`;
     })
     .join('');
-  return `<svg class="spark" viewBox="0 0 ${n * (w + gap) - gap} ${h}" preserveAspectRatio="none" role="img" aria-label="consumo por hora nas últimas 24 h">${bars}</svg>`;
+  return `<svg class="spark" viewBox="0 0 ${n * (w + gap) - gap} ${h}" preserveAspectRatio="none" role="img" aria-label="usage per hour in the last 24 h">${bars}</svg>`;
 }
 
-/** Linha curta de uma conta: hoje, ritmo e previsão. `warn` quando a semana acaba antes do reset. */
+/** Short line for one account: today, pace and forecast. `warn` when the week runs out before the reset. */
 export function histSummary(a) {
   if (!a) return { text: '', warn: false };
   const star = (p) => (p ? '*' : '');
   const parts = [];
-  if (a.today_7d != null) parts.push(`hoje +${pts(a.today_7d)}${star(a.today_partial)}`);
+  if (a.today_7d != null) parts.push(`today +${pts(a.today_7d)}${star(a.today_partial)}`);
   if (a.rate_6h != null) parts.push(`${pts(a.rate_6h, 2)}/h${star(a.rate_partial)}`);
-  if (a.hours_to_100 != null) parts.push(a.before_reset ? `⚠ 100% em ${hours(a.hours_to_100)}` : `100% em ${hours(a.hours_to_100)}`);
+  if (a.hours_to_100 != null) parts.push(a.before_reset ? `⚠ 100% in ${hours(a.hours_to_100)}` : `100% in ${hours(a.hours_to_100)}`);
   return { text: parts.join(' · '), warn: Boolean(a.before_reset) };
 }
 
-/** Alertas novos (os com ⚠) que ainda não foram mostrados nas últimas `ttl` horas. `seen` é {texto: ms}. */
+/** New alerts (the ones with ⚠) that have not been shown in the last `ttl` hours. `seen` is {text: ms}. */
 export function freshAlerts(alerts, seen, now = Date.now(), ttl = 6) {
   const keep = {};
   for (const [k, t] of Object.entries(seen || {})) if (now - t < ttl * 3600e3) keep[k] = t;
@@ -117,9 +117,9 @@ export function freshAlerts(alerts, seen, now = Date.now(), ttl = 6) {
   return { fresh, seen: keep };
 }
 
-/** Selo do cartão de uma conta a partir dos alertas estruturados (`alert_items` do usage-hist): ⚠ em vermelho se
- *  houver alerta, · em cinza se só houver aviso; um alerta mostra o rótulo curto, vários mostram a contagem; o
- *  título (tooltip) traz o texto de todos. null sem nada para essa conta. */
+/** Badge of an account card from the structured alerts (`alert_items` of usage-hist): ⚠ in red if there
+ *  is an alert, · in gray if there is only a notice; one alert shows the short label, several show the count;
+ *  the title (tooltip) carries the text of all of them. null when there is nothing for that account. */
 export function badgeFor(items, account) {
   const mine = (items || []).filter((i) => i.account === account);
   if (!mine.length) return null;
@@ -133,9 +133,9 @@ export function badgeFor(items, account) {
   };
 }
 
-/** Selo do TOTAL: quantos alertas ⚠ há em toda a frota (contas e coletor/máquinas); null sem nenhum. */
+/** Badge of the TOTAL: how many ⚠ alerts there are in the whole fleet (accounts and collector/machines); null when there are none. */
 export function fleetBadge(items) {
   const warn = (items || []).filter((i) => i.level === 'warn');
   if (!warn.length) return null;
-  return { level: 'warn', label: `⚠ ${warn.length} alerta${warn.length > 1 ? 's' : ''}`, title: warn.map((i) => i.text).join('\n') };
+  return { level: 'warn', label: `⚠ ${warn.length} alert${warn.length > 1 ? 's' : ''}`, title: warn.map((i) => i.text).join('\n') };
 }

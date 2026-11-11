@@ -1,13 +1,13 @@
-"""A página em si: a aba 📊 uso e o painel da conta a partir do banco do usage-hist, a versão para celular
-(/m), o sino 🔔 e os atalhos de teclado. Quase nada gasta cota: só
-test_titulo_e_aviso_quando_o_agente_termina manda um turno curto ao claude real (precisa de um agente para
-a página ter alguém que "terminou"); os atalhos abrem dois agentes mas não mandam nada. Precisa do
-histórico de uso (usage_db_host com banco) para o uso e o painel."""
+"""The page itself: the 📊 usage tab and the account panel from the usage-hist database, the phone version
+(/m), the 🔔 bell and the keyboard shortcuts. Almost nothing spends quota: only
+test_titulo_e_aviso_quando_o_agente_termina sends a short turn to the real claude (it needs an agent for
+the page to have someone that "finished"); the shortcuts open two agents but send nothing. Needs the
+usage history (usage_db_host with a database) for the usage and the panel."""
 
 PHONE = {"width": 390, "height": 844}  # iPhone 14
 
-# Guarda cada Notification criada em window.__notas: o Chromium sem janela não mostra nada, e a página só
-# cria a notificação quando `Notification.permission` é granted.
+# Keeps each Notification created in window.__notas: headless Chromium shows nothing, and the page only
+# creates the notification when `Notification.permission` is granted.
 STUB_NOTIFY = """() => {
   window.__notas = [];
   window.Notification = class {
@@ -20,31 +20,32 @@ STUB_NOTIFY = """() => {
 
 
 def wait_usage(orq):
-    """A cota (com os botões 📊 ⊞ 🔔) vem do usage-all, que pode demorar uns segundos na primeira consulta."""
+    """The quota (with the 📊 ⊞ 🔔 buttons) comes from usage-all, which may take a few seconds on the first
+    query."""
     orq.wait_fn("() => document.getElementById('uso') !== null", timeout=60000)
 
 
-# ---------------------------------------------------------------- 📊 uso e painel da conta
+# ---------------------------------------------------------------- 📊 usage and account panel
 
 
 def test_aba_uso_por_janela(orq):
     wait_usage(orq)
     orq.page.click("#uso")
     assert orq.page.is_visible("#view")
-    assert orq.page.inner_text("#view .vname").startswith("Uso")
+    assert orq.page.inner_text("#view .vname").startswith("Usage")
     orq.page.wait_for_selector("#view .usage-table", timeout=60000)
     assert orq.page.inner_text("#view .ptabs button.on") == "5 h"
-    assert orq.page.locator("#view .usage-table tr.acc").count() >= 1, "um bloco por conta"
-    assert "coleta das" in orq.page.inner_text("#view .vbody")
+    assert orq.page.locator("#view .usage-table tr.acc").count() >= 1, "one block per account"
+    assert "collected at" in orq.page.inner_text("#view .vbody")
     orq.shot("uso-5h")
-    orq.page.wait_for_timeout(1500)  # pausas: o vídeo é para uma pessoa conferir
-    for hours, txt in ((24, "24 h"), (168, "7 dias")):
+    orq.page.wait_for_timeout(1500)  # pauses: the video is for a person to check
+    for hours, txt in ((24, "24 h"), (168, "7 days")):
         orq.page.click(f'#view .ptabs button[data-h="{hours}"]')
-        orq.page.wait_for_selector("#view .usage-table", timeout=60000)  # a tabela é refeita a cada janela
+        orq.page.wait_for_selector("#view .usage-table", timeout=60000)  # the table is redone per window
         assert orq.page.inner_text("#view .ptabs button.on") == txt
         orq.shot(f"uso-{txt.replace(' ', '')}")
         orq.page.wait_for_timeout(1500)
-    orq.page.keyboard.press("Escape")  # Esc fecha a janela
+    orq.page.keyboard.press("Escape")  # Esc closes the window
     assert orq.page.is_hidden("#view") and orq.page.inner_html("#view .vbody") == ""
     assert not orq.problems(), orq.problems()
 
@@ -53,9 +54,9 @@ def test_painel_da_conta_pelo_cartao(orq):
     wait_usage(orq)
     orq.wait_fn("() => document.querySelector('#usage .ucard.clickable') !== null", timeout=60000)
     cards = orq.page.locator("#usage .ucard.clickable")
-    # o histórico já está em cada cartão: as barras das 24 h e o resumo hoje · ritmo · previsão
+    # the history is already on each card: the 24 h bars and the summary today · pace · forecast
     assert cards.first.locator(".hrow svg").count() == 1 and cards.first.locator(".hsum").count() == 1
-    # selo de alerta: fica no cartão de cada conta com alerta no histórico (e no TOTAL quando há ⚠)
+    # alert badge: stays on the card of each account with an alert in the history (and on the TOTAL with ⚠)
     items = (orq.state().get("history") or {}).get("alert_items") or []
     for acc in {i.get("account") for i in items if i.get("account")}:
         assert orq.page.locator(f'#usage .ucard[data-acc="{acc}"] .selo').count() == 1, acc
@@ -66,32 +67,32 @@ def test_painel_da_conta_pelo_cartao(orq):
     name = cards.first.get_attribute("data-acc")
     cards.first.click()
     orq.page.wait_for_selector("#view .apanel .kpis .kpi", timeout=60000)
-    assert orq.page.inner_text("#view .vname").startswith("Painel ·")
-    assert orq.page.locator("#view .kpis .kpi").count() == 5, "semana, 5 h, hoje, ritmo, previsão"
-    assert orq.page.locator("#view .apanel svg").count() >= 3, "semana até o reset, 24 h, 7 dias"
+    assert orq.page.inner_text("#view .vname").startswith("Panel ·")
+    assert orq.page.locator("#view .kpis .kpi").count() == 5, "week, 5 h, today, pace, forecast"
+    assert orq.page.locator("#view .apanel svg").count() >= 3, "week up to the reset, 24 h, 7 days"
     assert orq.page.is_visible('#view .ptable[data-p="24"]')
     assert orq.page.is_hidden('#view .ptable[data-p="7"]')
     orq.shot(f"painel-{name}")
     orq.page.wait_for_timeout(2000)
-    orq.page.click('#view .ptabs button[data-p="7"]')  # o que mais gastou: 24 h ↔ 7 dias
+    orq.page.click('#view .ptabs button[data-p="7"]')  # what spent the most: 24 h ↔ 7 days
     assert orq.page.is_hidden('#view .ptable[data-p="24"]')
     assert orq.page.is_visible('#view .ptable[data-p="7"]')
     orq.page.wait_for_timeout(1500)
-    orq.page.click("#view .vx")  # ✕ fecha
+    orq.page.click("#view .vx")  # ✕ closes
     assert orq.page.is_hidden("#view")
     assert not orq.problems(), orq.problems()
 
 
-# ---------------------------------------------------------------- celular (/m)
+# ---------------------------------------------------------------- phone (/m)
 
 
 def test_celular(orq):
     orq.page.set_viewport_size(PHONE)
     orq.page.goto(orq.url("/m"))
     orq.page.wait_for_selector("#tabs .tab.plus", timeout=20000)
-    assert orq.page.title() == "orq · celular"
+    assert orq.page.title() == "orq · phone"
     orq.wait_fn("() => document.querySelector('#usage .ucard.total') !== null", timeout=60000)
-    # abas numa linha só; a cota é uma faixa com o TOTAL e as contas abrem no toque
+    # tabs on a single row; the quota is a strip with the TOTAL and the accounts open on touch
     assert orq.page.evaluate("getComputedStyle(document.getElementById('tabs')).flexDirection") == "row"
     accounts = orq.page.locator("#usage .ucard[data-acc]")
     assert accounts.count() >= 1 and accounts.first.is_hidden()
@@ -102,20 +103,20 @@ def test_celular(orq):
     orq.page.wait_for_timeout(1500)
     orq.page.click("#usage .ucard.total")
     assert accounts.first.is_hidden()
-    assert orq.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "sem rolagem"
-    # + abre o seletor na largura da tela e lista os projetos
+    assert orq.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "no scrolling"
+    # + opens the picker at the width of the screen and lists the projects
     orq.page.click('.tab.plus[data-host="laptop"]')
     orq.page.wait_for_selector("#picker:not([hidden])")
     w = orq.page.evaluate("document.querySelector('#picker .pbox').getBoundingClientRect().width")
     assert PHONE["width"] * 0.9 <= w <= PHONE["width"], w
-    orq.page.wait_for_selector("#plist .p", timeout=40000)  # as máquinas remotas podem levar uns 20 s
+    orq.page.wait_for_selector("#plist .p", timeout=40000)  # the remote machines may take about 20 s
     orq.shot("celular-picker")
     orq.page.wait_for_timeout(1500)
     orq.page.click("#pclose")
-    # a aba uso cabe na tela estreita: ficam máquina, pasta, parte, ≈pts e ●
+    # the usage tab fits the narrow screen: machine, folder, share, ≈pts and ● remain
     orq.page.click("#uso")
     orq.page.wait_for_selector("#view .usage-table", timeout=60000)
-    assert orq.page.is_hidden("#view .usage-table th:nth-child(3)"), "a coluna tipo some no celular"
+    assert orq.page.is_hidden("#view .usage-table th:nth-child(3)"), "the type column disappears on the phone"
     assert orq.page.is_visible("#view .usage-table th:nth-child(2)")
     orq.shot("celular-uso")
     orq.page.wait_for_timeout(2000)
@@ -124,7 +125,7 @@ def test_celular(orq):
     assert not orq.problems(), orq.problems()
 
 
-# ---------------------------------------------------------------- 🔔 notificações
+# ---------------------------------------------------------------- 🔔 notifications
 
 
 def test_sino_pede_permissao_e_testa(orq):
@@ -133,39 +134,39 @@ def test_sino_pede_permissao_e_testa(orq):
     orq.page.reload()
     wait_usage(orq)
     orq.page.evaluate(STUB_NOTIFY)
-    orq.page.click("#bell")  # já permitido: manda a notificação de teste
-    orq.wait_fn("() => document.getElementById('toast').textContent.includes('notificação de teste enviada')")
+    orq.page.click("#bell")  # already allowed: sends the test notification
+    orq.wait_fn("() => document.getElementById('toast').textContent.includes('test notification sent')")
     notas = orq.page.evaluate("window.__notas")
-    assert notas and notas[0][0] == "orq: teste", notas
+    assert notas and notas[0][0] == "orq: test", notas
     orq.shot("sino-teste")
     orq.page.wait_for_timeout(1500)
-    # sem permissão, o navegador recusa; a página avisa que ficam o bipe e a contagem no título
+    # without permission, the browser refuses; the page warns that the beep and the count in the title remain
     ctx.clear_permissions()
     orq.page.reload()
     wait_usage(orq)
     orq.page.click("#bell")
-    orq.wait_fn("() => document.getElementById('toast').textContent.includes('recusadas')")
+    orq.wait_fn("() => document.getElementById('toast').textContent.includes('notifications refused')")
     orq.shot("sino-recusado")
     assert not orq.problems(), orq.problems()
 
 
 def test_titulo_e_aviso_quando_o_agente_termina(orq, agent):
-    """Gasta um turno curto: com a página fora de vista, o fim do turno vira notificação e `(1) orq` no
-    título."""
+    """Spends a short turn: with the page out of sight, the end of the turn becomes a notification and
+    `(1) orq` in the title."""
     assert orq.page.title() == "orq"
     orq.page.evaluate(STUB_NOTIFY)
-    # a página "fora de vista", como quando você vai a outra aba do navegador
+    # the page "out of sight", as when you go to another browser tab
     orq.page.evaluate(
         "() => Object.defineProperty(document, 'hidden', {configurable: true, get: () => true})"
     )
-    orq.say("Responda apenas com a palavra pong, em minúsculas, sem pontuação.", wait=False)
+    orq.say("Answer only with the word pong, in lowercase, without punctuation.", wait=False)
     orq.wait_fn("() => document.title === '(1) orq'", timeout=180000)
-    orq.wait_fn("() => window.__notas.some((n) => n[0].includes('terminou'))")
+    orq.wait_fn("() => window.__notas.some((n) => n[0].includes('finished'))")
     notas = orq.page.evaluate("window.__notas")
-    assert notas[-1][0] == f"{agent.split('@')[0]}: terminou", notas
+    assert notas[-1][0] == f"{agent.split('@')[0]}: finished", notas
     orq.shot("titulo-espera-voce")
     orq.page.wait_for_timeout(1500)
-    # de volta à página: a contagem some
+    # back on the page: the count disappears
     orq.page.evaluate(
         "() => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => false});"
         " document.dispatchEvent(new Event('visibilitychange')); }"
@@ -176,12 +177,12 @@ def test_titulo_e_aviso_quando_o_agente_termina(orq, agent):
     assert not orq.problems(), orq.problems()
 
 
-# ---------------------------------------------------------------- atalhos de teclado
+# ---------------------------------------------------------------- keyboard shortcuts
 
 
 def test_atalhos_de_teclado(orq, agent, agent2):
-    """⌘1–⌘9 (Ctrl no Linux) trocam de aba, Shift+Enter quebra linha sem enviar, Esc fecha a janela do painel.
-    Abre dois agentes mas não manda nada a eles."""
+    """⌘1–⌘9 (Ctrl on Linux) switch tabs, Shift+Enter breaks the line without sending, Esc closes the panel
+    window. Opens two agents but sends nothing to them."""
     order = orq.labels()
     assert agent in order and agent2 in order, order
     kbd = orq.page.evaluate("[...document.querySelectorAll('.tab[data-l] .kbd')].map((e) => e.textContent)")
@@ -195,19 +196,19 @@ def test_atalhos_de_teclado(orq, agent, agent2):
     orq.page.keyboard.press(f"Control+{n1}")
     assert orq.current() == agent, orq.current()
     orq.shot("atalho-troca-aba")
-    # Shift+Enter quebra linha sem enviar
+    # Shift+Enter breaks the line without sending
     orq.page.click("#input")
-    orq.page.keyboard.type("primeira linha")
+    orq.page.keyboard.type("first line")
     orq.page.keyboard.press("Shift+Enter")
-    orq.page.keyboard.type("segunda linha")
-    assert orq.page.input_value("#input") == "primeira linha\nsegunda linha"
-    assert orq.page.locator(".chat.on .me").count() == 0, "nada foi enviado"
+    orq.page.keyboard.type("second line")
+    assert orq.page.input_value("#input") == "first line\nsecond line"
+    assert orq.page.locator(".chat.on .me").count() == 0, "nothing was sent"
     orq.shot("atalho-shift-enter")
     orq.page.wait_for_timeout(1500)
     orq.page.fill("#input", "")
-    # Esc fecha a janela do painel (uso)
+    # Esc closes the panel window (usage)
     wait_usage(orq)
-    orq.page.click("#uso")  # o foco sai do campo de texto (lá o Esc interrompe o turno)
+    orq.page.click("#uso")  # the focus leaves the text field (there Esc interrupts the turn)
     orq.page.wait_for_selector("#view:not([hidden])")
     orq.page.keyboard.press("Escape")
     assert orq.page.is_hidden("#view")

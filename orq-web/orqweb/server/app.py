@@ -1,5 +1,5 @@
-"""Sobe o orq-web: abre a porta antes de qualquer consulta, guarda o link (com token) num arquivo
-para um segundo `orq-web` reaproveitá-lo, e encerra limpo em Ctrl-C ou SIGTERM."""
+"""Starts orq-web: opens the port before any query, saves the link (with token) in a file
+for a second `orq-web` to reuse, and shuts down cleanly on Ctrl-C or SIGTERM."""
 
 import errno
 import os
@@ -29,18 +29,18 @@ def env_list(name: str) -> list:
 
 
 def local_host_from_env() -> Optional[str]:
-    """ORQ_LOCAL_HOST: nome desta máquina na página (padrão laptop); none/nenhum = sem agentes locais."""
+    """ORQ_LOCAL_HOST: this machine's name on the page (default laptop); none/nenhum = no local agents."""
     v = os.environ.get("ORQ_LOCAL_HOST", "laptop").strip()
     return None if v.lower() in ("", "none", "nenhum", "-") else v
 
 
 def check_bind(bind: str, auth_enabled: bool) -> Optional[str]:
-    """Escutar fora do 127.0.0.1 sem senha exporia os agentes a quem estiver na rede."""
+    """Listening outside 127.0.0.1 without a password would expose the agents to anyone on the network."""
     if bind in LOCAL_ADDRS or auth_enabled:
         return None
     return (
-        f"recusado: ORQ_BIND={bind} exporia o orq-web na rede sem senha. Crie o arquivo de senha "
-        f"(ORQ_PASSWORD_FILE, padrão {DEFAULT_PASSWORD_FILE}) ou escute só em 127.0.0.1."
+        f"refused: ORQ_BIND={bind} would expose orq-web on the network without a password. Create the "
+        f"password file (ORQ_PASSWORD_FILE, default {DEFAULT_PASSWORD_FILE}) or listen only on 127.0.0.1."
     )
 
 
@@ -51,7 +51,7 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
 
     def handle_error(self, request, client_address):
-        """Navegador fechou uma conexão ociosa ou saiu no meio do SSE: normal, sem traceback."""
+        """The browser closed an idle connection or left in the middle of the SSE: normal, no traceback."""
         if isinstance(sys.exc_info()[1], IGNORED):
             return
         super().handle_error(request, client_address)
@@ -62,7 +62,7 @@ def url_file(port: int) -> Path:
 
 
 def saved_token(port: int) -> Optional[str]:
-    """Token do último orq-web nesta porta, para a aba aberta continuar valendo depois de reiniciar."""
+    """Token of the last orq-web on this port, so that the open tab stays valid after a restart."""
     try:
         url = url_file(port).read_text().strip()
     except OSError:
@@ -72,7 +72,7 @@ def saved_token(port: int) -> Optional[str]:
 
 
 def existing_server_url(port: int) -> Optional[str]:
-    """Link do orq-web que já está nesta porta, se ele responde."""
+    """Link of the orq-web that is already on this port, if it responds."""
     f = url_file(port)
     url = f.read_text().strip() if f.exists() else ""
     if not url:
@@ -133,27 +133,26 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
             raise
         old = existing_server_url(port)
         if old:
-            print(f"já existe um orq-web nesta porta: {old}")
-            print("(abrindo no navegador; use --port N para outro servidor)")
+            print(f"there is already an orq-web on this port: {old}")
+            print("(opening it in the browser; use --port N for another server)")
             open_browser(old)
             return 0
-        print(
-            f"a porta {port} está ocupada por outro programa. Use: orq-web --port {port + 1}", file=sys.stderr
-        )
+        print(f"port {port} is in use by another program. Use: orq-web --port {port + 1}", file=sys.stderr)
         return 1
     url = f"http://127.0.0.1:{port}/?t={ctx.token}"
     if bind not in LOCAL_ADDRS:
-        print(f"orq-web na rede em http://{bind}:{port}/  (login com a senha de {auth.file})")
+        print(f"orq-web on the network at http://{bind}:{port}/  (log in with the password from {auth.file})")
     f = url_file(port)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(url)
     os.chmod(str(f), 0o600)
     state.start_background()
-    print(f"orq-web em {url}\n(Ctrl-C para parar; os agentes continuam rodando)")
+    print(f"orq-web at {url}\n(Ctrl-C to stop; the agents keep running)")
     open_browser(url)
 
     def on_term(*_):
-        # um segundo SIGTERM (o `uv run` repassa o seu) cairia no meio da limpeza abaixo: ignora os próximos
+        # a second SIGTERM (`uv run` forwards its own) would land in the middle of the cleanup below:
+        # ignore the next ones
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         raise KeyboardInterrupt
@@ -165,8 +164,8 @@ def serve(port: int = 8765, conf: Optional[config.Config] = None, token: Optiona
         pass
     finally:
         state.stop()
-        # o arquivo do link fica: o próximo orq-web nesta porta reaproveita o token (a aba continua valendo);
-        # existing_server_url confere se há mesmo alguém respondendo antes de confiar nele
+        # the link file stays: the next orq-web on this port reuses the token (the tab stays valid);
+        # existing_server_url checks that someone is really responding before trusting it
         srv.server_close()
-        os._exit(0)  # não espera threads de ssh presas
+        os._exit(0)  # does not wait for stuck ssh threads
     return 0

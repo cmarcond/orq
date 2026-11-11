@@ -1,8 +1,8 @@
-"""Supervisor: um `claude -p` em stream-json atrás de um socket Unix.
+"""Supervisor: one `claude -p` in stream-json behind a Unix socket.
 
-Clientes conectam, mandam `{"since": N}` e recebem os eventos a partir de N, depois os ao vivo.
-O que mandarem em seguida vai para o stdin do claude; `{"orq": "quit"}` encerra. Eventos
-`stream_event` (parciais) só vão ao vivo, não entram na sequência.
+Clients connect, send `{"since": N}` and receive the events from N on, then the live ones.
+Whatever they send next goes to claude's stdin; `{"orq": "quit"}` shuts it down. `stream_event`
+events (partials) only go live, they do not enter the sequence.
 """
 
 import json
@@ -18,11 +18,11 @@ from typing import Any, Callable, Dict, List, Optional
 from . import events as ev
 from .state import StateFile
 
-QUIT_GRACE = 15  # s entre fechar o stdin do claude e matá-lo
+QUIT_GRACE = 15  # s between closing claude's stdin and killing it
 
 
 def socket_alive(path: Path, timeout: float = 2.0) -> bool:
-    """Há um supervisor atendendo neste socket?"""
+    """Is there a supervisor serving on this socket?"""
     if not path.exists():
         return False
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -59,14 +59,14 @@ class Supervisor:
         self.label, self.folder, self.account = label, folder, account
         self.command, self.env, self.sid = command, env, sid
         self.transcript = transcript
-        self.last_user = ""  # última mensagem da página: vai no state.json se a cota acabar, para reenvio
-        self.name = name  # nome da sessão (-n): como outras sessões a endereçam no SendMessage
-        self.parent = parent  # nível acima de outro agente: rótulo do agente logo abaixo
-        self.level = level  # nome do nível na receita (professor, arquiteto…)
-        self.permission = permission  # modo de permissão com que o claude subiu (--permission-mode)
-        self.role = role  # prompt extra (papel de um nível, ou o prompt próprio de um agente de conjunto)
-        self.set_id = set_id  # conjunto (orqweb/server/sets.py) de que este agente veio
-        self.pipeline = pipeline  # receita (orqweb/pipelines/*.toml) de que este nível veio
+        self.last_user = ""  # last page message: goes into state.json if the quota runs out, to be resent
+        self.name = name  # session name (-n): how other sessions address it in SendMessage
+        self.parent = parent  # level above another agent: label of the agent right below
+        self.level = level  # name of the level in the recipe (professor, arquiteto…)
+        self.permission = permission  # permission mode claude started with (--permission-mode)
+        self.role = role  # extra prompt (role of a level, or the own prompt of a set's agent)
+        self.set_id = set_id  # set (orqweb/server/sets.py) this agent came from
+        self.pipeline = pipeline  # recipe (orqweb/pipelines/*.toml) this level came from
         self.dir = state_dir
         self.sock_path = state_dir / "agent.sock"
         self.state = StateFile(state_dir / "state.json")
@@ -80,7 +80,7 @@ class Supervisor:
         self._srv: Optional[socket.socket] = None
         self._done = threading.Event()
 
-    # ------------------------------------------------------------ estado
+    # ------------------------------------------------------------ state
     def put_state(self, st: str, msg: Optional[str] = None) -> None:
         fields: Dict[str, Any] = dict(
             label=self.label,
@@ -110,10 +110,10 @@ class Supervisor:
             fields["msg"] = msg
         try:
             self.state.write(**fields)
-        except OSError as e:  # estado é informativo; nunca derruba o agente nem um cliente
-            self.log(f"aviso: não consegui gravar state.json ({e})")
+        except OSError as e:  # the state is informational; it never brings down the agent or a client
+            self.log(f"warning: could not write state.json ({e})")
 
-    # ------------------------------------------------------------ eventos
+    # ------------------------------------------------------------ events
     def push(self, line: bytes, persist: bool = True) -> None:
         if persist and self.events is not None:
             self.events.append(line)
@@ -150,8 +150,10 @@ class Supervisor:
             st = ev.derive_state(e)
             if st:
                 if st[0] == "quota":
-                    self.state.write(retry=self.last_user)  # o servidor reenvia na conta nova
-                    self.note(f"a conta {self.account} ficou sem cota; a página vai trocar de conta", "error")
+                    self.state.write(retry=self.last_user)  # the server resends it on the new account
+                    self.note(
+                        f"account {self.account} ran out of quota; the page will switch accounts", "error"
+                    )
                 elif st[0] == "waiting":
                     self.state.write(retry="")
                 self.put_state(*st)
@@ -159,13 +161,13 @@ class Supervisor:
         code = self.proc.wait()
         if self.quitting:
             self.put_state("closed", "")
-            self.note("agente encerrado")
+            self.note("agent closed")
         else:
-            self.put_state("closed", f"o claude saiu (código {code})")
-            self.note(f"o claude saiu com código {code}", "error")
+            self.put_state("closed", f"claude exited (code {code})")
+            self.note(f"claude exited with code {code}", "error")
         self._shutdown()
 
-    # ------------------------------------------------------------ clientes
+    # ------------------------------------------------------------ clients
     def _serve(self, c: socket.socket) -> None:
         f = c.makefile("rb")
         try:
@@ -217,7 +219,7 @@ class Supervisor:
             except OSError:
                 pass
 
-    # ------------------------------------------------------------ ciclo de vida
+    # ------------------------------------------------------------ life cycle
     def quit(self, *_: Any) -> None:
         if self.quitting:
             return
@@ -251,11 +253,11 @@ class Supervisor:
         self._done.set()
 
     def start(self) -> None:
-        """Sobe o processo e o socket; não bloqueia. `wait()` espera o fim."""
+        """Starts the process and the socket; does not block. `wait()` waits for the end."""
         self.folder.mkdir(parents=True, exist_ok=True)
         self.dir.mkdir(parents=True, exist_ok=True)
         if socket_alive(self.sock_path):
-            raise RuntimeError(f"já existe um agente {self.label} rodando.")
+            raise RuntimeError(f"an agent {self.label} is already running.")
         if self.sock_path.exists():
             os.unlink(self.sock_path)
         self.events = ev.EventLog(self.dir / "events.jsonl")
@@ -272,18 +274,18 @@ class Supervisor:
         self._srv.bind(str(self.sock_path))
         self._srv.listen(8)
         os.chmod(str(self.sock_path), 0o600)
-        how = f"retomando {self.sid[:8]}" if self.sid else "conversa nova"
+        how = f"resuming {self.sid[:8]}" if self.sid else "new conversation"
         if self.level and self.parent:
-            how += f"  nível {self.level} sobre {self.parent}"
-        self.note(f"{self.label}  conta {self.account}  {how}")
+            how += f"  level {self.level} above {self.parent}"
+        self.note(f"{self.label}  account {self.account}  {how}")
         if self.sid and self.transcript is not None:
             for entry in ev.transcript_entries(self.transcript):
                 self.push(ev.encode(entry))
         threading.Thread(target=self._reader, daemon=True).start()
         threading.Thread(target=self._accept, daemon=True).start()
         self.put_state("waiting", "")
-        self.log(f"▶ {self.label}  conta {self.account}  pasta {self.folder}  {how}")
-        self.log(f"  socket {self.sock_path}  (Ctrl-C encerra o agente; a conversa fica salva)")
+        self.log(f"▶ {self.label}  account {self.account}  folder {self.folder}  {how}")
+        self.log(f"  socket {self.sock_path}  (Ctrl-C shuts the agent down; the conversation stays saved)")
 
     def _accept(self) -> None:
         assert self._srv is not None
@@ -298,7 +300,7 @@ class Supervisor:
         return self._done.wait(timeout)
 
     def run(self) -> None:
-        """start() + espera, com Ctrl-C e SIGTERM encerrando o claude de forma limpa."""
+        """start() + wait, with Ctrl-C and SIGTERM shutting claude down cleanly."""
         self.start()
         signal.signal(signal.SIGTERM, self.quit)
         signal.signal(signal.SIGINT, self.quit)

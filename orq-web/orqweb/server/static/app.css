@@ -8,8 +8,8 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,
 button{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
 button:hover{border-color:var(--ink)}button.ghost{background:transparent;border-color:transparent;color:var(--mute)}button.ghost:hover{color:var(--ink)}
 input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-/* cota */
-/* topo: abas por máquina à esquerda (60%), cota à direita (40%) */
+/* quota */
+/* top: tabs per machine on the left (60%), quota on the right (40%) */
 .top{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--bg)}
 .top .tabs{flex:3;min-width:0;border-bottom:none}
 .usage{flex:2;max-width:40%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:8px 12px 8px 8px;border-left:1px solid var(--line);align-content:start}
@@ -25,7 +25,7 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .selo{display:inline-block;margin-left:4px;padding:0 6px;border-radius:9px;font-size:10px;font-weight:600;line-height:16px;vertical-align:1px;white-space:nowrap;cursor:help;filter:none}
 .selo.warn{background:var(--bad);color:#fff}.selo.info{background:var(--chip);color:var(--mute);border:1px solid var(--line);font-weight:500}
 .ucard.clickable{cursor:pointer}.ucard.clickable:hover{filter:brightness(.97)}
-/* painel de uma conta (na janela da prévia) */
+/* panel of one account (in the preview window) */
 .vbody .apanel{align-self:flex-start;width:100%;min-height:100%;padding:14px 18px;background:var(--card);font-size:13px}
 .apanel h4{margin:16px 0 6px;font-size:13px}.apanel h4 .small{font-weight:400}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
@@ -45,7 +45,7 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .ptabs{display:flex;gap:4px;margin-bottom:4px}.ptabs button.on{color:var(--ink);border-color:var(--line)}
 .apanel table{width:100%;border-collapse:collapse;font-size:12px}.apanel th{text-align:left;color:var(--mute);font-weight:500;border-bottom:1px solid var(--line);padding:4px 6px}
 .apanel td{padding:4px 6px;border-bottom:1px solid var(--line);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.apanel .r{text-align:right}
-/* aba "uso" */
+/* "usage" tab */
 .usage-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
 .usage-table th,.usage-table td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
 .usage-table thead th{color:var(--mute);font-weight:500}
@@ -61,7 +61,7 @@ input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px s
 .spark rect.on{fill:var(--acc,var(--ink));opacity:.8}.spark rect.off{fill:var(--mute);opacity:.35}.spark rect:hover{opacity:1}
 .hsum{font-size:10.5px;color:var(--mute);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hsum.bad{color:var(--bad);font-weight:600}
 .over i{background:var(--warn)}.far i{background:var(--bad)}.pct{text-align:right;color:var(--ink)}
-/* abas */
+/* tabs */
 .tabs{display:flex;flex-direction:column;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line);background:var(--bg)}
 .trow{display:flex;align-items:flex-end;gap:8px}.trow .host{flex:none;width:84px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);padding-bottom:9px;text-align:right}
 .tline{display:flex;gap:4px;overflow-x:auto;flex:1;min-width:0}.trow+.trow .tline{border-top:1px dashed var(--line);padding-top:4px}
@@ -74,7 +74,7 @@ background:var(--card);cursor:pointer;white-space:nowrap;color:var(--mute);max-w
 .tab .meta{font-size:11px;overflow:hidden;text-overflow:ellipsis}.tab .x{color:var(--mute);padding:0 2px}.tab .x:hover{color:var(--bad)}
 .tab.term{opacity:.75;border-style:dashed}.tab .cv{color:var(--work);font-weight:700;padding:0 2px}.tab .cv:hover{color:var(--ink)}
 .perm.term{border-color:var(--line)}.perm.term .t{color:var(--mute)}
-/* cor da conta (--acc, inline): aba e cartão tingidos; a aba ativa mais forte; nome da pasta na cor */
+/* account color (--acc, inline): tinted tab and card; the active tab stronger; folder name in the color */
 .tab[style*="--acc"]{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 18%,var(--card));color:var(--ink)}
 .tab[style*="--acc"].on{background:color-mix(in srgb,var(--acc) 38%,var(--card));border-bottom-color:color-mix(in srgb,var(--acc) 38%,var(--card));box-shadow:inset 0 3px 0 var(--acc)}
 .tab[style*="--acc"] .meta b{color:var(--acc);filter:brightness(.85)}
@@ -110,7 +110,7 @@ main{flex:1;overflow:hidden;position:relative}
 .qt{font-weight:600;margin:2px 0 6px}.opts{display:flex;flex-direction:column;gap:4px}.opt{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
 .opt:hover{background:var(--chip)}.opt input[type=radio],.opt input[type=checkbox]{margin-top:3px}.opt small{display:block;color:var(--mute)}.opt .otxt{width:100%;min-width:240px;padding:4px 8px}
 .perm.done .opts{pointer-events:none;opacity:.7}
-/* painel lateral da aba base: níveis e fios, ou os arquivos que o agente compartilhou (_outbox/) */
+/* side panel of the base tab: levels and wires, or the files the agent shared (_outbox/) */
 main.withside .chat{right:300px}
 .side{position:absolute;top:0;right:0;bottom:0;width:300px;border-left:1px solid var(--line);background:var(--bg);font-size:12px;display:flex;flex-direction:column}
 .stabs{display:flex;align-items:center;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line);flex:none}
@@ -128,7 +128,7 @@ main.withside .chat{right:300px}
 .fempty{text-align:center;padding:28px 8px 8px;color:var(--mute)}.fempty div{font-size:34px;line-height:1}.fempty p{margin:8px 0 0}
 .lhead .rf{padding:0 4px;font-size:13px}
 #out.new{color:var(--work);animation:pulse 1.4s infinite}
-/* prévia de um arquivo da _outbox */
+/* preview of a file from _outbox */
 .view{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:20;display:flex;align-items:center;justify-content:center;padding:3vh 3vw}
 .vbox{background:var(--card);border:1px solid var(--line);border-radius:12px;width:min(1100px,94vw);height:min(94vh,900px);display:flex;flex-direction:column;overflow:hidden}
 .vhead{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--line);flex:none}
@@ -166,7 +166,7 @@ main.withside .chat{right:300px}
 .composer #send{border-radius:10px;padding:8px 14px}.composer #attach{font-size:16px;padding:6px 8px}
 .files{max-width:860px;margin:0 auto 6px;display:flex;flex-wrap:wrap;gap:6px}.fchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
 .fchip small{color:var(--mute)}.fchip b{cursor:pointer;color:var(--mute);font-weight:400}.fchip b:hover{color:var(--bad)}
-body.drag main{outline:3px dashed var(--work);outline-offset:-8px}body.drag main::after{content:'solte para enviar para _inbox/ do projeto';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--card);border:1px solid var(--work);border-radius:10px;padding:10px 16px;color:var(--work);font-weight:600}
+body.drag main{outline:3px dashed var(--work);outline-offset:-8px}body.drag main::after{content:'drop to send to _inbox/ in the project folder';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--card);border:1px solid var(--work);border-radius:10px;padding:10px 16px;color:var(--work);font-weight:600}
 /* picker */
 .picker{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:flex-start;justify-content:center;padding-top:8vh;z-index:9}
 .pbox{background:var(--card);border:1px solid var(--line);border-radius:12px;width:min(760px,94vw);max-height:80vh;overflow:auto;padding:14px 16px}

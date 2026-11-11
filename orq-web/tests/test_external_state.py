@@ -8,7 +8,7 @@ from orqweb.server.external import LAPTOP, External, ssh_cmd
 
 
 class FakeRunner:
-    """Devolve respostas por trecho do comando e guarda o que foi chamado."""
+    """Returns responses by fragment of the command and keeps what was called."""
 
     def __init__(self, table):
         self.table, self.calls = table, []
@@ -18,7 +18,7 @@ class FakeRunner:
         for key, (code, out) in self.table.items():
             if key in " ".join(cmd):
                 return subprocess.CompletedProcess(cmd, code, out, "")
-        raise OSError("sem resposta")
+        raise OSError("no response")
 
 
 def test_usage_ok_and_failure():
@@ -37,7 +37,7 @@ def test_usage_remote_goes_through_tmux_run_shell_with_fallback():
         cmd[-1].startswith('tmux run-shell "$HOME/.local/bin/usage-all --json"')
         and "|| ~/.local/bin/usage-all --json" in cmd[-1]
     )
-    # host local não usa ssh
+    # the local host does not use ssh
     External(Path("/b"), r).usage("laptop")
     assert r.calls[-1] == ["/b/usage-all", "--json"]
 
@@ -65,7 +65,7 @@ def test_agents_get_host_suffix_and_errors():
     _, items, err = ext.agents("node0")
     assert [a["label"] for a in items] == ["acervo@node0", "x@node0"]
     ext2 = External(Path("/b"), FakeRunner({}))
-    assert ext2.agents("down") == ("down", [], "sem resposta")
+    assert ext2.agents("down") == ("down", [], "no response")
 
 
 def test_all_projects_sorted_and_limited_with_host_errors():
@@ -94,7 +94,7 @@ def test_spawn_level_sends_role_on_stdin_with_parent_and_level():
             "/p",
             "gmail",
             "new",
-            role="Você é…",
+            role="You are…",
             parent="p@laptop",
             level="professor",
         )
@@ -102,13 +102,13 @@ def test_spawn_level_sends_role_on_stdin_with_parent_and_level():
     )
     cmd = r.calls[-1]
     assert cmd[cmd.index("--role-file") + 1] == "-" and cmd[cmd.index("--parent") + 1] == "p@laptop"
-    assert cmd[cmd.index("--level") + 1] == "professor" and r.inputs[-1] == "Você é…"
+    assert cmd[cmd.index("--level") + 1] == "professor" and r.inputs[-1] == "You are…"
     assert (
         ext.spawn("server0", "p~professor@server0", "~/p", "gmail", "new", role="papel", parent="p@server0")
         is None
     )
     assert r.calls[-1][0] == "ssh" and "--role-file -" in r.calls[-1][-1] and r.inputs[-1] == "papel"
-    # sem papel, o runner antigo (sem `input`) continua servindo
+    # without a role, the old runner (without `input`) still works
     plain = FakeRunner({"orq-agent": (0, "pronto")})
     assert External(Path("/b"), plain).spawn(LAPTOP, "p@laptop", "/p", "gmail", "resume") is None
     assert "--role-file" not in plain.calls[-1]
@@ -131,8 +131,8 @@ def test_spawn_local_and_remote():
     assert (
         r.calls[-1][0] == "ssh" and "orq-agent spawn" in r.calls[-1][-1] and "--mode new" in r.calls[-1][-1]
     )
-    bad = External(Path("/b"), FakeRunner({"orq-agent": (1, "deu ruim")}))
-    assert bad.spawn(LAPTOP, "p@laptop", "/p", "gmail", "resume") == "deu ruim"
+    bad = External(Path("/b"), FakeRunner({"orq-agent": (1, "went wrong")}))
+    assert bad.spawn(LAPTOP, "p@laptop", "/p", "gmail", "resume") == "went wrong"
 
 
 # ---------------------------------------------------------------- StateCache
@@ -145,7 +145,7 @@ class FakeExt:
         return {"gmail": {"7d": 40, "7d_pace": 50}}
 
     def all_agents(self, hosts):
-        return [{"label": "a@laptop", "state": "waiting", "account": "gmail"}], {"node1": "sem resposta"}
+        return [{"label": "a@laptop", "state": "waiting", "account": "gmail"}], {"node1": "no response"}
 
     def all_projects(self, hosts, limit=30):
         self.projects_calls += 1
@@ -178,7 +178,7 @@ def test_snapshot_after_refresh():
     c.refresh_agents()
     snap = c.snapshot()
     assert snap["usage"]["gmail"]["7d"] == 40
-    assert snap["agents"][0]["label"] == "a@laptop" and snap["host_errors"] == {"node1": "sem resposta"}
+    assert snap["agents"][0]["label"] == "a@laptop" and snap["host_errors"] == {"node1": "no response"}
     assert snap["accounts"] == ["gmail"] and snap["labels"] == {"gmail": "gmail"}
     assert snap["colors"] == {"gmail": config.PALETTE[0]}
     assert c.live_labels() == {"a@laptop"} and c.running_accounts() == ["gmail"]
@@ -206,7 +206,7 @@ def test_page_open_window():
 
 
 def test_stale_listing_finishing_late_does_not_overwrite_a_newer_one():
-    """Duas consultas em paralelo: a velha (sem o agente, lenta) termina depois da nova e é ignorada."""
+    """Two queries in parallel: the old one (without the agent, slow) ends after the new and is ignored."""
     import threading
 
     class Ext:
@@ -215,7 +215,9 @@ def test_stale_listing_finishing_late_does_not_overwrite_a_newer_one():
 
         def all_agents(self, hosts):
             self.calls += 1
-            if self.calls == 1:  # a primeira começou antes de o agente abrir e demora (máquina sem resposta)
+            if (
+                self.calls == 1
+            ):  # the first started before the agent opened and is slow (machine not responding)
                 self.entered.set()
                 self.gate.wait(5)
                 return [], {}
@@ -228,13 +230,13 @@ def test_stale_listing_finishing_late_does_not_overwrite_a_newer_one():
     old.start()
     assert ext.entered.wait(5)
     now[0] = 1010.0
-    cache.refresh_agents()  # a mais nova vê o agente
+    cache.refresh_agents()  # the newest one sees the agent
     assert [a["label"] for a in cache.agents] == ["p@h"]
     ext.gate.set()
     old.join(5)
-    assert [a["label"] for a in cache.agents] == ["p@h"], "a consulta velha não apaga o agente"
+    assert [a["label"] for a in cache.agents] == ["p@h"], "the old query does not erase the agent"
     now[0] = 1020.0
-    cache.refresh_agents()  # e uma nova de verdade continua valendo
+    cache.refresh_agents()  # and a really new one still counts
     assert cache.agents_started == 1020.0
 
 
@@ -247,7 +249,8 @@ def test_provisional_replaces_same_label():
 
 
 def test_provisional_survives_stale_listing_until_host_confirms():
-    """A consulta que começou antes do spawn volta sem o novo (ou com o "closed" da vida anterior)."""
+    """The query that started before the spawn comes back without the new one (or with the "closed" of the
+    previous life)."""
     clk = Clock()
     c = make_cache(clk)
     c.refresh_agents()
@@ -256,15 +259,15 @@ def test_provisional_survives_stale_listing_until_host_confirms():
     def state_of(label):
         return next(a["state"] for a in c.snapshot()["agents"] if a["label"] == label)
 
-    c.refresh_agents()  # a máquina ainda não devolve novo@laptop
+    c.refresh_agents()  # the machine does not return novo@laptop yet
     assert state_of("novo@laptop") == "starting" and "a@laptop" in c.live_labels()
     c.ext.all_agents = lambda hosts: ([{"label": "novo@laptop", "state": "closed", "account": "gmail"}], {})
-    c.refresh_agents()  # state.json de uma rodada anterior
+    c.refresh_agents()  # state.json from a previous round
     assert state_of("novo@laptop") == "starting"
     c.ext.all_agents = lambda hosts: ([{"label": "novo@laptop", "state": "waiting", "account": "gmail"}], {})
-    c.refresh_agents()  # confirmado
+    c.refresh_agents()  # confirmed
     assert state_of("novo@laptop") == "waiting" and "novo@laptop" not in c.provisional
-    # sem confirmação, o provisório expira
+    # without confirmation, the provisional one expires
     c.add_provisional(S.provisional_agent("x@laptop", "laptop", "gmail", "/x", clk.t))
     c.ext.all_agents = lambda hosts: ([], {})
     clk.t += S.PROVISIONAL_TTL + 1
@@ -277,9 +280,9 @@ def test_pick_host_and_label():
     assert err is None and p["label"] == "acervo-2@node1" and p["mode"] == "resume"
     assert S.pick_host_and_label({"host": "nope", "cwd": "/x"}, ["node1"], set()) == (
         None,
-        "projeto inválido",
+        "invalid project",
     )
-    assert S.pick_host_and_label({"host": "laptop"}, [], set())[1] == "projeto inválido"
+    assert S.pick_host_and_label({"host": "laptop"}, [], set())[1] == "invalid project"
 
 
 def test_dedupe_labels_suffixes_terminal_duplicates_but_not_sdk():
@@ -319,19 +322,19 @@ def test_mark_closing_keeps_agent_closed_while_host_still_sees_it():
     assert cache.agents[0]["state"] == "waiting"
     cache.mark_closing("p@h")
     assert cache.agents[0]["state"] == "closed"
-    cache.refresh_agents()  # a máquina ainda vê o processo (graça de 15 s)
+    cache.refresh_agents()  # the machine still sees the process (15 s of grace)
     assert cache.agents[0]["state"] == "closed"
     now[0] += S.CLOSING_TTL + 1
     cache.refresh_agents()
     assert cache.agents[0]["state"] == "waiting" and cache.closing == {}
-    # reabrir o mesmo rótulo cancela o "fechando"
+    # reopening the same label cancels the "closing"
     cache.mark_closing("p@h")
     cache.add_provisional(S.provisional_agent("p@h", "h", "g", "/p", now[0]))
     cache.refresh_agents()
     assert cache.agents[0]["state"] == "waiting"
 
 
-# ---------------------------------------------------------------- arquivos da _outbox
+# ---------------------------------------------------------------- files of the _outbox
 def test_list_files_local_and_remote(tmp_path):
     (tmp_path / "a.pdf").write_bytes(b"x")
     ext = External(Path("/b"), FakeRunner({}))
@@ -341,7 +344,7 @@ def test_list_files_local_and_remote(tmp_path):
     items, err = External(Path("/b"), r).list_files("server0", "~/p/_outbox")
     assert err is None and items[0]["name"] == "r.md"
     assert r.calls[-1][0] == "ssh" and r.calls[-1][-1] == "~/.local/bin/orq-agent ls '~/p/_outbox'"
-    # orq-agent antigo na máquina: erro explica o que fazer
+    # old orq-agent on the machine: the error explains what to do
     r = FakeRunner({"orq-agent ls": (2, "")})
     r.table = {"orq-agent ls": (2, "")}
     ext = External(Path("/b"), r)
@@ -349,8 +352,8 @@ def test_list_files_local_and_remote(tmp_path):
         cmd, 2, "", "argument cmd: invalid choice: 'ls'"
     )
     items, err = ext.list_files("server0", "~/p/_outbox")
-    assert items == [] and "antigo" in err and "deploy.sh server0" in err
-    assert External(Path("/b"), FakeRunner({})).list_files("server0", "~/p")[1] == "sem resposta"
+    assert items == [] and "old" in err and "deploy.sh server0" in err
+    assert External(Path("/b"), FakeRunner({})).list_files("server0", "~/p")[1] == "no response"
 
 
 class FakePopen:
@@ -363,7 +366,7 @@ class FakePopen:
         if "nada" in cmd[-1]:
             self.stdout = io.BytesIO(b'{"err": "[Errno 2] No such file"}\n')
         elif spec == "99-":
-            self.stdout = io.BytesIO(b'{"err": "faixa 99- fora do arquivo de 10 bytes"}\n')
+            self.stdout = io.BytesIO(b'{"err": "range 99- outside the file of 10 bytes"}\n')
         else:
             self.stdout = io.BytesIO(b'{"size": 10, "start": 2, "length": 4}\n2345')
 
@@ -397,7 +400,7 @@ def test_open_file_local_and_remote(tmp_path):
         ext.open_file(LAPTOP, str(tmp_path / "nada"))
 
 
-# ---------------------------------------------------------------- vínculos
+# ---------------------------------------------------------------- links
 def test_agents_also_bring_links_in_one_connection():
     agents_json = '[{"label": "k", "kind": "sdk", "state": "waiting"}]'
     links_json = '[{"local": "k@server0", "remote": "p@laptop", "up": true}]'
@@ -412,30 +415,31 @@ def test_agents_also_bring_links_in_one_connection():
         and "orq --status-json; echo; echo ---orq-links---; ~/.local/bin/orq-agent links" in r.calls[-1][-1]
     )
     assert ext.links == [{"local": "k@server0", "remote": "p@laptop", "up": True}]
-    # máquina antiga, sem `orq-agent links`: a lista de agentes continua valendo, vínculos vazios
+    # old machine, without `orq-agent links`: the list of agents still counts, empty links
     r = FakeRunner({"--status-json": (0, agents_json + "\n" + External.LINKS_MARK + "\n")})
     ext = External(Path("/b"), r)
     assert ext.agents("server0")[2] is None and ext.links == []
-    # local: duas chamadas (sem ssh não há o problema da segunda conexão)
+    # local: two calls (without ssh there is no second-connection problem)
     r = FakeRunner({"--status-json": (0, agents_json), "orq-agent links": (0, links_json)})
     ext = External(Path("/b"), r)
     assert ext.agents(LAPTOP)[2] is None and ext.links[0]["local"] == "k@server0"
     assert r.calls[-1] == ["/b/orq-agent", "links"]
-    # all_agents consolida o que cada máquina devolveu (aqui só o laptop tem; o ssh falso não traz a marca)
+    # all_agents consolidates what each machine returned (here only the laptop has any; the fake ssh
+    # does not bring the mark)
     ext.all_agents(["server0"])
     assert set(ext.links_by_host) == {"laptop", "server0"} and len(ext.links) == 1
 
 
 def test_link_and_unlink_commands_local_and_remote():
-    r = FakeRunner({"orq-agent": (0, "vínculo na sessão tmux orql-a--b")})
+    r = FakeRunner({"orq-agent": (0, "link in tmux session orql-a--b")})
     ext = External(Path("/b"), r)
     assert ext.link(LAPTOP, "a@laptop", "b@server0") is None
     assert r.calls[-1] == ["/b/orq-agent", "link", "a@laptop", "b@server0"]
     assert ext.unlink("server0", "b@server0", "a@laptop") is None
     assert r.calls[-1][0] == "ssh" and r.calls[-1][-1] == "~/.local/bin/orq-agent unlink b@server0 a@laptop"
-    ext.run = lambda cmd, timeout: subprocess.CompletedProcess(cmd, 1, "", "o túnel ssh saiu: x")
-    assert ext.link(LAPTOP, "a@laptop", "b@server0") == "o túnel ssh saiu: x"
-    assert External(Path("/b"), FakeRunner({})).link(LAPTOP, "a", "b") == "sem resposta"
+    ext.run = lambda cmd, timeout: subprocess.CompletedProcess(cmd, 1, "", "the ssh tunnel exited: x")
+    assert ext.link(LAPTOP, "a@laptop", "b@server0") == "the ssh tunnel exited: x"
+    assert External(Path("/b"), FakeRunner({})).link(LAPTOP, "a", "b") == "no response"
 
 
 def test_new_link_outlives_a_listing_that_started_before_it():
@@ -445,7 +449,7 @@ def test_new_link_outlives_a_listing_that_started_before_it():
 
     class Ext:
         links = []
-        add_during = None  # o vínculo nasce no meio da consulta
+        add_during = None  # the link is born in the middle of the query
 
         def all_agents(self, hosts):
             t[0] += 2
@@ -457,14 +461,14 @@ def test_new_link_outlives_a_listing_that_started_before_it():
     ext = Ext()
     st = S.StateCache(conf, ext, clock=lambda: t[0])
     ext.add_during = lambda: st.add_link(rec)
-    st.refresh_agents()  # começou antes do vínculo e voltou sem ele: o vínculo fica
+    st.refresh_agents()  # started before the link and came back without it: the link stays
     assert [lk["local"] for lk in st.snapshot()["links"]] == ["a@laptop"]
     ext.add_during = None
-    st.refresh_agents()  # começou depois e a máquina não o lista: a máquina é a verdade
+    st.refresh_agents()  # started after and the machine does not list it: the machine is the truth
     assert st.snapshot()["links"] == []
     st.add_link(rec)
     ext.links = [dict(rec, sessions={"a@laptop": 1})]
-    st.refresh_agents()  # a máquina o lista: vale o dela, sem duplicar
+    st.refresh_agents()  # the machine lists it: the machine's one counts, no duplicate
     (lk,) = st.snapshot()["links"]
     assert lk["sessions"] == {"a@laptop": 1} and "page_ts" not in lk
     st.drop_link("b@laptop", "a@laptop")
@@ -478,7 +482,7 @@ def test_links_of_an_unreachable_host_are_dropped():
     ext.agents("server0")
     assert len(ext.links) == 1
     ext.run = lambda cmd, timeout: (_ for _ in ()).throw(OSError("sem rede"))
-    assert ext.agents("server0")[2] == "sem resposta" and ext.links == []
+    assert ext.agents("server0")[2] == "no response" and ext.links == []
 
 
 def test_spawn_passes_permission_and_set():
@@ -502,8 +506,10 @@ def test_history_local_remote_and_failure():
     assert r.calls[-1] == ["/b/usage-hist", "painel", "--json"]
     assert ext.history("node4")["accounts"] and r.calls[-1][0] == "ssh"
     assert r.calls[-1][-1] == "~/.local/bin/usage-hist painel --json"
-    assert External(Path("/b"), FakeRunner({})).history() == {}  # sem usage-hist
-    assert External(Path("/b"), FakeRunner({"usage-hist": (0, "null")})).history() == {}  # sem coleta recente
+    assert External(Path("/b"), FakeRunner({})).history() == {}  # no usage-hist
+    assert (
+        External(Path("/b"), FakeRunner({"usage-hist": (0, "null")})).history() == {}
+    )  # no recent collection
     assert External(Path("/b"), FakeRunner({"usage-hist": (0, "[1]")})).history() == {}
 
 
@@ -522,7 +528,7 @@ def test_history_refreshes_only_with_the_page_open_and_goes_in_the_snapshot():
     cache = S.StateCache(conf, ext, clock=lambda: now[0], usage_host="node4")
     cache.refresh_history()
     assert ext.calls == ["node4"] and cache.snapshot()["history"]["alerts"] == ["⚠ x"]
-    # sem history no External (servidor antigo, testes): fica vazio, sem quebrar
+    # no history in External (old server, tests): stays empty, without breaking
     bare = S.StateCache(conf, object(), clock=lambda: now[0])
     bare.refresh_history()
     assert bare.snapshot()["history"] == {}
@@ -539,7 +545,7 @@ def test_account_panel_command_and_cache():
         "--json",
     ]
     assert ext.account("node4", "gmail") and r.calls[-1][-1] == "~/.local/bin/usage-hist conta gmail --json"
-    assert ext.account(None, "outra") == {}  # resposta de outra conta não vale
+    assert ext.account(None, "outra") == {}  # another account's response does not count
     assert External(Path("/b"), FakeRunner({})).account(None, "gmail") == {}
     now = [100.0]
 
@@ -555,7 +561,7 @@ def test_account_panel_command_and_cache():
     cache = S.StateCache(conf, e, clock=lambda: now[0])
     cache.account_detail("gmail")
     cache.account_detail("gmail")
-    assert e.n == 1  # dentro do cache
+    assert e.n == 1  # within the cache
     now[0] += S.ACCOUNT_TTL + 1
     cache.account_detail("gmail")
     assert e.n == 2
@@ -594,4 +600,4 @@ def test_usage_table_command_and_cache():
     cache.usage_table(5)
     cache.usage_table(5)
     cache.usage_table(24)
-    assert e.n == 2  # 5 h do cache; 24 h é outra entrada
+    assert e.n == 2  # 5 h from the cache; 24 h is another entry

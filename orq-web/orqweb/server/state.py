@@ -1,8 +1,8 @@
-"""Cache do que a página mostra: cota, agentes de todas as máquinas e projetos recentes.
+"""Cache of what the page shows: quota, agents of all the machines and recent projects.
 
-A cota é consultada a cada USAGE_EVERY s (a API reclama se for frequente); o histórico de uso (banco
-do usage-hist: hoje, ritmo, previsão, 24 h, alertas) a cada HISTORY_EVERY s e os agentes a cada
-AGENTS_EVERY s, esses dois só enquanto a página está aberta (`touch()` marca que alguém pediu).
+The quota is queried every USAGE_EVERY s (the API complains if it is frequent); the usage history (the
+usage-hist database: today, pace, forecast, 24 h, alerts) every HISTORY_EVERY s and the agents every
+AGENTS_EVERY s, these two only while the page is open (`touch()` marks that someone asked).
 """
 
 import threading
@@ -13,40 +13,46 @@ from ..config import Config
 from .external import External
 
 USAGE_EVERY = 150
-HISTORY_EVERY = 60  # o coletor grava a cada 5 min; ler o banco é barato (~0,2 s)
-ACCOUNT_TTL = 30  # s: o painel de uma conta, pedido sob demanda, vale por isso
+HISTORY_EVERY = 60  # the collector writes every 5 min; reading the database is cheap (~0.2 s)
+ACCOUNT_TTL = 30  # s: the panel of one account, requested on demand, is valid for this long
 AGENTS_EVERY = 15
 PROJECTS_TTL = 60
-OPEN_WINDOW = 60  # s desde o último pedido para considerar a página aberta
-CLOSING_TTL = 30  # s em que um agente mandado encerrar fica "closed" mesmo que a máquina ainda o veja vivo
-PROVISIONAL_TTL = 60  # s em que um agente recém-aberto fica na lista até a máquina confirmá-lo vivo
+OPEN_WINDOW = 60  # s since the last request to consider the page open
+CLOSING_TTL = (
+    30  # s during which an agent told to close stays "closed" even if the machine still sees it alive
+)
+PROVISIONAL_TTL = (
+    60  # s during which a just-opened agent stays in the list until the machine confirms it alive
+)
 
 
 class StateCache:
     def __init__(self, conf: Config, ext: External, clock=time.time, usage_host: Optional[str] = None):
         self.conf, self.ext, self.clock = conf, ext, clock
-        self.usage_host = usage_host  # None = esta máquina; senão, por ssh (o container não tem credenciais)
+        self.usage_host = (
+            usage_host  # None = this machine; otherwise, over ssh (the container has no credentials)
+        )
         self.lock = threading.Lock()
         self.usage: Dict[str, Any] = {}
         self.usage_ts = 0.0
-        self.history: Dict[str, Any] = {}  # usage-hist painel --json; {} sem banco
+        self.history: Dict[str, Any] = {}  # usage-hist painel --json; {} without a database
         self.history_ts = 0.0
-        self.account_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # conta -> (quando, painel)
-        self.usage_table_cache: Dict[float, Tuple[float, Dict[str, Any]]] = {}  # horas -> (quando, aba uso)
+        self.account_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # account -> (when, panel)
+        self.usage_table_cache: Dict[float, Tuple[float, Dict[str, Any]]] = {}  # hours -> (when, usage tab)
         self.agents: List[dict] = []
-        self.links: List[dict] = []  # vínculos entre agentes (orq-agent links), de todas as máquinas
+        self.links: List[dict] = []  # links between agents (orq-agent links), of all the machines
         self.agents_ts = 0.0
-        self.agents_started = 0.0  # quando começou a consulta que produziu `agents` (descarta as mais velhas)
+        self.agents_started = 0.0  # when the query that produced `agents` started (discards the older ones)
         self.host_errors: Dict[str, str] = {}
         self.projects: Optional[List[dict]] = None
         self.projects_ts = 0.0
-        self.closing: Dict[str, float] = {}  # rótulo -> até quando contar como fechado
-        self.provisional: Dict[str, dict] = {}  # rótulo -> entrada recém-aberta, até a máquina confirmar
-        self.on_agents: Optional[Callable[[List[dict]], Any]] = None  # chamado com a lista nova (migração)
+        self.closing: Dict[str, float] = {}  # label -> until when to count as closed
+        self.provisional: Dict[str, dict] = {}  # label -> just-opened entry, until the machine confirms
+        self.on_agents: Optional[Callable[[List[dict]], Any]] = None  # called with the new list (migration)
         self.seen = clock()
         self._stop = threading.Event()
 
-    # ---- consultas
+    # ---- queries
     def touch(self) -> None:
         self.seen = self.clock()
 
@@ -60,7 +66,8 @@ class StateCache:
             self.history, self.history_ts = h, self.clock()
 
     def account_detail(self, name: str) -> Dict[str, Any]:
-        """O painel de uma conta (usage-hist conta), com cache curto: abrir e fechar não refaz a consulta."""
+        """The panel of one account (usage-hist conta), with a short cache: opening and closing does not redo
+        the query."""
         with self.lock:
             hit = self.account_cache.get(name)
         if hit and self.clock() - hit[0] < ACCOUNT_TTL:
@@ -73,7 +80,8 @@ class StateCache:
         return data
 
     def usage_table(self, hours: float) -> Dict[str, Any]:
-        """A aba "uso" (usage-hist uso) da janela pedida, com o mesmo cache curto do painel da conta."""
+        """The usage tab (usage-hist uso) for the requested window, with the same short cache as the account
+        panel."""
         with self.lock:
             hit = self.usage_table_cache.get(hours)
         if hit and self.clock() - hit[0] < ACCOUNT_TTL:
@@ -94,10 +102,10 @@ class StateCache:
         started = self.clock()
         ag, errs = self.ext.all_agents(self.conf.hosts)
         with self.lock:
-            # Consultas correm em paralelo (o laço, mais as agendadas por stop/downgrade) e levam 20 s ou mais
-            # quando uma máquina não responde. Uma que começou antes de um agente abrir pode terminar depois
-            # de outra que já o viu vivo: aplicá-la apagaria o agente da lista por um ciclo (a página tira a
-            # aba e pula para outra). Vale só a consulta mais nova.
+            # Queries run in parallel (the loop, plus the ones scheduled by stop/downgrade) and take 20 s or
+            # more when a machine does not respond. One that started before an agent opened may finish after
+            # another that already saw it alive: applying it would erase the agent from the list for a cycle
+            # (the page removes the tab and jumps to another one). Only the newest query counts.
             if started < self.agents_started:
                 return
             self.agents_started = started
@@ -106,20 +114,21 @@ class StateCache:
             for a in ag:
                 if a.get("label") in self.closing:
                     a["state"] = "closed"
-            # A consulta às máquinas leva segundos: se começou antes de um agente ser aberto, volta sem ele
-            # (ou com o state.json "closed" da vida anterior) e a aba sumiria da página até a próxima
-            # consulta. O recém-aberto fica na lista até a máquina o devolver vivo, por PROVISIONAL_TTL.
+            # The query to the machines takes seconds: if it started before an agent was opened, it comes
+            # back without it (or with the "closed" state.json of the previous life) and the tab would
+            # disappear from the page until the next query. The just-opened one stays in the list until the
+            # machine returns it alive, for PROVISIONAL_TTL.
             self.provisional = {k: v for k, v in self.provisional.items() if now - v["ts"] < PROVISIONAL_TTL}
             seen = {a.get("label"): a for a in ag}
             for label, entry in list(self.provisional.items()):
                 got = seen.get(label)
                 if got is not None and got.get("state") != "closed":
-                    del self.provisional[label]  # confirmado pela máquina
+                    del self.provisional[label]  # confirmed by the machine
                     continue
                 ag = [a for a in ag if a.get("label") != label] + [entry]
             self.agents, self.host_errors, self.agents_ts = ag, errs, now
-            # vínculo criado pela página depois de a consulta começar não pode estar na resposta: fica.
-            # Criado antes, a resposta da máquina é a verdade (ela o lista, ou ele não existe mais).
+            # a link created by the page after the query started cannot be in the response: it stays.
+            # Created before, the machine's response is the truth (it lists it, or it no longer exists).
             host_links = list(getattr(self.ext, "links", []) or [])
             pairs = {link_pair(lk) for lk in host_links}
             self.links = host_links + [
@@ -128,8 +137,8 @@ class StateCache:
         if self.on_agents:
             try:
                 self.on_agents(list(ag))
-            except Exception as e:  # o gancho nunca derruba a consulta
-                print(f"aviso: gancho de agentes falhou: {e}")
+            except Exception as e:  # the hook never brings the query down
+                print(f"warning: agents hook failed: {e}")
 
     def get_projects(self) -> List[dict]:
         with self.lock:
@@ -156,7 +165,7 @@ class StateCache:
                 "colors": self.conf.colors,
             }
 
-    # ---- agentes abertos pela página
+    # ---- agents opened by the page
     def live_labels(self) -> set:
         with self.lock:
             return {a["label"] for a in self.agents if a.get("state") != "closed"}
@@ -166,14 +175,14 @@ class StateCache:
             return [a.get("account", "") for a in self.agents if a.get("state") != "closed"]
 
     def add_provisional(self, agent: dict) -> None:
-        """Mostra o agente recém-aberto antes da próxima consulta às máquinas."""
+        """Shows the just-opened agent before the next query to the machines."""
         with self.lock:
             self.closing.pop(agent["label"], None)
             self.provisional[agent["label"]] = agent
             self.agents = [a for a in self.agents if a.get("label") != agent["label"]] + [agent]
 
     def add_link(self, record: dict) -> None:
-        """Vínculo recém-criado pela página: aparece já; `page_ts` diz a `refresh_agents` quando soltá-lo."""
+        """Link just created by the page: shows at once; `page_ts` tells `refresh_agents` when to drop it."""
         pair = link_pair(record)
         with self.lock:
             self.links = [lk for lk in self.links if link_pair(lk) != pair] + [
@@ -186,21 +195,21 @@ class StateCache:
             self.links = [lk for lk in self.links if link_pair(lk) != pair]
 
     def drop_provisional(self, label: str) -> None:
-        """Desfaz `add_provisional` (o reabrir falhou): a próxima consulta às máquinas diz o que sobrou."""
+        """Undoes `add_provisional` (the reopen failed): the next query to the machines says what is left."""
         with self.lock:
             self.provisional.pop(label, None)
             self.agents = [a for a in self.agents if a.get("label") != label]
 
     def mark_closing(self, label: str) -> None:
-        """Agente mandado encerrar: fica `closed` já, e por CLOSING_TTL s mesmo que a máquina, consultada
-        enquanto o claude ainda está saindo (até 15 s de graça), o devolva vivo."""
+        """Agent told to close: it is `closed` at once, and for CLOSING_TTL s even if the machine, queried
+        while claude is still exiting (up to 15 s of grace), returns it alive."""
         with self.lock:
             self.closing[label] = self.clock() + CLOSING_TTL
             for a in self.agents:
                 if a.get("label") == label:
                     a["state"] = "closed"
 
-    # ---- laços de fundo
+    # ---- background loops
     def _usage_loop(self) -> None:
         while not self._stop.is_set():
             self.refresh_usage()
@@ -232,7 +241,7 @@ def link_pair(lk: dict) -> frozenset:
 
 
 def provisional_agent(label: str, host: str, account: str, cwd: str, now: float, **extra: Any) -> dict:
-    """Entrada de agente recém-aberto; `extra` leva o que o state.json vai ter (name, parent, level)."""
+    """Entry of a just-opened agent; `extra` carries what the state.json will have (name, parent, level)."""
     from ..config import session_name
 
     a = {
@@ -254,16 +263,16 @@ def provisional_agent(label: str, host: str, account: str, cwd: str, now: float,
 def pick_host_and_label(
     body: dict, hosts: List[str], taken: set, local: Optional[str] = "laptop"
 ) -> Tuple[Optional[dict], Optional[str]]:
-    """Valida o pedido de abrir projeto e monta p = {host, cwd, account, mode, label}.
+    """Validates the request to open a project and builds p = {host, cwd, account, mode, label}.
 
-    `local` é o nome desta máquina (None quando o servidor não roda agentes locais, como no container).
+    `local` is this machine's name (None when the server runs no local agents, as in the container).
     """
     from .assign import label_for
 
     host, cwd = body.get("host"), body.get("cwd")
     valid = ([local] if local else []) + list(hosts)
     if host not in valid or not cwd:
-        return None, "projeto inválido"
+        return None, "invalid project"
     p = {"host": host, "cwd": cwd, "account": body.get("account"), "mode": body.get("mode") or "resume"}
     p["label"] = label_for(cwd, host, taken)
     return p, None

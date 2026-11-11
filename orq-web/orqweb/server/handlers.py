@@ -1,11 +1,11 @@
-"""Rotas HTTP da página: estáticos, /api/state, /api/projects, /api/pipelines, /api/agent/* (abrir,
-stream SSE, enviar, permissão, interromper, parar, níveis: upgrade/downgrade), /api/conjuntos (listar,
-salvar, apagar, fotografar as abas abertas e abrir vários agentes de uma vez, com ou sem professor).
+"""HTTP routes of the page: static files, /api/state, /api/projects, /api/pipelines, /api/agent/* (open,
+SSE stream, send, permission, interrupt, stop, levels: upgrade/downgrade), /api/conjuntos (list,
+save, delete, snapshot the open tabs and open several agents at once, with or without a teacher).
 
-Segurança: só responde aos Hosts permitidos (127.0.0.1/localhost e, se configurado, o IP da rede
-privada); tudo em /api exige o token (cabeçalho X-Orq-Token, ou ?t= no SSE, que não aceita
-cabeçalhos) ou um cookie de sessão obtido em /login com a senha; CSP restringe scripts a 'self' e
-ao CDN.
+Security: it only answers the allowed Hosts (127.0.0.1/localhost and, if configured, the private
+network IP); everything under /api requires the token (X-Orq-Token header, or ?t= on the SSE, which
+does not accept headers) or a session cookie obtained at /login with the password; CSP restricts
+scripts to 'self' and the CDN.
 """
 
 import json
@@ -43,16 +43,17 @@ SETS_RE = re.compile(r"^/api/conjuntos/([^/]+)(?:/(open|delete))?$")
 ACCOUNT_RE = re.compile(r"^/api/conta/([^/]+)$")
 INBOX = "_inbox"
 UPLOAD_MAX = 200 * 1024 * 1024
-SSH_GAP = 4.0  # s entre duas conexões ssh seguidas à mesma máquina: a segunda, logo atrás, costuma cair
-JOB_TTL = 60  # s em que um conjunto já aberto continua em /api/state (a página mostra o resultado)
-# arquivo da _outbox servido ao navegador: nada nele roda nem enxerga a página (um .html do agente não
-# vira script na nossa origem), e o tipo declarado é o que vale
+# s between two ssh connections in a row to the same machine: the second, right behind, tends to drop
+SSH_GAP = 4.0
+JOB_TTL = 60  # s during which an already opened set stays in /api/state (the page shows the result)
+# _outbox file served to the browser: nothing in it runs or sees the page (an .html from the agent does
+# not become a script on our origin), and the declared type is what counts
 FILE_CSP = "default-src 'none'; sandbox; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'"
 INLINE_OK = ("image/", "video/", "audio/", "text/plain", "text/markdown", "application/pdf", "text/csv")
 
 
 class Context:
-    """Tudo que as rotas precisam; montado por app.serve e pelos testes."""
+    """Everything the routes need; built by app.serve and by the tests."""
 
     def __init__(
         self,
@@ -64,18 +65,18 @@ class Context:
         convert: Optional[Callable] = None,
     ):
         self.conf, self.state, self.bridges, self.spawn = conf, state, bridges, spawn
-        self.convert = convert  # (host, label) -> {ok, label, how, msg}; None desliga /api/agent/convert
-        self.put_file = None  # (host, path, data) -> erro ou None; None desliga /api/agent/<x>/upload
-        self.list_files = None  # (host, pasta) -> ([{name,size,mtime}], erro); None desliga /files e /file
-        self.link = None  # (host, local, remoto) -> erro ou None; None desliga /link e /unlink
+        self.convert = convert  # (host, label) -> {ok, label, how, msg}; None turns /api/agent/convert off
+        self.put_file = None  # (host, path, data) -> error or None; None turns /api/agent/<x>/upload off
+        self.list_files = None  # (host, folder) -> ([{name,size,mtime}], error); None turns /files, /file off
+        self.link = None  # (host, local, remote) -> error or None; None turns /link and /unlink off
         self.unlink = None
         self.open_file = None  # (host, path, start, end) -> FileStream
         self.token = token or secrets.token_urlsafe(16)
-        self.auth: Optional[Auth] = None  # login por senha (rede); None ou desligado = só o token
-        self.allowed_hosts = {"127.0.0.1", "localhost"}  # cabeçalho Host aceito
-        self.local_host: Optional[str] = "laptop"  # nome desta máquina na página; None = sem agentes locais
-        self.migrator = None  # troca automática de conta (app.serve liga); /api/state mostra o histórico
-        self.set_jobs: Dict[str, dict] = {}  # conjuntos abrindo (ou recém-abertos), por id
+        self.auth: Optional[Auth] = None  # password login (network); None or off = token only
+        self.allowed_hosts = {"127.0.0.1", "localhost"}  # accepted Host header
+        self.local_host: Optional[str] = "laptop"  # name of this machine on the page; None = no local agents
+        self.migrator = None  # automatic account switch (app.serve turns it on); /api/state shows the history
+        self.set_jobs: Dict[str, dict] = {}  # sets being opened (or just opened), by id
         self.jobs_lock = threading.Lock()
 
     @property
@@ -86,7 +87,7 @@ class Context:
         return ([self.local_host] if self.local_host else []) + list(self.conf.hosts)
 
     def jobs(self) -> List[dict]:
-        """Conjuntos abrindo, e os prontos há menos de JOB_TTL s, para a página contar o andamento."""
+        """Sets being opened, and those finished less than JOB_TTL s ago, so the page can report progress."""
         now = time.time()
         with self.jobs_lock:
             for k in [k for k, j in self.set_jobs.items() if j["done"] and now - j["ts"] > JOB_TTL]:
@@ -99,10 +100,10 @@ def make_handler(ctx: Context):
         protocol_version = "HTTP/1.1"
         server_version = "orq-web"
 
-        def log_message(self, *a: Any) -> None:  # silêncio; erros reais sobem como exceção
+        def log_message(self, *a: Any) -> None:  # silence; real errors propagate as exceptions
             pass
 
-        # ---- utilidades
+        # ---- utilities
         def reply(self, code: int, body: Any, ctype: str = "application/json") -> None:
             b = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
             self.send_response(code)
@@ -160,12 +161,12 @@ def make_handler(ctx: Context):
                 return self.reply(200, login_page(nxt=(q.get("next") or ["/"])[0]).encode(), "text/html")
             if u.path.startswith("/static/"):
                 return self.static(u.path[len("/static/") :])
-            if u.path in PAGES:  # "/" é a página normal; "/m" a versão para celular (mesmo app.js)
+            if u.path in PAGES:  # "/" is the normal page; "/m" the phone version (same app.js)
                 if ctx.login_required and not self.authed(q):
                     return self.redirect("/login" if u.path == "/" else f"/login?next={u.path}")
                 return self.static(PAGES[u.path])
             if not self.authed(q):
-                return self.reply(403, {"err": "abra pelo link que o orq-web mostrou"})
+                return self.reply(403, {"err": "open it through the link orq-web showed"})
             ctx.state.touch()
             if u.path == "/api/state":
                 snap = ctx.state.snapshot()
@@ -206,7 +207,8 @@ def make_handler(ctx: Context):
             self.reply(200, p.read_bytes(), TYPES.get(p.suffix, "application/octet-stream"))
 
         def stream(self, label: str, since: int) -> None:
-            """SSE: cada linha do agente vira um `data:`. Uma ponte por aba; a anterior é fechada."""
+            """SSE: each line from the agent becomes a `data:`. One bridge per tab; the previous one is
+            closed."""
             b, old = ctx.bridges.open(label, since)
             if old:
                 old.close()
@@ -239,12 +241,12 @@ def make_handler(ctx: Context):
             return entry if entry and entry.get("dir") else None
 
         def files(self, label: str) -> None:
-            """Arquivos que o agente pôs em <pasta do projeto>/_outbox/, na máquina dele."""
+            """Files the agent put in <project folder>/_outbox/, on its machine."""
             if not ctx.list_files:
-                return self.reply(400, {"err": "arquivos do agente desligados"})
+                return self.reply(400, {"err": "agent files are turned off"})
             entry = self.agent_dir(label)
             if entry is None:
-                return self.reply(404, {"err": "agente desconhecido"})
+                return self.reply(404, {"err": "unknown agent"})
             folder = f"{entry['dir'].rstrip('/')}/{OUTBOX}"
             items, err = ctx.list_files(entry.get("host") or ctx.local_host or "?", folder)
             body = {"dir": folder, "items": items}
@@ -253,14 +255,14 @@ def make_handler(ctx: Context):
             return self.reply(200, body)
 
         def file(self, label: str, name: str, download: bool) -> None:
-            """Um arquivo da _outbox: inline (prévia) ou anexo (?dl=1); aceita Range de uma faixa."""
+            """A file from the _outbox: inline (preview) or attachment (?dl=1); accepts a one-range Range."""
             if not ctx.open_file:
-                return self.reply(400, {"err": "arquivos do agente desligados"})
+                return self.reply(400, {"err": "agent files are turned off"})
             if not name or name != safe_filename(name):
-                return self.reply(400, {"err": "nome de arquivo inválido"})
+                return self.reply(400, {"err": "invalid file name"})
             entry = self.agent_dir(label)
             if entry is None:
-                return self.reply(404, {"err": "agente desconhecido"})
+                return self.reply(404, {"err": "unknown agent"})
             start, end = 0, None
             m = re.match(r"^bytes=(\d*)-(\d*)$", self.headers.get("Range", ""))
             if m and (m.group(1) or m.group(2)):
@@ -275,7 +277,7 @@ def make_handler(ctx: Context):
                 self.end_headers()
                 return
             except (OSError, subprocess.SubprocessError) as e:
-                return self.reply(404, {"err": f"não achei {name} em {host}: {str(e)[:120]}"})
+                return self.reply(404, {"err": f"could not find {name} on {host}: {str(e)[:120]}"})
             ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
             inline = not download and ctype.startswith(INLINE_OK)
             try:
@@ -295,7 +297,7 @@ def make_handler(ctx: Context):
                     self.wfile.write(chunk)
                 self.wfile.flush()
             except OSError:
-                pass  # o navegador desistiu (fechou a prévia); o close abaixo derruba o ssh
+                pass  # the browser gave up (closed the preview); the close below kills the ssh
             finally:
                 fs.close()
 
@@ -345,22 +347,22 @@ def make_handler(ctx: Context):
                 return self.unlink_agents(label, body)
             msg = build_message(op, body)
             if msg is None:
-                return self.reply(400, {"err": "mensagem vazia" if op == "send" else "pedido inválido"})
+                return self.reply(400, {"err": "empty message" if op == "send" else "invalid request"})
             err = ctx.bridges.deliver(label, msg)
             if err:
                 return self.reply(500, {"err": err})
-            if op == "stop":  # a lista de agentes é consultada a cada 15 s; antecipa para a aba sumir logo
+            if op == "stop":  # the agent list is polled every 15 s; refresh early so the tab goes away soon
                 ctx.state.mark_closing(label)
                 threading.Timer(2.0, ctx.state.refresh_agents).start()
                 threading.Timer(6.0, ctx.state.refresh_agents).start()
-            return self.reply(200, {"msg": f"encerrando {label}"} if op == "stop" else {"ok": True})
+            return self.reply(200, {"msg": f"shutting down {label}"} if op == "stop" else {"ok": True})
 
         def login(self) -> None:
             if not self.ok_host():
                 return self.reply(403, {"err": "host"})
             if not ctx.login_required:
                 return self.reply(
-                    404, login_page("login por senha desligado neste servidor").encode(), "text/html"
+                    404, login_page("password login is turned off on this server").encode(), "text/html"
                 )
             try:
                 n = int(self.headers.get("Content-Length", 0))
@@ -369,36 +371,34 @@ def make_handler(ctx: Context):
                 form = {}
             ip = self.client_ip()
             if ctx.auth.blocked(ip):
-                return self.reply(
-                    429, login_page("muitas tentativas; espere um minuto").encode(), "text/html"
-                )
+                return self.reply(429, login_page("too many attempts; wait a minute").encode(), "text/html")
             nxt = (form.get("next") or ["/"])[0]
             nxt = nxt if nxt in PAGES else "/"
             sid = ctx.auth.login((form.get("password") or [""])[0], ip)
-            print(f"login {'ok' if sid else 'falhou'} de {ip}", file=sys.stderr, flush=True)
+            print(f"login {'ok' if sid else 'failed'} from {ip}", file=sys.stderr, flush=True)
             if not sid:
-                return self.reply(403, login_page("senha incorreta", nxt).encode(), "text/html")
+                return self.reply(403, login_page("wrong password", nxt).encode(), "text/html")
             return self.redirect(nxt, (("Set-Cookie", ctx.auth.cookie_header(sid)),))
 
         def convert_agent(self, body: dict) -> None:
-            """Fecha o claude interativo daquele tmux e reabre a conversa como agente da página."""
+            """Closes the interactive claude in that tmux and reopens the conversation as a page agent."""
             label = body.get("label") or ""
             host = label.rsplit("@", 1)[1] if "@" in label else ""
             if not ctx.convert or host not in ctx.valid_hosts():
-                return self.reply(400, {"err": "agente inválido"})
+                return self.reply(400, {"err": "invalid agent"})
             with ctx.state.lock:
                 entry = next(
                     (a for a in ctx.state.agents if a.get("label") == label and a.get("kind") != "sdk"), None
                 )
             if entry is None:
-                return self.reply(404, {"err": "esse agente não é um claude de terminal"})
+                return self.reply(404, {"err": "that agent is not a terminal claude"})
             if not entry.get("tmux"):
                 return self.reply(
-                    400, {"err": "painel da grade antiga do orq, sem tmux próprio; feche-o no terminal"}
+                    400, {"err": "pane of the old orq grid, without its own tmux; close it in the terminal"}
                 )
             res = ctx.convert(host, label)
             if not res.get("ok"):
-                return self.reply(500, {"err": res.get("msg") or "falhou"})
+                return self.reply(500, {"err": res.get("msg") or "failed"})
             new_label = res.get("label") or label
             ctx.state.add_provisional(
                 provisional_agent(
@@ -408,17 +408,17 @@ def make_handler(ctx: Context):
             return self.reply(200, {"label": new_label, "how": res.get("how"), "msg": res.get("msg")})
 
         def upload(self, label: str) -> None:
-            """Grava o corpo cru em <pasta do agente>/_inbox/<X-Filename>, na máquina do agente."""
+            """Writes the raw body to <agent folder>/_inbox/<X-Filename>, on the agent's machine."""
             if not ctx.put_file:
-                return self.reply(400, {"err": "envio de arquivos desligado"})
+                return self.reply(400, {"err": "file upload is turned off"})
             name = safe_filename(unquote(self.headers.get("X-Filename", "")))
             if not name:
-                return self.reply(400, {"err": "nome de arquivo inválido"})
+                return self.reply(400, {"err": "invalid file name"})
             n = int(self.headers.get("Content-Length", 0))
             if n <= 0 or n > UPLOAD_MAX:
                 return self.reply(
                     413 if n > UPLOAD_MAX else 400,
-                    {"err": f"tamanho inválido ({n} bytes; máximo {UPLOAD_MAX})"},
+                    {"err": f"invalid size ({n} bytes; maximum {UPLOAD_MAX})"},
                 )
             with ctx.state.lock:
                 entry = next(
@@ -426,12 +426,12 @@ def make_handler(ctx: Context):
                     None,
                 )
             if entry is None or not entry.get("dir"):
-                return self.reply(404, {"err": "agente desconhecido"})
+                return self.reply(404, {"err": "unknown agent"})
             data = self.rfile.read(n)
             path = f"{entry['dir'].rstrip('/')}/{INBOX}/{name}"
             err = ctx.put_file(entry.get("host") or ctx.local_host or "?", path, data)
             if err:
-                return self.reply(500, {"err": f"não consegui gravar em {entry.get('host')}: {err}"})
+                return self.reply(500, {"err": f"could not write on {entry.get('host')}: {err}"})
             return self.reply(200, {"path": path, "bytes": n})
 
         def live_sdk(self, label: str) -> Optional[dict]:
@@ -446,23 +446,21 @@ def make_handler(ctx: Context):
                 )
 
         def link_agents(self, label: str, body: dict) -> None:
-            """Vínculo entre dois agentes da página: `orq-agent link` na máquina do primeiro (túnel ssh e
-            registro espelhado se as máquinas diferem) e uma nota a cada um dizendo como pedir ao outro."""
+            """Link between two page agents: `orq-agent link` on the first one's machine (ssh tunnel and
+            mirrored registry if the machines differ) and a note to each one saying how to ask the other."""
             if not ctx.link:
-                return self.reply(400, {"err": "vínculos desligados"})
+                return self.reply(400, {"err": "links are turned off"})
             to = (body.get("to") or "").strip()
             a, b = self.live_sdk(label), self.live_sdk(to)
             if a is None or b is None:
-                return self.reply(
-                    404, {"err": "agente desconhecido (os dois precisam ser agentes da página, vivos)"}
-                )
+                return self.reply(404, {"err": "unknown agent (both must be page agents, alive)"})
             if label == to:
-                return self.reply(400, {"err": "um agente não se vincula a si mesmo"})
+                return self.reply(400, {"err": "an agent cannot be linked to itself"})
             if any(link_pair(lk) == frozenset((label, to)) and lk.get("up") for lk in ctx.state.links):
-                return self.reply(400, {"err": "já estão vinculados"})
+                return self.reply(400, {"err": "they are already linked"})
             record, err = self.make_link(a, b)
             if err:
-                return self.reply(500, {"err": f"vínculo falhou: {err}"})
+                return self.reply(500, {"err": f"link failed: {err}"})
             errs = [
                 e
                 for e in (ctx.bridges.deliver(x["label"], link_note(x, y)) for x, y in ((a, b), (b, a)))
@@ -474,8 +472,8 @@ def make_handler(ctx: Context):
             return make_link(ctx, a, b)
 
         def break_link(self, rec: dict, closing: Optional[str] = None) -> Tuple[Optional[str], List[str]]:
-            """`orq-agent unlink` na máquina do vínculo, tira-o do estado e avisa quem sobrou (com
-            `closing`, esse lado está sendo encerrado e não recebe aviso). Devolve (erro, avisados)."""
+            """`orq-agent unlink` on the link's machine, removes it from the state and tells whoever is left
+            (with `closing`, that side is being shut down and gets no notice). Returns (error, told)."""
             err = ctx.unlink(rec.get("host") or ctx.local_host or "?", rec["local"], rec["remote"])
             if err:
                 return err, []
@@ -491,44 +489,44 @@ def make_handler(ctx: Context):
 
         def unlink_agents(self, label: str, body: dict) -> None:
             if not ctx.unlink:
-                return self.reply(400, {"err": "vínculos desligados"})
+                return self.reply(400, {"err": "links are turned off"})
             to = (body.get("to") or "").strip()
             rec = next((lk for lk in ctx.state.links if link_pair(lk) == frozenset((label, to))), None)
             if rec is None:
-                return self.reply(404, {"err": "não há vínculo entre esses agentes"})
+                return self.reply(404, {"err": "there is no link between these agents"})
             err, told = self.break_link(rec)
             if err:
-                return self.reply(500, {"err": f"desfazer falhou: {err}"})
+                return self.reply(500, {"err": f"unlink failed: {err}"})
             return self.reply(200, {"ok": True, "told": told})
 
         def upgrade(self, label: str, body: dict) -> None:
-            """Sobe os níveis de uma receita acima do agente da aba (mesma máquina, pasta e conta)."""
+            """Adds the levels of a recipe above the tab's agent (same machine, folder and account)."""
             status, out = run_upgrade(ctx, label, body.get("pipeline") or None)
             return self.reply(status, out)
 
-        # ---- painel de uma conta (histórico de uso)
+        # ---- panel of one account (usage history)
         def account_panel(self, name: str) -> None:
             if name not in ctx.conf.accounts:
-                return self.reply(404, {"err": f"conta desconhecida: {name}"})
+                return self.reply(404, {"err": f"unknown account: {name}"})
             data = ctx.state.account_detail(name)
             if not data:
                 return self.reply(
-                    503, {"err": "sem histórico de uso (o usage-hist não respondeu ou não há banco)"}
+                    503, {"err": "no usage history (usage-hist did not answer or there is no database)"}
                 )
             return self.reply(200, data)
 
         def usage_tab(self, hours: str) -> None:
-            """Aba "uso": quem está gastando cada conta nas últimas 5 h, 24 h ou 7 dias."""
+            """The "usage" tab: who is spending each account in the last 5 h, 24 h or 7 days."""
             if hours not in ("5", "24", "168"):
-                return self.reply(400, {"err": "horas: 5, 24 ou 168"})
+                return self.reply(400, {"err": "horas: 5, 24 or 168"})
             data = ctx.state.usage_table(float(hours))
             if not data:
                 return self.reply(
-                    503, {"err": "sem histórico de uso (o usage-hist não respondeu ou não há banco)"}
+                    503, {"err": "no usage history (usage-hist did not answer or there is no database)"}
                 )
             return self.reply(200, data)
 
-        # ---- conjuntos
+        # ---- sets
         def sets_list(self) -> None:
             with ctx.state.lock:
                 agents = list(ctx.state.agents)
@@ -546,7 +544,8 @@ def make_handler(ctx: Context):
             return sets.validate(data, ctx.valid_hosts(), list(ctx.conf.accounts), list(pipelines.catalog()))
 
         def set_save(self, body: dict) -> None:
-            """Grava um conjunto (novo, ou substitui o de mesmo nome): é o "enviar JSON" e o "salvar"."""
+            """Saves a set (new, or replaces the one with the same name): it is the "send JSON" and the
+            "save"."""
             try:
                 d = self.set_validate(body)
             except ValueError as e:
@@ -554,16 +553,16 @@ def make_handler(ctx: Context):
             try:
                 sid = sets.save(d)
             except OSError as e:
-                return self.reply(500, {"err": f"não consegui gravar em {sets.sets_dir()}: {e}"})
+                return self.reply(500, {"err": f"could not write to {sets.sets_dir()}: {e}"})
             return self.reply(200, {"id": sid, "conjunto": sets.clean(d)})
 
         def set_delete(self, sid: str) -> None:
             if not sets.delete(sid):
-                return self.reply(404, {"err": f"conjunto desconhecido: {sid}"})
+                return self.reply(404, {"err": f"unknown set: {sid}"})
             return self.reply(200, {"ok": True})
 
         def set_snapshot(self, body: dict) -> None:
-            """Fotografa as abas abertas num conjunto (não salva: a página mostra para editar e salvar)."""
+            """Snapshots the open tabs into a set (not saved: the page shows it for editing and saving)."""
             with ctx.state.lock:
                 agents, links = list(ctx.state.agents), list(ctx.state.links)
             d, avisos = sets.snapshot(agents, links)
@@ -571,9 +570,9 @@ def make_handler(ctx: Context):
             return self.reply(200, {"conjunto": sets.clean(d), "avisos": avisos})
 
         def set_open(self, sid: str) -> None:
-            """Abre todos os agentes do conjunto. Recusa se algum `maquina:pasta` já tem agente vivo. O
-            trabalho (spawns, vínculos, professor, tarefas) roda numa thread; a resposta traz o plano e
-            o andamento vai em /api/state (`conjuntos_abrindo`)."""
+            """Opens all the agents of the set. Refuses if some `maquina:pasta` already has a live agent. The
+            work (spawns, links, teacher, tasks) runs in a thread; the response carries the plan and
+            the progress goes in /api/state (`conjuntos_abrindo`)."""
             try:
                 raw = sets.load(sid)
             except KeyError as e:
@@ -581,15 +580,15 @@ def make_handler(ctx: Context):
             try:
                 d = self.set_validate(raw)
             except ValueError as e:
-                return self.reply(400, {"err": f"o conjunto {sid} não vale mais: {e}"})
+                return self.reply(400, {"err": f"the set {sid} is no longer valid: {e}"})
             with ctx.jobs_lock:
                 cur = ctx.set_jobs.get(sid)
                 if cur is not None and not cur["done"]:
-                    return self.reply(409, {"err": f"o conjunto {d['nome']} já está sendo aberto"})
+                    return self.reply(409, {"err": f"the set {d['nome']} is already being opened"})
             snap = ctx.state.snapshot()
             abertos = sets.conflicts(d, snap["agents"])
             if abertos:
-                msg = f"já aberto: {', '.join(abertos)}; feche-os antes de abrir o conjunto {d['nome']}"
+                msg = f"already open: {', '.join(abertos)}; close them before opening the set {d['nome']}"
                 return self.reply(409, {"err": msg, "abertos": abertos})
             plan = sets.plan(
                 d,
@@ -623,17 +622,18 @@ def make_handler(ctx: Context):
             )
 
         def reopen(self, label: str, body: dict) -> None:
-            """Fecha e reabre o agente na mesma conversa (ganha nome; ou noutra conta, se `account` vier)."""
+            """Closes and reopens the agent in the same conversation (it gets a name; or in another account,
+            if `account` is given)."""
             with ctx.state.lock:
                 agents = list(ctx.state.agents)
             a = next((x for x in agents if x.get("label") == label and x.get("state") != "closed"), None)
             if a is None or a.get("kind") != "sdk":
-                return self.reply(404, {"err": "agente da página desconhecido"})
+                return self.reply(404, {"err": "unknown page agent"})
             if pipelines.levels_above(agents, label):
-                return self.reply(409, {"err": "desfaça os níveis antes de reabrir"})
+                return self.reply(409, {"err": "remove the levels before reopening"})
             acc = body.get("account") or a.get("account") or "?"
             if acc not in ctx.conf.accounts:
-                return self.reply(400, {"err": f"conta desconhecida: {acc}"})
+                return self.reply(400, {"err": f"unknown account: {acc}"})
             host, cwd = a.get("host") or ctx.local_host or "?", a.get("dir") or ""
             err = ctx.spawn(host, label, cwd, acc, "resume", restart=True)
             if err:
@@ -642,20 +642,20 @@ def make_handler(ctx: Context):
             return self.reply(200, {"label": label, "acc": acc})
 
         def downgrade(self, label: str) -> None:
-            """Encerra os níveis acima do agente da aba; a aba volta a falar com ele."""
+            """Shuts down the levels above the tab's agent; the tab talks to it again."""
             with ctx.state.lock:
                 agents = list(ctx.state.agents)
             above = pipelines.levels_above(agents, label)
             if not above:
-                return self.reply(400, {"err": "esse agente não tem níveis acima"})
+                return self.reply(400, {"err": "that agent has no levels above it"})
             errors = {}
             unlinked = []
-            for lv in reversed(above):  # do topo para baixo
+            for lv in reversed(above):  # from the top down
                 for rec in [lk for lk in ctx.state.links if lv in link_pair(lk)]:
-                    # vínculos do nível (receita multi): desfaz antes de fechar, para limpar os espelhos
-                    err, _ = self.break_link(rec, closing=lv) if ctx.unlink else ("vínculos desligados", [])
+                    # links of the level (multi recipe): unlinks before closing, to clean up the mirrors
+                    err, _ = self.break_link(rec, closing=lv) if ctx.unlink else ("links are turned off", [])
                     if err:
-                        errors[f"vínculo {rec['local']} ⇄ {rec['remote']}"] = err
+                        errors[f"link {rec['local']} ⇄ {rec['remote']}"] = err
                     else:
                         unlinked.append(rec["remote"] if rec["local"] == lv else rec["local"])
                 err = ctx.bridges.deliver(lv, {"orq": "quit"})
@@ -684,9 +684,8 @@ def make_handler(ctx: Context):
                 ]
                 if live:
                     who = live[0]["label"]
-                    return self.reply(
-                        409, {"err": f"há um claude aberto no terminal nessa pasta ({who}); use ⇄ converter"}
-                    )
+                    msg = f"there is a claude open in the terminal in that folder ({who}); use ⇄ convert"
+                    return self.reply(409, {"err": msg})
             err = ctx.spawn(p["host"], p["label"], p["cwd"], p["acc"], p["mode"])
             if err:
                 return self.reply(500, {"err": err})
@@ -702,7 +701,7 @@ def make_handler(ctx: Context):
 
 
 def link_host(agent: dict, local_host: Optional[str]) -> str:
-    """Máquina de um agente, como o `orq-agent link` precisa (a local é `local_host`, não `laptop`)."""
+    """Machine of an agent, as `orq-agent link` needs it (the local one is `local_host`, not `laptop`)."""
     return agent.get("host") or local_host or "?"
 
 
@@ -714,9 +713,10 @@ def live_entry(ctx: Context, label: str) -> Optional[dict]:
 
 
 def close_orphan_levels(ctx: Context, label: str) -> List[str]:
-    """Níveis que ainda apontam para `label` logo depois de ele ser aberto são órfãos de uma vida anterior
-    do mesmo rótulo (a base foi encerrada sem o ↓ desfazer): recebem `quit` e saem do estado, senão o
-    próximo ⇅ (ou o professor de um conjunto) recusa com "já tem níveis". Devolve os encerrados."""
+    """Levels that still point to `label` right after it is opened are orphans from a previous life of
+    the same label (the base was shut down without ↓ removing them): they get `quit` and leave the state,
+    otherwise the next ⇅ (or the teacher of a set) refuses with "already has levels". Returns the ones
+    shut down."""
     with ctx.state.lock:
         agents = list(ctx.state.agents)
     above = pipelines.levels_above(agents, label)
@@ -727,8 +727,8 @@ def close_orphan_levels(ctx: Context, label: str) -> List[str]:
 
 
 def make_link(ctx: Context, a: dict, b: dict) -> Tuple[Optional[dict], Optional[str]]:
-    """`orq-agent link` na máquina de `a` e o registro do vínculo no estado (até a máquina o listar).
-    `host` do registro é sempre a máquina onde o vínculo roda: a de `a`."""
+    """`orq-agent link` on `a`'s machine and the link record in the state (until the machine lists it).
+    `host` of the record is always the machine where the link runs: `a`'s."""
     host = link_host(a, ctx.local_host)
     err = ctx.link(host, a["label"], b["label"])
     if err:
@@ -750,22 +750,22 @@ def make_link(ctx: Context, a: dict, b: dict) -> Tuple[Optional[dict], Optional[
 def run_upgrade(
     ctx: Context, label: str, pipeline_id: Optional[str], role: Optional[str] = None
 ) -> Tuple[int, dict]:
-    """Sobe os níveis de uma receita acima do agente `label` (mesma máquina, pasta, conta e modo de
-    permissão). `role` substitui o papel do TOML (com os mesmos marcadores) quando a receita tem um nível
-    só, caso dos conjuntos com líder. Devolve (status HTTP, corpo)."""
+    """Adds the levels of a recipe above the agent `label` (same machine, folder, account and permission
+    mode). `role` replaces the role from the TOML (with the same markers) when the recipe has a single
+    level, the case of sets with a leader. Returns (HTTP status, body)."""
     with ctx.state.lock:
         agents = list(ctx.state.agents)
     base = next((a for a in agents if a.get("label") == label and a.get("state") != "closed"), None)
     if base is None:
-        return 404, {"err": "agente desconhecido"}
+        return 404, {"err": "unknown agent"}
     if base.get("kind") != "sdk":
-        return 400, {"err": "só um agente da página ganha níveis; converta o do terminal antes"}
+        return 400, {"err": "only a page agent gets levels; convert the terminal one first"}
     if base.get("parent"):
-        return 400, {"err": "esse agente já é um nível de cima"}
+        return 400, {"err": "that agent is already an upper level"}
     if pipelines.levels_above(agents, label):
-        return 409, {"err": "já tem níveis; desfaça-os antes de trocar de receita"}
+        return 409, {"err": "it already has levels; remove them before switching recipes"}
     if not base.get("name"):
-        return 409, {"err": "reabra o agente (✕ e abrir de novo): ele precisa subir com nome para ter níveis"}
+        return 409, {"err": "reopen the agent (✕ and open again): it must start with a name to have levels"}
     try:
         p = pipelines.get(pipeline_id)
     except KeyError as e:
@@ -773,12 +773,12 @@ def run_upgrade(
     if role:
         if len(p.niveis) != 1:
             return 400, {
-                "err": f"a receita {p.id} tem {len(p.niveis)} níveis; o prompt próprio só vale com um"
+                "err": f"the recipe {p.id} has {len(p.niveis)} levels; a custom prompt only works with one"
             }
         p = pipelines.Pipeline(p.id, p.titulo, p.descricao, [dict(p.niveis[0], papel=role)])
     host = base.get("host") or ctx.local_host or "?"
     acc, cwd = base.get("account") or "?", base.get("dir") or ""
-    # receita multi: os agentes vinculados (🔗) ao da aba viram executores do nível de baixo
+    # multi recipe: the agents linked (🔗) to the tab's one become executors of the bottom level
     others = []
     if p.multi:
         for lk in ctx.state.links:
@@ -805,9 +805,9 @@ def run_upgrade(
             pipeline=p.id,
         )
         if err:
-            for done in reversed(started):  # não deixa nível órfão rodando
+            for done in reversed(started):  # leaves no orphan level running
                 ctx.bridges.deliver(done, {"orq": "quit"})
-            return 500, {"err": f"não consegui subir {lv['label']}: {err}"}
+            return 500, {"err": f"could not start {lv['label']}: {err}"}
         started.append(lv["label"])
         ctx.state.add_provisional(
             provisional_agent(
@@ -823,13 +823,13 @@ def run_upgrade(
                 pipeline=p.id,
             )
         )
-    # o nível de baixo ganha vínculo com cada executor vinculado (local ou por ssh); os executores
-    # recebem a nota de vínculo; falha aqui não derruba os níveis, só é reportada
+    # the bottom level gets a link to each linked executor (local or over ssh); the executors
+    # receive the link note; a failure here does not bring the levels down, it is only reported
     links, link_errors = [], {}
     bottom = started[0]
     me = {"label": bottom, "name": session_name(bottom), "host": host, "dir": cwd}
     for a in others:
-        rec, err = make_link(ctx, me, a) if ctx.link else (None, "vínculos desligados")
+        rec, err = make_link(ctx, me, a) if ctx.link else (None, "links are turned off")
         if err:
             link_errors[a["label"]] = err
             continue
@@ -845,8 +845,8 @@ def run_upgrade(
 
 
 class Pacer:
-    """Espaça as conexões ssh a uma mesma máquina (SSH_GAP): a segunda, logo atrás da primeira, costuma
-    cair. A máquina local não precisa. Uso: `with pacer.turn(host): …`."""
+    """Spaces out the ssh connections to the same machine (SSH_GAP): the second, right behind the first,
+    tends to drop. The local machine does not need it. Usage: `with pacer.turn(host): …`."""
 
     def __init__(self, local_host: Optional[str]):
         self.local = local_host
@@ -876,9 +876,9 @@ class Pacer:
 
 
 def open_set_job(ctx: Context, sid: str, d: dict, plan: List[dict], job: dict) -> None:
-    """Abre um conjunto (numa thread): spawns em paralelo entre máquinas e em sequência na mesma; com
-    líder, vincula os demais ao primeiro e sobe o professor sobre ele; por fim entrega as tarefas. Falha
-    num passo é anotada em `job["erros"]` e não desfaz os outros."""
+    """Opens a set (in a thread): spawns in parallel across machines and in sequence on the same one; with
+    a leader, links the others to the first and starts the teacher above it; finally delivers the tasks.
+    A failure in one step is recorded in `job["erros"]` and does not undo the others."""
     pacer = Pacer(ctx.local_host)
     lock = threading.Lock()
 
@@ -933,7 +933,9 @@ def open_set_job(ctx: Context, sid: str, d: dict, plan: List[dict], job: dict) -
     top = None
     lider = d.get("lider")
     if lider and plan and plan[0]["label"] not in job["feitos"]:
-        job["erros"]["líder"] = f"o primeiro agente ({plan[0]['label']}) não abriu; o professor não subiu"
+        job["erros"]["leader"] = (
+            f"the first agent ({plan[0]['label']}) did not open; the teacher did not start"
+        )
     elif lider and ok:
         first = live_entry(ctx, ok[0]["label"]) or {"label": ok[0]["label"], "host": ok[0]["host"]}
         if len(ok) > 1:
@@ -943,9 +945,9 @@ def open_set_job(ctx: Context, sid: str, d: dict, plan: List[dict], job: dict) -
             if other is None:
                 continue
             with pacer.turn(first.get("host")):
-                rec, err = make_link(ctx, first, other) if ctx.link else (None, "vínculos desligados")
+                rec, err = make_link(ctx, first, other) if ctx.link else (None, "links are turned off")
             if err:
-                job["erros"][f"vínculo {first['label']} ⇄ {other['label']}"] = err
+                job["erros"][f"link {first['label']} ⇄ {other['label']}"] = err
                 continue
             for x, y in ((first, other), (other, first)):
                 with pacer.turn(x.get("host")):
@@ -954,26 +956,26 @@ def open_set_job(ctx: Context, sid: str, d: dict, plan: List[dict], job: dict) -
         with pacer.turn(first.get("host")):
             status, body = run_upgrade(ctx, first["label"], lider["receita"], role=lider["prompt"] or None)
         if status != 200:
-            job["erros"]["líder"] = body.get("err") or "o professor não subiu"
+            job["erros"]["leader"] = body.get("err") or "the teacher did not start"
         else:
             top = body["top"]
             with lock:
                 job["top"] = top
             for k, v in body.get("link_errors", {}).items():
-                job["erros"][f"vínculo professor ⇄ {k}"] = v
+                job["erros"][f"link teacher ⇄ {k}"] = v
     tasks = [(it["label"], it["host"], it["tarefa"]) for it in ok if it["tarefa"]]
     if lider and lider.get("tarefa"):
         if top:
             tasks.append((top, ok[0]["host"], lider["tarefa"]))
         else:
-            job["erros"]["tarefa do líder"] = "o professor não subiu; a tarefa dele não foi enviada"
+            job["erros"]["leader's task"] = "the teacher did not start; its task was not sent"
     if tasks:
         step("tarefas")
     for lab, host, text in tasks:
         with pacer.turn(host):
             err = ctx.bridges.deliver(lab, _user_msg(text), fresh=True)
         if err:
-            job["erros"][f"tarefa de {lab}"] = err
+            job["erros"][f"task of {lab}"] = err
     with lock:
         job["etapa"], job["done"], job["ts"] = "pronto", True, time.time()
 
@@ -983,32 +985,32 @@ def _user_msg(text: str) -> dict:
 
 
 def link_note(me: dict, other: dict) -> dict:
-    """O que cada agente recebe ao ganhar um vínculo: quem é o outro e como falar com ele."""
+    """What each agent receives when it gets a link: who the other one is and how to talk to it."""
     name = other.get("name") or session_name(other.get("label", ""))
     mine = me.get("name") or session_name(me.get("label", ""))
     return _user_msg(
-        f"[orq] Vínculo criado com o agente `{name}` (pasta {other.get('dir') or '?'} em "
-        f"{other.get('host') or '?'}). Vocês se enxergam no ListAgents. Para pedir algo a ele, use "
-        f'SendMessage com to="{name}" e peça que responda pelo SendMessage a "{mine}"; ele pode pedir '
-        "coisas a você do mesmo jeito. Nada a fazer agora: só tome nota."
+        f"[orq] Link created with the agent `{name}` (folder {other.get('dir') or '?'} on "
+        f"{other.get('host') or '?'}). You see each other in ListAgents. To ask it for something, use "
+        f'SendMessage with to="{name}" and ask it to reply through SendMessage to "{mine}"; it can ask '
+        "you for things the same way. Nothing to do now: just take note."
     )
 
 
 def unlink_note(me: dict, other: Optional[dict], rec: dict) -> dict:
     mine_is_local = rec.get("local") == me.get("label")
     name = (other or {}).get("name") or rec.get("remote_name" if mine_is_local else "local_name")
-    return _user_msg(f"[orq] Vínculo com o agente `{name}` desfeito: ele não está mais ao seu alcance.")
+    return _user_msg(f"[orq] Link with the agent `{name}` removed: it is no longer within your reach.")
 
 
 def safe_filename(name: str) -> str:
-    """Só o nome, sem caminho, sem controle; vazio se não sobrar nada."""
+    """Just the name, no path, no control characters; empty if nothing is left."""
     base = name.replace("\\", "/").split("/")[-1].strip()
     base = "".join(ch for ch in base if ch.isprintable() and ch not in '<>:"|?*')
     return "" if base in ("", ".", "..") else base[:200]
 
 
 def build_message(op: str, body: dict) -> Optional[dict]:
-    """O que vai para o stdin do claude em cada operação da API."""
+    """What goes to claude's stdin for each API operation."""
     if op == "send":
         text = (body.get("text") or "").strip()
         if not text:
@@ -1021,7 +1023,7 @@ def build_message(op: str, body: dict) -> Optional[dict]:
         resp = (
             {"behavior": "allow", "updatedInput": body.get("input") or {}}
             if allow
-            else {"behavior": "deny", "message": "negado pela página do orq"}
+            else {"behavior": "deny", "message": "denied by the orq page"}
         )
         return {
             "type": "control_response",

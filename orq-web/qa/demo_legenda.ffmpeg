@@ -1,6 +1,6 @@
-# Filtro do ffmpeg para a gravação da demo (qa/demo_conjuntos.py): esconde o token da URL e desenha a
-# legenda na barra do Chromium. Posições para a janela do Chromium no canto de um Xvfb 1400x1000.
-# CAPDIR é trocado pelo diretório das legendas (DEMO_CAP_DIR) antes de usar.
+# ffmpeg filter for recording the demo (qa/demo_conjuntos.py): hides the token in the URL and draws the
+# caption on the Chromium bar. Positions for the Chromium window in the corner of a 1400x1000 Xvfb.
+# CAPDIR is replaced with the captions directory (DEMO_CAP_DIR) before use.
 drawbox=x=281:y=62:w=232:h=22:color=0xedf2fa:t=fill,
 drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:textfile=CAPDIR/t.txt:reload=1:fontsize=19:fontcolor=white:box=1:boxcolor=0x1b1f3a@0.92:boxborderw=8:x=1282-tw:y=19,
 drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=CAPDIR/s.txt:reload=1:fontsize=15:fontcolor=0x1b1f3a:box=1:boxcolor=0xffe9a8@0.95:boxborderw=6:x=1172-tw:y=66

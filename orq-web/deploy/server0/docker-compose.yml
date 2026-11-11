@@ -1,8 +1,8 @@
-# orq-web no server0, só na interface ZeroTier. Rode pelo deploy/server0/deploy.sh, que gera a
-# senha e o ssh_config do container. A porta fica publicada apenas no IP do ZeroTier.
+# orq-web on server0, only on the ZeroTier interface. Run it through deploy/server0/deploy.sh, which
+# generates the password and the container's ssh_config. The port is published only on the ZeroTier IP.
 services:
   orq-web:
-    image: ghcr.io/cmarcond/orq-web:latest   # publicada pela CI; sem acesso ao GHCR, o deploy constrói localmente com este nome
+    image: ghcr.io/cmarcond/orq-web:latest   # published by CI; without access to GHCR, the deploy builds locally under this name
     build:
       context: ../..
       args: { UID: "${UID:-1000}", GID: "${GID:-1000}", USER: "${USER:-user}" }
@@ -12,8 +12,8 @@ services:
       - "${ORQ_ZT_IP}:8765:8765"
     environment:
       ORQ_ALLOWED_HOSTS: "${ORQ_ZT_IP},${ORQ_HOSTNAME}"
-      ORQ_EXTRA_HOSTS: "laptop"          # o laptop entra como host por ssh pelo ZeroTier
-      ORQ_USAGE_HOST: "${ORQ_HOSTNAME}"  # a cota é lida por ssh numa máquina com credenciais
+      ORQ_EXTRA_HOSTS: "laptop"          # the laptop joins as a host over ssh through ZeroTier
+      ORQ_USAGE_HOST: "${ORQ_HOSTNAME}"  # the quota is read over ssh on a machine with credentials
     volumes:
       - "${HOME}/.ssh:${HOME}/.ssh:ro"
       - "${HOME}/.config/claude-multiconta:${HOME}/.config/claude-multiconta:ro"

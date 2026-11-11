@@ -1,12 +1,12 @@
-// Classificação pura das mensagens do histórico: o que é interno, o que veio de máquina, resumos.
+// Pure classification of the history messages: what is internal, what came from a machine, summaries.
 
-/** Registros que o Claude Code grava como mensagem do usuário mas ninguém digitou. */
+/** Records that Claude Code writes as a user message but nobody typed. */
 const INTERNAL =
   /^\s*<(local-command-caveat|command-name|local-command-stdout|task-notification|system-reminder|artifact-view-context)\b/;
 
 export const internal = (s) => INTERNAL.test(s || '');
 
-/** Tira marcações de texto colado e lembretes do sistema. */
+/** Strips pasted-text markup and system reminders. */
 export function clean(s) {
   return String(s ?? '')
     .replace(/<pasted_content[^>]*>/g, '📋 ')
@@ -16,10 +16,10 @@ export function clean(s) {
 }
 
 /**
- * Mensagem `user` veio de máquina (cron, loop, sistema)?
- * 1. carimbo do supervisor (orq_origin) manda;
- * 2. no replay: origin.kind ≠ human, ou nenhuma marca (nem origin nem promptSource);
- * 3. ao vivo sem carimbo: só origin.kind ≠ human.
+ * Did the `user` message come from a machine (cron, loop, system)?
+ * 1. the supervisor's stamp (orq_origin) decides;
+ * 2. on replay: origin.kind ≠ human, or no mark at all (neither origin nor promptSource);
+ * 3. live without a stamp: only origin.kind ≠ human.
  */
 export function isMachine(e) {
   if (e.orq_origin) return e.orq_origin === 'injected';
@@ -28,10 +28,10 @@ export function isMachine(e) {
   return Boolean(e.replay) && !kind && !e.promptSource;
 }
 
-const ORIGEM = { cron: 'agendado', scheduled: 'agendado', loop: 'loop', task: 'tarefa', hook: 'hook', sdk: 'automático' };
-export const originLabel = (kind) => ORIGEM[kind] || kind || 'sistema';
+const ORIGEM = { cron: 'scheduled', scheduled: 'scheduled', loop: 'loop', task: 'task', hook: 'hook', sdk: 'automatic' };
+export const originLabel = (kind) => ORIGEM[kind] || kind || 'system';
 
-/** Uma linha que resume a entrada de uma ferramenta: comando, arquivo, padrão, URL… */
+/** One line that summarizes the input of a tool: command, file, pattern, URL… */
 export function toolSummary(input) {
   const inp = input || {};
   const v =
@@ -47,7 +47,7 @@ export function toolSummary(input) {
   return String(v).replace(/\s+/g, ' ').slice(0, 140);
 }
 
-/** Corpo do cartão de permissão: comando, ou arquivo + conteúdo/diff, ou o JSON. */
+/** Body of the permission card: command, or file + content/diff, or the JSON. */
 export function permissionBody(input) {
   const inp = input || {};
   if (inp.command) return inp.command;
@@ -60,7 +60,7 @@ export function permissionBody(input) {
   return JSON.stringify(inp, null, 1).slice(0, 1500);
 }
 
-/** Primeira linha não vazia, sem marcador de título, para o resumo de uma mensagem de máquina. */
+/** First non-empty line, without the heading marker, for the summary of a machine message. */
 export function firstLine(text) {
   const l = String(text).split('\n').find((x) => x.trim()) || String(text);
   return l.replace(/^#+\s*/, '').slice(0, 160);

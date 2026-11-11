@@ -1,4 +1,4 @@
-"""Como o supervisor invoca o `claude`: comando, binário e sessão a retomar."""
+"""How the supervisor invokes `claude`: command, binary and session to resume."""
 
 import shutil
 import subprocess
@@ -17,12 +17,12 @@ def build_command(
     name: Optional[str] = None,
     system_prompt: Optional[str] = None,
 ) -> List[str]:
-    """`claude -p` em stream-json nos dois sentidos, com permissões pelo stdio (protocolo do Agent SDK).
+    """`claude -p` with stream-json in both directions, with permissions over stdio (Agent SDK protocol).
 
-    --include-partial-messages: texto palavra a palavra; --replay-user-messages: o claude ecoa as
-    mensagens que recebe, assim tudo que a página mostra passou pelo mesmo fluxo e fica persistido.
-    `name` (-n) é o nome pelo qual outras sessões acham esta no ListAgents/SendMessage; `system_prompt`
-    (--append-system-prompt) é o papel de um nível (professor, arquiteto…).
+    --include-partial-messages: text word by word; --replay-user-messages: claude echoes the
+    messages it receives, so everything the page shows went through the same stream and is persisted.
+    `name` (-n) is the name by which other sessions find this one in ListAgents/SendMessage; `system_prompt`
+    (--append-system-prompt) is the role of a level (teacher, architect…).
     """
     cmd = [
         claude,
@@ -49,9 +49,10 @@ def build_command(
 
 
 def pick_session(bin_dir: Path, account: str, folder: Path) -> Optional[str]:
-    """Conversa mais recente da pasta, copiada para a conta se for de outra (claude-last --pick --as).
+    """Most recent conversation of the folder, copied to the account if it belongs to another one
+    (claude-last --pick --as).
 
-    None quando não há conversa ou o utilitário não está disponível.
+    None when there is no conversation or the utility is not available.
     """
     try:
         r = subprocess.run(

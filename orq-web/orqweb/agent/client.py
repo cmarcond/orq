@@ -1,4 +1,4 @@
-"""Lado cliente do socket do agente: attach (ponte stdin/stdout), stop, spawn em tmux."""
+"""Client side of the agent's socket: attach (stdin/stdout bridge), stop, spawn in tmux."""
 
 import json
 import os
@@ -31,14 +31,14 @@ def send(c: socket.socket, obj: dict) -> None:
 
 
 def attach(sock_path: Path, since: int, stdin: BinaryIO, stdout: BinaryIO) -> int:
-    """Ponte: eventos do socket -> stdout; linhas do stdin -> socket. Termina quando um lado fecha."""
+    """Bridge: socket events -> stdout; stdin lines -> socket. Ends when one side closes."""
     if not sock_path.exists():
         stdout.write(
             json.dumps(
                 {
                     "type": "orq",
                     "level": "error",
-                    "text": f"agente não está rodando ({sock_path.parent.name})",
+                    "text": f"agent is not running ({sock_path.parent.name})",
                 }
             ).encode()
             + b"\n"
@@ -79,7 +79,7 @@ def attach(sock_path: Path, since: int, stdin: BinaryIO, stdout: BinaryIO) -> in
 
 
 def stop_and_wait(sock_path: Path, timeout: float = 40.0) -> bool:
-    """Manda encerrar e espera o socket sumir (o claude tem QUIT_GRACE s para sair). False se não sumiu."""
+    """Tells it to quit and waits for the socket to vanish (claude has QUIT_GRACE s to exit). False if not."""
     if not stop(sock_path):
         return not socket_alive(sock_path)
     deadline = time.time() + timeout
@@ -142,10 +142,11 @@ def start_command(
 
 
 def spawn_detached(cmd: List[str], sess: str, log: Path, cwd: str) -> str:
-    """Roda `cmd` solto: numa sessão tmux `sess` (matando uma homônima) ou, sem tmux, em segundo plano.
+    """Runs `cmd` detached: in a tmux session `sess` (killing one with the same name) or, without tmux,
+    in the background.
 
-    O stderr vai para `log`: o que o processo diz ao sair some com a sessão tmux, e fica lá para
-    diagnóstico. Devolve uma linha dizendo como abriu."""
+    The stderr goes to `log`: what the process says on exit vanishes with the tmux session, and stays
+    there for diagnosis. Returns a line saying how it was opened."""
     env = dict(os.environ)
     env.pop("TMUX", None)
     tmux = shutil.which("tmux")
@@ -154,23 +155,23 @@ def spawn_detached(cmd: List[str], sess: str, log: Path, cwd: str) -> str:
             subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True, env=env
             )
-        return f"em segundo plano (sem tmux); log em {log}"
+        return f"in the background (no tmux); log at {log}"
     subprocess.run([tmux, "kill-session", "-t", "=" + sess], env=env, capture_output=True)
     shell = tmux_shell(cmd, env) + " 2>>" + shlex.quote(str(log))
     subprocess.run(
         [tmux, "new-session", "-d", "-s", sess, "-c", cwd, shell],
         env=env,
         check=True,
-        cwd=os.path.expanduser("~"),  # o servidor tmux herda a pasta de quem o cria; a pessoal nunca some
+        cwd=os.path.expanduser("~"),  # the tmux server inherits its creator's folder; home never goes away
     )
-    return f"na sessão tmux {sess}"
+    return f"in tmux session {sess}"
 
 
 def tmux_shell(cmd: List[str], env: dict) -> str:
-    """Linha de shell para o tmux: leva o PYTHONPATH junto.
+    """Shell line for tmux: carries PYTHONPATH along.
 
-    Se já existe um servidor tmux (aberto por outra coisa), a sessão nova herda o ambiente DELE, não o
-    nosso, e o `python3 -m orqweb…` do wrapper de ~/.local/bin não acharia o pacote.
+    If a tmux server already exists (opened by something else), the new session inherits ITS environment,
+    not ours, and the `python3 -m orqweb…` of the wrapper in ~/.local/bin would not find the package.
     """
     pp = env.get("PYTHONPATH")
     return shlex.join((["env", f"PYTHONPATH={pp}"] if pp else []) + cmd)
@@ -190,19 +191,20 @@ def spawn(
     set_id: Optional[str] = None,
     pipeline: Optional[str] = None,
 ) -> str:
-    """Garante o supervisor rodando: numa sessão tmux `orqs-<nome>` ou, sem tmux, em segundo plano.
+    """Makes sure the supervisor is running: in a tmux session `orqs-<name>` or, without tmux, in the
+    background.
 
-    `restart` fecha o que estiver rodando com esse rótulo e sobe de novo (para o agente ganhar nome,
-    trocar de conta etc.; com --mode resume a conversa continua a mesma).
-    Devolve uma linha descrevendo o que fez. Levanta RuntimeError se o socket não aparecer.
+    `restart` closes whatever is running with this label and starts it again (so the agent gets a name,
+    switches account etc.; with --mode resume the conversation stays the same).
+    Returns a line describing what it did. Raises RuntimeError if the socket does not appear.
     """
     d = config.state_dir(label)
     sock = d / "agent.sock"
     if socket_alive(sock):
         if not restart:
-            return "já rodando"
+            return "already running"
         if not stop_and_wait(sock):
-            raise RuntimeError(f"o agente {label} não encerrou para ser reaberto")
+            raise RuntimeError(f"agent {label} did not shut down to be reopened")
     cmd = start_command(label, folder, account, mode, role_file, parent, level, permission, set_id, pipeline)
     Path(os.path.expanduser(folder)).mkdir(parents=True, exist_ok=True)
     d.mkdir(parents=True, exist_ok=True)
@@ -217,14 +219,15 @@ def spawn(
         if sock.exists():
             return how
         time.sleep(0.2)
-    raise RuntimeError(f"o supervisor não abriu o socket em {wait:.0f} s ({how})")
+    raise RuntimeError(f"the supervisor did not open the socket within {wait:.0f} s ({how})")
 
 
-# ---------------------------------------------------------------- vínculos (orq-agent link)
+# ---------------------------------------------------------------- links (orq-agent link)
 def spawn_link(local_label: str, remote_label: str, wait: float = 100.0) -> str:
-    """Sobe `orq-agent link-run` numa sessão tmux `orql-<a>--<b>` (sem tmux: em segundo plano) e espera o
-    vínculo ficar de pé. Na mesma máquina não há processo: só os espelhos entre contas e o registro.
-    Devolve uma linha; RuntimeError se não subiu (com o motivo gravado pelo link)."""
+    """Starts `orq-agent link-run` in a tmux session `orql-<a>--<b>` (without tmux: in the background) and
+    waits for the link to come up. On the same machine there is no process: only the mirrors between
+    accounts and the record. Returns a line; RuntimeError if it did not come up (with the reason recorded
+    by the link)."""
     from . import link as L
 
     st = L.StateFile(L.link_file(local_label, remote_label))
@@ -232,18 +235,18 @@ def spawn_link(local_label: str, remote_label: str, wait: float = 100.0) -> str:
     if L.same_host(local_label, remote_label):
         for lab in (local_label, remote_label):
             if not socket_alive(config.state_dir(lab) / "agent.sock"):
-                raise RuntimeError(f"{lab} não está rodando")
-        if cur.get("resources"):  # sobras de um vínculo anterior entre os mesmos dois
+                raise RuntimeError(f"{lab} is not running")
+        if cur.get("resources"):  # leftovers of a previous link between the same two
             st.write(up=False)
             L.release(cur["resources"], L.config.state_root(), st.path)
         state = L.local_link(local_label, remote_label)
         st.write(**state)
         n = len(state["resources"])
-        return "vínculo local (mesma máquina): " + (
-            "os dois já se enxergavam" if not n else f"{n} cartões espelhados entre as contas"
+        return "local link (same machine): " + (
+            "the two already saw each other" if not n else f"{n} cards mirrored between the accounts"
         )
-    if L.pid_alive(cur.get("pid")):  # de pé, ou ainda subindo: não derruba no meio
-        return "já de pé" if cur.get("up") else "ainda subindo"
+    if L.pid_alive(cur.get("pid")):  # up, or still coming up: do not tear it down midway
+        return "already up" if cur.get("up") else "still coming up"
     try:
         st.path.unlink()
     except OSError:
@@ -251,7 +254,7 @@ def spawn_link(local_label: str, remote_label: str, wait: float = 100.0) -> str:
     cmd = [sys.executable, "-m", "orqweb.agent.cli", "link-run", local_label, remote_label]
     d = L.links_dir(local_label)
     d.mkdir(parents=True, exist_ok=True)
-    how = "vínculo " + spawn_detached(
+    how = "link " + spawn_detached(
         cmd,
         link_session(local_label, remote_label),
         d / (config.safe_label(remote_label) + ".log"),
@@ -263,9 +266,9 @@ def spawn_link(local_label: str, remote_label: str, wait: float = 100.0) -> str:
         if cur.get("up"):
             return how
         if cur and not cur.get("up"):
-            raise RuntimeError(cur.get("why") or "o vínculo não subiu")
+            raise RuntimeError(cur.get("why") or "the link did not come up")
         time.sleep(0.3)
-    raise RuntimeError(f"o vínculo não subiu em {wait:.0f} s ({how})")
+    raise RuntimeError(f"the link did not come up within {wait:.0f} s ({how})")
 
 
 def link_session(local_label: str, remote_label: str) -> str:
@@ -273,7 +276,7 @@ def link_session(local_label: str, remote_label: str) -> str:
 
 
 def unlink(local_label: str, remote_label: str, wait: float = 20.0) -> str:
-    """Manda o processo do vínculo sair (ele desfaz os espelhos e fecha o túnel) e espera."""
+    """Tells the link's process to exit (it undoes the mirrors and closes the tunnel) and waits."""
     from . import link as L
 
     st = L.StateFile(L.link_file(local_label, remote_label))
@@ -282,17 +285,17 @@ def unlink(local_label: str, remote_label: str, wait: float = 20.0) -> str:
         st.write(up=False, why="unlink")
         kept = L.release(cur.get("resources") or [], L.config.state_root(), st.path)
         st.write(resources=kept)
-        return "vínculo desfeito"
+        return "link undone"
     pid = cur.get("pid")
     if not (cur.get("up") and L.pid_alive(pid)):
-        return "não havia vínculo de pé"
+        return "there was no link up"
     try:
         os.kill(int(pid), signal.SIGTERM)
     except OSError:
-        return "não havia vínculo de pé"
+        return "there was no link up"
     deadline = time.time() + wait
     while time.time() < deadline:
         if not st.read().get("up"):
-            return "vínculo desfeito"
+            return "link undone"
         time.sleep(0.3)
-    return f"o vínculo (pid {pid}) não respondeu em {wait:.0f} s"
+    return f"the link (pid {pid}) did not respond within {wait:.0f} s"

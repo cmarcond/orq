@@ -1,9 +1,9 @@
-"""Login por senha com cookie de sessão, para o orq-web escutar fora do 127.0.0.1 (rede ZeroTier).
+"""Password login with a session cookie, for orq-web to listen outside 127.0.0.1 (ZeroTier network).
 
-- A senha fica num arquivo (uma linha). Sem o arquivo, a autenticação por senha está desligada e só
-  o token do link vale, como no uso local.
-- Sessões em memória: reiniciar o servidor desloga todo mundo, o que é aceitável aqui.
-- Falha de senha dorme 1 s; cinco falhas seguidas do mesmo IP bloqueiam por 60 s.
+- The password lives in a file (one line). Without the file, password authentication is off and only
+  the token in the link is valid, as in local use.
+- Sessions in memory: restarting the server logs everyone out, which is acceptable here.
+- A wrong password sleeps 1 s; five failures in a row from the same IP block it for 60 s.
 """
 
 import hmac
@@ -30,11 +30,11 @@ class Auth:
     ):
         self.file = password_file
         self.sleep, self.clock, self.ttl = sleep, clock, ttl
-        self._sessions: Dict[str, float] = {}  # sid -> último uso
-        self._fail: Dict[str, list] = {}  # ip -> [contagem, bloqueado até]
+        self._sessions: Dict[str, float] = {}  # sid -> last use
+        self._fail: Dict[str, list] = {}  # ip -> [count, blocked until]
         self._lock = threading.Lock()
 
-    # ---- senha
+    # ---- password
     @property
     def enabled(self) -> bool:
         return self.password() is not None
@@ -54,7 +54,7 @@ class Auth:
             return bool(f and f[1] > self.clock())
 
     def login(self, given: str, ip: str) -> Optional[str]:
-        """Senha certa devolve um sid novo; errada registra a falha, dorme e devolve None."""
+        """The right password returns a new sid; a wrong one records the failure, sleeps and returns None."""
         expected = self.password()
         if expected is None or self.blocked(ip):
             return None
@@ -73,7 +73,7 @@ class Auth:
         self.sleep(FAIL_SLEEP)
         return None
 
-    # ---- sessões
+    # ---- sessions
     def valid(self, sid: Optional[str]) -> bool:
         if not sid:
             return False
@@ -108,22 +108,22 @@ class Auth:
         return None
 
 
-PAGES = {"/": "index.html", "/m": "mobile.html"}  # rotas de página e o arquivo de cada uma
+PAGES = {"/": "index.html", "/m": "mobile.html"}  # page routes and the file of each one
 
 
 def login_page(message: str = "", nxt: str = "/") -> str:
-    """Página de login mínima; usa o app.css do próprio servidor, sem script. `nxt` é para onde voltar
-    depois (a página normal ou a do celular, /m)."""
+    """Minimal login page; uses the server's own app.css, with no script. `nxt` is where to go back to
+    afterwards (the normal page or the phone one, /m)."""
     msg = f'<p class="bad">{message}</p>' if message else ""
     nxt = nxt if nxt in PAGES else "/"
-    return f"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>orq · entrar</title>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>orq · sign in</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/app.css">
 <style>.login{{max-width:360px;margin:14vh auto;padding:0 16px}}.login input{{width:100%;margin:8px 0 12px}}
 .login button{{width:100%}}.bad{{color:var(--bad)}}</style></head>
 <body><main><form class="login" method="post" action="/login">
-<h2>orq</h2><label for="p">Senha</label>
+<h2>orq</h2><label for="p">Password</label>
 <input id="p" name="password" type="password" autofocus autocomplete="current-password">
 <input type="hidden" name="next" value="{nxt}">
-{msg}<button type="submit">Entrar</button></form></main></body></html>"""
+{msg}<button type="submit">Sign in</button></form></main></body></html>"""
