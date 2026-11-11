@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""usage-all: uso do Claude Code em todas as contas, direto na API OAuth (~1 s), com marcador de ritmo.
+"""usage-all: Claude Code usage on every account, straight from the OAuth API (~1 s), with a pace marker.
 
-Uso: usage-all [-v|--verbose] [--json] [conta ...]     (sem conta = todas as contas do accounts.json)
-  padrão         resumido: uma linha por conta; por janela, % usado, mini-barra com marcador de
-                 ritmo e tempo até o reset. Contas ordenadas da mais folgada para a mais apertada no 7d;
-                 → marca a melhor para abrir agora (a de --melhor); TOTAL = semana da frota: usado,
-                 queima (1,0× = no ritmo), quando zera (∞ = os resets chegam antes) e o próximo reset.
-  -v, --verbose  completo: por conta, barra larga, pontos acima/abaixo do ritmo, horário do reset e
-                 aviso de login; no fim o TOTAL, a melhor conta e a idade dos dados.
-  --json         para scripts (orq, orq-web): por conta, % usado, ritmo e segundos até o reset de
-                 5h e 7d, ou {"err": texto}.
+Usage: usage-all [-v|--verbose] [--json] [account ...]    (no account = every account in accounts.json)
+  default        brief: one line per account; per window, % used, a mini bar with a pace marker
+                 and the time until the reset. Accounts sorted from the most slack to the tightest on 7d;
+                 → marks the best one to open now (the one from --melhor); TOTAL = the fleet's week: used,
+                 burn (1,0× = on pace), when it runs out (∞ = the resets come first) and the next reset.
+  -v, --verbose  full: per account, a wide bar, points above/below the pace, the reset time and a
+                 login warning; at the end the TOTAL, the best account and the age of the data.
+  --json         for scripts (orq, orq-web): per account, % used, pace and seconds until the 5h and
+                 7d resets, or {"err": text}.
 
-█ = usado, ┃ = ritmo (quanto da janela já passou), à direita o tempo até o reset. Barra que não chega
-no ┃ está abaixo do ritmo (verde); barra que passa dele está acima (amarela; vermelha com 15 pontos ou
-mais). O Codex tem comando próprio: codex-usage-fast.
+█ = used, ┃ = pace (how much of the window has gone by), on the right the time until the reset. A bar
+that stops short of the ┃ is below the pace (green); a bar that goes past it is above (yellow; red at 15
+points or more). Codex has its own command: codex-usage-fast.
 
-Contas: ~/.config/claude-multiconta/accounts.json (ou $CLAUDE_MULTICONTA_CONF). Credencial: Keychain
-no macOS (o mesmo item do Claude Code) ou <config_dir>/.credentials.json no Linux. O token nunca é
-impresso. Python 3.8+.
+Accounts: ~/.config/claude-multiconta/accounts.json (or $CLAUDE_MULTICONTA_CONF). Credential: Keychain
+on macOS (the same item Claude Code uses) or <config_dir>/.credentials.json on Linux. The token is never
+printed. Python 3.8+.
 """
 import argparse
 import datetime
@@ -37,11 +37,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-# ======================================================================== configuração
+# ======================================================================== configuration
 CONF = pathlib.Path(os.environ.get("CLAUDE_MULTICONTA_CONF", pathlib.Path.home() / ".config/claude-multiconta/accounts.json"))
 DEFAULT_DIR = pathlib.Path.home() / ".claude"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-WINDOW = {"session": 5 * 3600, "weekly_all": 7 * 86400, "weekly_scoped": 7 * 86400}  # tamanho fixo de cada janela
+WINDOW = {"session": 5 * 3600, "weekly_all": 7 * 86400, "weekly_scoped": 7 * 86400}  # fixed size of each window
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -53,7 +53,7 @@ def load_conf() -> dict:
     try:
         return json.loads(CONF.read_text())
     except Exception as e:  # noqa: BLE001
-        die(f"Não consegui ler {CONF} ({e}). Rode o install.sh do claude-multiconta.")
+        die(f"Could not read {CONF} ({e}). Run the claude-multiconta install.sh.")
         return {}
 
 
@@ -62,7 +62,7 @@ def timezone(conf: dict):
         import zoneinfo
 
         return zoneinfo.ZoneInfo(conf.get("timezone") or "America/Sao_Paulo")
-    except Exception:  # noqa: BLE001  python < 3.9 ou sem tzdata: fuso local
+    except Exception:  # noqa: BLE001  python < 3.9 or no tzdata: local time zone
         return None
 
 
@@ -70,8 +70,8 @@ def timezone(conf: dict):
 class Account:
     name: str
     config_dir: pathlib.Path
-    label: str  # curto: "Gmail"
-    full_label: str  # como no accounts.json: "Gmail (you@example.com)"
+    label: str  # short: "Gmail"
+    full_label: str  # as in accounts.json: "Gmail (you@example.com)"
     email: str
 
     @staticmethod
@@ -90,14 +90,14 @@ class Account:
 
     @property
     def state_file(self) -> pathlib.Path:
-        """Onde o Claude Code grava o login: ~/.claude.json para a conta padrão, <dir>/.claude.json nas outras."""
+        """Where Claude Code stores the login: ~/.claude.json for the default account, <dir>/.claude.json for the others."""
         return pathlib.Path.home() / ".claude.json" if self.is_default else self.config_dir / ".claude.json"
 
 
-# ======================================================================== credencial e API
+# ======================================================================== credential and API
 def keychain_service(acc: Account) -> str:
-    """Nome do item no Keychain: 'Claude Code-credentials' para ~/.claude; as outras contas ganham o sufixo
-    dos 8 primeiros hex do sha256 do caminho absoluto, como o Claude Code faz."""
+    """Name of the Keychain item: 'Claude Code-credentials' for ~/.claude; the other accounts get the suffix
+    of the first 8 hex digits of the sha256 of the absolute path, as Claude Code does."""
     if acc.is_default:
         return "Claude Code-credentials"
     return "Claude Code-credentials-" + hashlib.sha256(str(acc.config_dir).encode()).hexdigest()[:8]
@@ -119,8 +119,8 @@ def expired(cred: dict) -> bool:
 
 
 def refresh_cred(acc: Account) -> Optional[dict]:
-    """Token de acesso vencido (dura ~8 h): só o Claude Code renova, e só quando chama a API. Um pedido
-    mínimo ao Haiku, sem gravar sessão, força a renovação; depois relemos a credencial."""
+    """Expired access token (it lasts ~8 h): only Claude Code refreshes it, and only when it calls the API. A
+    minimal request to Haiku, without saving a session, forces the refresh; then we read the credential again."""
     claude = shutil.which("claude") or str(pathlib.Path.home() / ".local/bin/claude")
     env = dict(os.environ)
     env.pop("CLAUDE_CONFIG_DIR", None)
@@ -152,13 +152,13 @@ def logged_email(acc: Account) -> Optional[str]:
         return None
 
 
-# ======================================================================== modelo: janelas de uso
+# ======================================================================== model: usage windows
 @dataclass
 class Window:
     kind: str  # session | weekly_all | weekly_scoped
     percent: float
-    resets_at: Optional[str]  # ISO-8601 ou None (janela ainda não iniciada)
-    scope: Optional[str] = None  # nome do modelo, nas janelas por modelo
+    resets_at: Optional[str]  # ISO-8601 or None (window not started yet)
+    scope: Optional[str] = None  # model name, in the per-model windows
     severity: str = "normal"
 
     @property
@@ -167,7 +167,7 @@ class Window:
 
     @property
     def left(self) -> Optional[float]:
-        """Segundos até o reset; None se a janela não começou."""
+        """Seconds until the reset; None if the window has not started."""
         if not self.resets_at:
             return None
         end = datetime.datetime.fromisoformat(self.resets_at.replace("Z", "+00:00"))
@@ -175,7 +175,7 @@ class Window:
 
     @property
     def pace(self) -> Optional[float]:
-        """% da janela já decorrida: 0 se nem começou; None se o dado está vencido ou a janela é desconhecida."""
+        """% of the window already elapsed: 0 if it has not even started; None if the data is stale or the window is unknown."""
         secs, win = self.left, self.size
         if not win:
             return None
@@ -189,11 +189,11 @@ class Window:
     def title(self) -> str:
         if self.scope:
             return f"{self.scope} 7d"
-        return {"session": "sessão 5h", "weekly_all": "semana 7d"}.get(self.kind, self.kind)
+        return {"session": "session 5h", "weekly_all": "week 7d"}.get(self.kind, self.kind)
 
     @property
     def slack(self) -> float:
-        """Pontos acima (positivo) ou abaixo (negativo) do ritmo."""
+        """Points above (positive) or below (negative) the pace."""
         return self.percent - (self.pace or 0)
 
 
@@ -202,7 +202,7 @@ ORDER = {"session": 0, "weekly_all": 1, "weekly_scoped": 2}
 
 def parse_windows(data: dict) -> List[Window]:
     limits = data.get("limits") or []
-    if not limits:  # formato antigo da API
+    if not limits:  # old API format
         limits = [
             {"kind": k, "percent": v.get("utilization"), "resets_at": v.get("resets_at")}
             for k, v in data.items()
@@ -222,12 +222,12 @@ def parse_windows(data: dict) -> List[Window]:
     return sorted(out, key=lambda w: ORDER.get(w.kind, 9))
 
 
-# ---- banco do usage-hist: a última amostra do coletor, quando tem menos de 10 min (sem API, sem 429)
-SNAP: Optional[dict] = None  # {'ts': ISO, 'accounts': {conta: {'windows': [...]}}}
+# ---- usage-hist database: the collector's last sample, when it is less than 10 min old (no API, no 429)
+SNAP: Optional[dict] = None  # {'ts': ISO, 'accounts': {account: {'windows': [...]}}}
 
 
 def load_snapshot() -> Optional[dict]:
-    """Lê o banco do usage-hist (aqui, ou por ssh na máquina do banco). None se não houver ou estiver velho."""
+    """Reads the usage-hist database (here, or over ssh on the database machine). None if there is none or it is old."""
     here = pathlib.Path(__file__).resolve().parent / "usage-hist"
     if not here.exists():
         return None
@@ -237,7 +237,7 @@ def load_snapshot() -> Optional[dict]:
         mod = importlib.util.module_from_spec(spec)
         loader.exec_module(mod)
         return mod.quota_snapshot()
-    except Exception:  # noqa: BLE001 - sem banco, o usage-all segue pela API
+    except Exception:  # noqa: BLE001 - with no database, usage-all goes on through the API
         return None
 
 
@@ -249,11 +249,11 @@ def from_snapshot(acc: Account) -> Optional[List[Window]]:
     return sorted(ws, key=lambda w: ORDER.get(w.kind, 9))
 
 
-STALE_MIN = 15  # minutos: dado do banco mais velho que isso ganha uma nota no resumo
+STALE_MIN = 15  # minutes: database data older than this gets a note in the brief output
 
 
 def snap_age_min() -> Optional[int]:
-    """Idade em minutos da coleta do banco; None quando os dados vieram da API agora."""
+    """Age in minutes of the collection in the database; None when the data came from the API just now."""
     if not SNAP:
         return None
     t = datetime.datetime.fromisoformat(SNAP["ts"].replace("Z", "+00:00"))
@@ -262,31 +262,31 @@ def snap_age_min() -> Optional[int]:
 
 def source_note() -> str:
     mins = snap_age_min()
-    return "dados da API" if mins is None else f"dados de {mins} min atrás"
+    return "data from the API" if mins is None else f"data from {mins} min ago"
 
 
 def get_windows(acc: Account, live: bool = False) -> Tuple[List[Window], Optional[str]]:
-    """Janelas da conta, ou (None, erro curto). Do banco quando há amostra recente; `live` força a API."""
+    """The account's windows, or (None, short error). From the database when there is a recent sample; `live` forces the API."""
     if not live:
         ws = from_snapshot(acc)
         if ws is not None:
             return ws, None
     cred = load_cred(acc)
     if not cred:
-        return [], f"sem credencial em {acc.config_dir}. Rode: claude-{acc.name}-login"
+        return [], f"no credentials in {acc.config_dir}. Run: claude-{acc.name}-login"
     if expired(cred):
         cred = refresh_cred(acc) or cred
         if expired(cred):
-            return [], f"token expirado e não consegui renovar. Abra `claude-{acc.name}` uma vez ou rode claude-{acc.name}-login."
+            return [], f"token expired and I could not refresh it. Open `claude-{acc.name}` once or run claude-{acc.name}-login."
     try:
         return parse_windows(fetch_usage(cred)), None
     except urllib.error.HTTPError as e:
-        return [], f"API respondeu {e.code}: {e.read().decode()[:200]}"
+        return [], f"API answered {e.code}: {e.read().decode()[:200]}"
     except Exception as e:  # noqa: BLE001
-        return [], f"falha de rede: {e}"
+        return [], f"network failure: {e}"
 
 
-# ======================================================================== saída: formatação
+# ======================================================================== output: formatting
 COLOR = sys.stdout.isatty()
 
 
@@ -295,7 +295,7 @@ def c(code: Optional[str], s: str) -> str:
 
 
 def fmt_left(secs: Optional[float], win: Optional[int] = None) -> str:
-    """Tempo até o reset em 5 colunas: 00h45, 04h45, 6d03h. Janela não iniciada: a duração cheia em cinza."""
+    """Time until the reset in 5 columns: 00h45, 04h45, 6d03h. Window not started: the full duration in grey."""
     if secs is None:
         return c("2", fmt_left(win)) if win else "  —  "
     secs = max(0, int(secs))
@@ -305,20 +305,20 @@ def fmt_left(secs: Optional[float], win: Optional[int] = None) -> str:
 
 
 def color_for(percent: float, pace: Optional[float]) -> Optional[str]:
-    """Verde abaixo do ritmo, amarelo acima, vermelho com 15 pontos ou mais acima; sem ritmo, sem cor."""
+    """Green below the pace, yellow above, red at 15 points or more above; no pace, no colour."""
     if pace is None:
         return None
     d = int(round(percent)) - int(round(pace))
     return "31" if d >= 15 else "33" if d > 0 else "32"
 
 
-# ---- resumido (padrão): sem legenda (está no --help); a seta marca a melhor conta para abrir agora
+# ---- brief (default): no legend (it is in --help); the arrow marks the best account to open now
 LABEL_W, CELL_BAR, SEP = 10, 10, "  "
-CELL_W = CELL_BAR + 11  # largura de uma célula: ' 32% ███████┃░░ 2d02h'
+CELL_W = CELL_BAR + 11  # width of one cell: ' 32% ███████┃░░ 2d02h'
 
 
 def cell(w: Window) -> str:
-    """Uma janela em 21 colunas: ' 32% ███████┃░░ 2d02h'. ┃ dentro da barra vira um entalhe na cor dela."""
+    """One window in 21 columns: ' 32% ███████┃░░ 2d02h'. A ┃ inside the bar becomes a notch in the bar's colour."""
     return cell_of(w.percent, w.pace, fmt_left(w.left, w.size))
 
 
@@ -333,7 +333,7 @@ def cell_of(percent: float, pace: Optional[float], right: str, width: int = CELL
 
 
 def brief_row(acc: Account) -> Tuple[float, str, List[str], dict]:
-    """(chave de ordenação, linha, títulos, json). Chave = folga no semanal de todos os modelos; erro vai para o fim."""
+    """(sort key, line, titles, json). Key = slack on the all-models weekly window; errors go to the end."""
     windows, err = get_windows(acc)
     lab = f"{acc.label:<{LABEL_W}}"
     if err:
@@ -351,7 +351,7 @@ def show_brief(accounts: List[Account]) -> bool:
     per = {a.name: r[3] for a, r in zip(accounts, rows)}
     best, _ = best_account(per)
     for a, (_, line, _, _) in sorted(zip(accounts, rows), key=lambda x: x[1][0]):
-        if a.name == best:  # a que o `claude` puro abriria (usage-all --melhor)
+        if a.name == best:  # the one plain `claude` would open (usage-all --melhor)
             lab = f"{a.label:<{LABEL_W}}"
             print(c("1", "→ " + lab) + line[len(lab):])
         else:
@@ -360,16 +360,16 @@ def show_brief(accounts: List[Account]) -> bool:
     print(fmt_total(total_json(per), {a.name: a.label for a in accounts}))
     mins = snap_age_min()
     if mins is not None and mins >= STALE_MIN:
-        print(c("2", source_note() + " · --ao-vivo atualiza"))
+        print(c("2", source_note() + " · --ao-vivo refreshes"))
     return all(r[0] != float("inf") for r in rows)
 
 
-# ---- completo (-v): por conta, uma linha por janela com barra larga, distância do ritmo e horário do reset
+# ---- full (-v): per account, one line per window with a wide bar, distance from the pace and the reset time
 BAR_W = 20
 
 
 def pace_delta(w: Window) -> str:
-    """Pontos acima (+) ou abaixo (−) do ritmo, na cor da barra; vazio sem ritmo."""
+    """Points above (+) or below (−) the pace, in the bar's colour; empty with no pace."""
     if not w.pace:
         return "   "
     d = int(round(w.percent)) - int(round(w.pace))
@@ -377,7 +377,7 @@ def pace_delta(w: Window) -> str:
 
 
 def fmt_reset(iso: Optional[str], tz) -> str:
-    """Horário do reset: 'HH:MM' se for hoje, senão 'dd/mm HH:MM'."""
+    """Reset time: 'HH:MM' if it is today, otherwise 'dd/mm HH:MM'."""
     if not iso:
         return ""
     t = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(tz)
@@ -392,10 +392,10 @@ def verbose_block(acc: Account, windows: List[Window], err: Optional[str], tz, b
     out = [head]
     real = logged_email(acc)
     if real and acc.email and real.lower() != acc.email.lower():
-        out.append(c("33", f"  ⚠ logado como {real}; corrige: claude-{acc.name}-login"))
+        out.append(c("33", f"  ⚠ logged in as {real}; fix: claude-{acc.name}-login"))
     for w in windows:
         flag = c("33", " ⚠") if w.severity != "normal" else ""
-        out.append(f"  {w.title:<10}{cell_of(w.percent, w.pace, pace_delta(w), BAR_W)}  {c('2', fmt_reset(w.resets_at, tz))}{flag}")
+        out.append(f"  {w.title:<11}{cell_of(w.percent, w.pace, pace_delta(w), BAR_W)}  {c('2', fmt_reset(w.resets_at, tz))}{flag}")
     return out
 
 
@@ -412,7 +412,7 @@ def show_verbose(accounts: List[Account], tz) -> bool:
     print(fmt_total(total_json(per), labels))
     r = next((r for r in rank(per) if r["name"] == best), None)
     if r:
-        print(f"→ {labels[best]}: {r['free']:.0f} pts vencem em {fmt_left(r['left']).strip()}  {c('2', source_note())}")
+        print(f"→ {labels[best]}: {r['free']:.0f} pts expire in {fmt_left(r['left']).strip()}  {c('2', source_note())}")
     else:
         print(c("2", source_note()))
     return all(not g[1] for g in got)
@@ -420,8 +420,8 @@ def show_verbose(accounts: List[Account], tz) -> bool:
 
 # ---- json (orq, orq-web)
 def usage_json(acc: Account) -> dict:
-    """{'5h': %, '5h_pace': %, '5h_left': s, '7d': ..., '7d_pace': ..., '7d_left': ...} ou {'err': texto}.
-    Ritmo 0 e left None = janela não iniciada."""
+    """{'5h': %, '5h_pace': %, '5h_left': s, '7d': ..., '7d_pace': ..., '7d_left': ...} or {'err': text}.
+    Pace 0 and left None = window not started."""
     return json_of(*get_windows(acc))
 
 
@@ -439,25 +439,25 @@ def json_of(windows: List[Window], err: Optional[str]) -> dict:
     return out
 
 
-# ---- total das contas (semana)
+# ---- total across the accounts (week)
 WEEK = WINDOW["weekly_all"]
 
 
 def total_json(per: Dict[str, dict]) -> Optional[dict]:
-    """Consolidado da semana entre as contas (as com erro ficam de fora); None se nenhuma tem 7d.
+    """The week consolidated across the accounts (the ones with an error are left out); None if none has 7d.
 
-    Matemática de "error budget" (SLO): a taxa de queima da frota é o consumido dividido pela parte da
-    janela já decorrida, somando as contas (1,0 = no ritmo exato das janelas; 2,0 = acaba na metade).
-    7d / 7d_pace: usado e ritmo médios; 7d_free: média do que sobra; 7d_free_accounts: o mesmo em contas
-    inteiras; 7d_burn: a taxa de queima; 7d_runs_out: segundos até a frota zerar, simulando semana adiante
-    com cada conta recarregando no seu reset (None = com os resets, não acaba nos próximos 7 dias);
-    7d_next_reset: segundos até o reset semanal mais próximo (e de que conta)."""
+    "Error budget" (SLO) maths: the fleet's burn rate is what was consumed divided by the part of the
+    window already elapsed, summed over the accounts (1,0 = exactly on the windows' pace; 2,0 = runs out
+    halfway). 7d / 7d_pace: average used and pace; 7d_free: average of what is left; 7d_free_accounts: the
+    same in whole accounts; 7d_burn: the burn rate; 7d_runs_out: seconds until the fleet runs out, simulating
+    the week ahead with each account refilling at its reset (None = with the resets, it does not run out in
+    the next 7 days); 7d_next_reset: seconds until the nearest weekly reset (and whose account it is)."""
     ok = {n: u for n, u in per.items() if not n.startswith("_") and "err" not in u and u.get("7d") is not None}
     if not ok:
         return None
     used = {n: float(u["7d"]) for n, u in ok.items()}
-    elapsed = {n: (float(u.get("7d_pace") or 0.0) / 100.0) * WEEK for n, u in ok.items()}  # s decorridos
-    rate = {n: (used[n] / elapsed[n] if elapsed[n] > 0 else 0.0) for n in ok}  # pontos/s por conta
+    elapsed = {n: (float(u.get("7d_pace") or 0.0) / 100.0) * WEEK for n, u in ok.items()}  # s elapsed
+    rate = {n: (used[n] / elapsed[n] if elapsed[n] > 0 else 0.0) for n in ok}  # points/s per account
     free = sum(100.0 - p for p in used.values())
     burn = (sum(used.values()) / 100.0) / (sum(elapsed.values()) / WEEK) if sum(elapsed.values()) > 0 else 0.0
     resets = sorted((u["7d_left"], n) for n, u in ok.items() if u.get("7d_left"))
@@ -475,9 +475,9 @@ def total_json(per: Dict[str, dict]) -> Optional[dict]:
 
 
 def runs_out(used: Dict[str, float], rate: Dict[str, float], resets: List[Tuple[float, str]], horizon: float = None) -> Optional[int]:
-    """Quando a frota zera, simulando os próximos 7 dias: o consumo total segue na taxa somada (a troca
-    automática passa o gasto de uma conta esgotada para as outras) e, no reset de cada conta, o que ela
-    tinha gasto volta a ficar disponível. None se não zera dentro do horizonte."""
+    """When the fleet runs out, simulating the next 7 days: total consumption goes on at the summed rate (the
+    automatic switch moves the spending of an exhausted account to the others) and, at each account's reset,
+    what it had spent becomes available again. None if it does not run out within the horizon."""
     horizon = WEEK if horizon is None else horizon
     total_rate = sum(rate.values())
     if total_rate <= 0:
@@ -489,7 +489,7 @@ def runs_out(used: Dict[str, float], rate: Dict[str, float], resets: List[Tuple[
             return int(t + free / total_rate)
         free -= total_rate * (when - t)
         t = when
-        if name is not None:  # a conta recarrega: volta o que gastou até aqui
+        if name is not None:  # the account refills: what it spent so far comes back
             free += min(100.0, used[name] + rate[name] * when)
     return None
 
@@ -499,12 +499,12 @@ def visible_len(s: str) -> int:
 
 
 def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None) -> str:
-    """O TOTAL da semana numa linha curta: barra do usado médio com o ritmo médio, a queima
-    (velocidade de consumo; 1,0× = no ritmo), quando a frota zera (∞ = os resets chegam antes) e o próximo
-    reset semanal."""
+    """The week's TOTAL on one short line: a bar of the average used with the average pace, the burn
+    (consumption speed; 1,0× = on pace), when the fleet runs out (∞ = the resets come first) and the next
+    weekly reset."""
     lab = c("1", "TOTAL")
     if not t:
-        return f"{lab} {c('2', 'sem dados')}"
+        return f"{lab} {c('2', 'no data')}"
     b = t["7d_burn"]
     bcol = "32" if b < 0.9 else "33" if b <= 1.15 else "31"
     burn = c(bcol, f"{b:.1f}×".replace(".", ","))
@@ -512,54 +512,54 @@ def fmt_total(t: Optional[dict], labels: Optional[Dict[str, str]] = None) -> str
     who = t.get("7d_next_reset_account")
     nxt = f"  reset {(labels or {}).get(who, who)} {fmt_left(t['7d_next_reset']).strip()}" if t.get("7d_next_reset") else ""
     week = cell_of(t["7d"], t["7d_pace"] or None, "").rstrip()
-    return f"{lab} {week}  queima {burn}  zera {runs}{nxt}"
+    return f"{lab} {week}  burn {burn}  runs out {runs}{nxt}"
 
 
-# ======================================================================== a melhor conta para abrir agora
-# "Use primeiro o que vai vencer": a cota que sobra numa conta perto do reset semanal some em horas; a de uma conta
-# que só zera daqui a dias continua valendo. A ordem é o que sobra da semana dividido pelas horas até o reset
-# (pontos que vencem por hora). Travas: sobra mínima na semana e a janela de 5 h longe do limite.
-MIN_FREE_7D = 5.0  # pontos da semana que a conta precisa ter sobrando para entrar
-MAX_5H = 85.0  # % da janela de 5 h acima da qual a conta fica de fora (a sessão bateria no limite logo)
-STAY_5H, STAY_FREE_7D = 70.0, 15.0  # no resume, a conta da conversa "está boa" abaixo disto e com essa sobra
+# ======================================================================== the best account to open now
+# "Use first what expires first": the quota left on an account close to its weekly reset is gone in hours; the quota
+# of an account that only resets days from now stays valid. The order is what is left of the week divided by the hours
+# until the reset (points that expire per hour). Guards: a minimum left in the week and the 5 h window far from the limit.
+MIN_FREE_7D = 5.0  # points of the week the account must have left to be eligible
+MAX_5H = 85.0  # % of the 5 h window above which the account is left out (the session would hit the limit soon)
+STAY_5H, STAY_FREE_7D = 70.0, 15.0  # on resume, the conversation's account "is fine" below this and with this much left
 
 
 def rank(per: Dict[str, dict]) -> List[dict]:
-    """Contas em ordem de preferência, com o motivo. `per` é o usage_json de cada conta."""
+    """Accounts in order of preference, with the reason. `per` is each account's usage_json."""
     out = []
     for name, u in per.items():
         if name.startswith("_"):
             continue
         if "err" in u or u.get("7d") is None:
-            out.append({"name": name, "ok": False, "score": -1.0, "free": 0.0, "why": "sem dados de cota"})
+            out.append({"name": name, "ok": False, "score": -1.0, "free": 0.0, "why": "no quota data"})
             continue
         free = max(0.0, 100.0 - float(u["7d"]))
         h5 = float(u.get("5h") or 0.0)
-        left_h = (u.get("7d_left") or WEEK) / 3600.0  # janela não iniciada: a semana inteira pela frente
+        left_h = (u.get("7d_left") or WEEK) / 3600.0  # window not started: the whole week ahead
         score = free / max(left_h, 0.5)
-        ok, why = True, f"semana {u['7d']:.0f}%, sobra {free:.0f} pts que vencem em {fmt_left(left_h * 3600).strip()} ({f'{score:.2f}'.replace('.', ',')} pts/h) · 5h {h5:.0f}%"
+        ok, why = True, f"week {u['7d']:.0f}%, {free:.0f} pts left that expire in {fmt_left(left_h * 3600).strip()} ({f'{score:.2f}'.replace('.', ',')} pts/h) · 5h {h5:.0f}%"
         if free < MIN_FREE_7D:
-            ok, why = False, f"sobra só {free:.0f} pts na semana"
+            ok, why = False, f"only {free:.0f} pts left in the week"
         elif h5 >= MAX_5H:
-            ok, why = False, f"janela de 5 h em {h5:.0f}%"
+            ok, why = False, f"5 h window at {h5:.0f}%"
         out.append({"name": name, "ok": ok, "score": score, "free": free, "h5": h5, "left": left_h * 3600, "why": why})
     return sorted(out, key=lambda r: (not r["ok"], -r["score"], r.get("h5", 0)))
 
 
 def best_account(per: Dict[str, dict], stay: Optional[str] = None) -> Tuple[Optional[str], str]:
-    """(conta, motivo). Com `stay` (a conta da conversa, no resume), fica nela se estiver boa."""
+    """(account, reason). With `stay` (the conversation's account, on resume), stays on it if it is fine."""
     ranked = rank(per)
     if stay:
         cur = next((r for r in ranked if r["name"] == stay), None)
         if cur and cur["ok"] and cur["h5"] < STAY_5H and cur["free"] >= STAY_FREE_7D:
-            return stay, "a conta da conversa está boa: " + cur["why"]
+            return stay, "the conversation's account is fine: " + cur["why"]
     ok = [r for r in ranked if r["ok"]]
     if ok:
         return ok[0]["name"], ok[0]["why"]
     usable = sorted((r for r in ranked if r["free"] > 0), key=lambda r: -r["free"])
     if usable:
-        return usable[0]["name"], f"nenhuma conta com folga; a com mais sobra ({usable[0]['why']})"
-    return None, "nenhuma conta com cota"
+        return usable[0]["name"], f"no account with slack; the one with the most left ({usable[0]['why']})"
+    return None, "no account with quota"
 
 
 def show_best(accounts: List[Account], stay: Optional[str], verbose: bool) -> int:
@@ -570,9 +570,9 @@ def show_best(accounts: List[Account], stay: Optional[str], verbose: bool) -> in
         labels = {x.name: x.label for x in accounts}
         for r in rank(per):
             mark = "→" if r["name"] == name else " "
-            print(f"{mark} {labels.get(r['name'], r['name']):<{LABEL_W}} {'ok  ' if r['ok'] else 'fora'}  {r['why']}", file=sys.stderr)
-        print(c("2", f"escolha: {labels.get(name, name)} · {why} · {source_note()}"), file=sys.stderr)
-    elif name and why.startswith("nenhuma"):
+            print(f"{mark} {labels.get(r['name'], r['name']):<{LABEL_W}} {'ok  ' if r['ok'] else 'out '}  {r['why']}", file=sys.stderr)
+        print(c("2", f"choice: {labels.get(name, name)} · {why} · {source_note()}"), file=sys.stderr)
+    elif name and why.startswith("no account"):
         print(f"usage-all: {why}", file=sys.stderr)
     if not name:
         return 2
@@ -583,22 +583,22 @@ def show_best(accounts: List[Account], stay: Optional[str], verbose: bool) -> in
 # ======================================================================== cli
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="usage-all", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-v", "--verbose", action="store_true", help="completo: barra por janela, horário do reset")
-    ap.add_argument("--json", action="store_true", help="saída para scripts")
-    ap.add_argument("-b", "--brief", action="store_true", help=argparse.SUPPRESS)  # sinônimo antigo do padrão
-    ap.add_argument("--ao-vivo", action="store_true", help="consulta a API agora, mesmo com o banco do usage-hist fresco")
-    ap.add_argument("--melhor", action="store_true", help="imprime só a melhor conta para abrir agora (o que vence primeiro; -v explica)")
-    ap.add_argument("--fica", metavar="CONTA", help="com --melhor: fica nesta conta (a da conversa) se ela estiver boa")
-    ap.add_argument("names", nargs="*", metavar="conta")
+    ap.add_argument("-v", "--verbose", action="store_true", help="full: a bar per window, the reset time")
+    ap.add_argument("--json", action="store_true", help="output for scripts")
+    ap.add_argument("-b", "--brief", action="store_true", help=argparse.SUPPRESS)  # old synonym for the default
+    ap.add_argument("--ao-vivo", action="store_true", help="queries the API now, even when the usage-hist database is fresh")
+    ap.add_argument("--melhor", action="store_true", help="prints only the best account to open now (what expires first; -v explains)")
+    ap.add_argument("--fica", metavar="ACCOUNT", help="with --melhor: stays on this account (the conversation's) if it is fine")
+    ap.add_argument("names", nargs="*", metavar="account")
     a = ap.parse_args(argv)
 
     conf = load_conf()
     accounts = {x["name"]: Account.from_conf(x) for x in conf.get("accounts", [])}
     if not accounts:
-        die(f"Nenhuma conta em {CONF}.")
+        die(f"No account in {CONF}.")
     bad = [n for n in a.names if n not in accounts]
     if bad:
-        die(f"conta desconhecida: {', '.join(bad)}. Disponíveis: {', '.join(accounts)}")
+        die(f"unknown account: {', '.join(bad)}. Available: {', '.join(accounts)}")
     chosen = [accounts[n] for n in a.names] if a.names else list(accounts.values())
     global SNAP
     SNAP = None if a.ao_vivo else load_snapshot()
@@ -608,7 +608,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.json:
         with ThreadPoolExecutor(max_workers=8) as ex:
             per = dict(zip((x.name for x in chosen), ex.map(usage_json, chosen)))
-        per["_total"] = total_json(per)  # consolidado da semana (orq-web mostra; quem lê por conta ignora)
+        per["_total"] = total_json(per)  # the week consolidated (orq-web shows it; per-account readers ignore it)
         per["_fonte"] = {"banco": SNAP["ts"]} if SNAP else {"api": True}
         print(json.dumps(per))
         return 0

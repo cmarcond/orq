@@ -1,46 +1,49 @@
-# Documentação do claude-orq
+# claude-orq documentation
 
-Vários Claude Codes, várias contas, várias máquinas, uma página. Este diretório é o manual completo
-do projeto; os READMEs de cada subprojeto continuam valendo como referência rápida, e este manual os
-amarra e aprofunda. Estado descrito: outubro de 2026 (commit `a24838a`).
+Several Claude Codes, several accounts, several machines, one page. This directory is the full manual
+for the project; the README of each sub-project still serves as a quick reference, and this manual
+ties them together and goes deeper. State described: October 2026 (commit `a24838a`).
 
-| capítulo | para quem | o que responde |
+| chapter | for whom | what it answers |
 |---|---|---|
-| [1. Visão geral](01-visao-geral.md) | todos | o que o sistema é, as peças, os conceitos (conta, agente, rótulo, máquina) e uma sessão típica |
-| [2. Instalação e deploy](02-instalacao-e-deploy.md) | quem põe uma máquina nova no circuito | contas e login, pacotes, container do server0, Mac como máquina remota, CI/CD |
-| [3. claude-multiconta](03-claude-multiconta.md) | quem usa o terminal | contas isoladas, aliases, `usage-all` e o TOTAL, `claude-last`/`claude-resume`, o `orq` de terminal, `accounts.json` |
-| [4. A página (orq-web)](04-pagina-orq-web.md) | quem usa a página | cada botão e painel: abrir projeto, chat, permissões, anexos, arquivos, níveis, vínculos, troca de conta |
-| [5. Arquitetura](05-arquitetura.md) | quem mexe no código | supervisor, protocolo do socket, servidor, cache de estado, ponte, frontend, estado em disco |
-| [6. Vínculos e níveis](06-vinculos-e-niveis.md) | quem mexe no código | como duas sessões do Claude Code se falam, espelhos, túneis ssh, receitas de níveis |
-| [7. Referência](07-referencia.md) | consulta | linhas de comando, rotas HTTP com payloads, `accounts.json`, variáveis de ambiente, arquivos |
-| [8. Operação](08-operacao.md) | quem mantém | testes e QA, diagnóstico dos problemas conhecidos, segurança, pendências |
+| [1. Overview](01-overview.md) | everyone | what the system is, the parts, the concepts (account, agent, label, machine) and a typical session |
+| [2. Installation and deploy](02-installation-and-deploy.md) | whoever brings a new machine into the setup | accounts and login, packages, the server0 container, a Mac as a remote machine, CI/CD |
+| [3. claude-multiconta](03-claude-multiconta.md) | whoever uses the terminal | isolated accounts, aliases, `usage-all` and the TOTAL, `claude-last`/`claude-resume`, the terminal `orq`, `accounts.json` |
+| [4. The page (orq-web)](04-orq-web-page.md) | whoever uses the page | every button and panel: opening a project, chat, permissions, attachments, files, levels, links, account switching |
+| [5. Architecture](05-architecture.md) | whoever works on the code | supervisor, socket protocol, server, state cache, bridge, frontend, state on disk |
+| [6. Links and levels](06-links-and-levels.md) | whoever works on the code | how two Claude Code sessions talk to each other, mirrors, ssh tunnels, level recipes |
+| [7. Reference](07-reference.md) | lookup | command lines, HTTP routes with payloads, `accounts.json`, environment variables, files |
+| [8. Operations](08-operations.md) | whoever maintains it | tests and QA, diagnosing the known problems, security, open items |
 
-## Mapa do repositório
+## Repository map
 
 ```
 claude-orq/
-├── claude-multiconta/   contas do Claude Code isoladas por CLAUDE_CONFIG_DIR, aliases, usage-all, orq, claude-last
-│   ├── accounts.json    fonte única de verdade das contas e das máquinas
+├── claude-multiconta/   Claude Code accounts isolated by CLAUDE_CONFIG_DIR, aliases, usage-all, orq, claude-last
+│   ├── accounts.json    single source of truth for the accounts and the machines
 │   ├── bin/             usage-all, orq, orq-run, orq-hook, claude-last, claude-whoami, claude-login-url, codex-usage-fast
 │   ├── install.sh, add-account.sh, make-tarball.sh
 │   └── tests/
-├── orq-web/             supervisor orq-agent + servidor/página orq-web
-│   ├── orqweb/agent/    supervisor, cliente do socket, conversão, arquivos (_outbox), vínculos (link)
-│   ├── orqweb/server/   rotas HTTP, cache de estado, ponte, atribuição de conta, migração, receitas
-│   ├── orqweb/server/static/   a página (HTML, CSS, módulos ES)
-│   ├── orqweb/pipelines/       receitas de níveis (TOML)
-│   ├── deploy/          container do server0, LaunchAgent do Mac
-│   ├── qa/              QA com Playwright contra a aplicação real
+├── orq-web/             orq-agent supervisor + orq-web server/page
+│   ├── orqweb/agent/    supervisor, socket client, conversion, files (_outbox), links (link)
+│   ├── orqweb/server/   HTTP routes, state cache, bridge, account assignment, migration, recipes
+│   ├── orqweb/server/static/   the page (HTML, CSS, ES modules)
+│   ├── orqweb/pipelines/       level recipes (TOML)
+│   ├── deploy/          the server0 container, the Mac LaunchAgent
+│   ├── qa/              QA with Playwright against the real application
 │   ├── tests/           pytest + node --test
-│   └── docs/PLAN.md     plano por fases (histórico das decisões)
-├── claude-highlevel/    referência histórica: os níveis professor/executor com PTY; reimplementado no orq-web
-└── .github/workflows/   um workflow por subprojeto; o do orq-web publica a imagem no GHCR
+│   └── docs/PLAN.md    plan by phases (history of the decisions)
+├── claude-highlevel/    historical reference: the teacher/executor levels with a PTY; reimplemented in orq-web
+└── .github/workflows/   one workflow per sub-project; the orq-web one publishes the image to GHCR
 ```
 
-## Convenções deste manual
+## Conventions in this manual
 
-- Caminhos são relativos à raiz do repositório, salvo quando começam com `~`.
-- "Laptop" é a máquina em que você está, a que roda o `orq` e, antes do container, a página. Nos rótulos
-  dos agentes ela aparece literalmente como `laptop`.
-- Comandos de shell aparecem como você os digita. Saídas são ilustrativas: contas, máquinas e números
-  são os do ambiente do autor.
+- Paths are relative to the repository root, unless they start with `~`.
+- "Laptop" is the machine you are sitting at, the one that runs `orq` and, before the container, the
+  page. In agent labels it appears literally as `laptop`.
+- Shell commands appear as you type them. Outputs are illustrative: accounts, machines and numbers
+  are those of the author's environment.
+- The page and the command-line tools have a Portuguese interface. Button captions, status texts,
+  option names and program output are quoted exactly as they appear, with an English gloss where it
+  helps.

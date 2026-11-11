@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,54 +12,54 @@
   <div class="marca">HighLevel</div>
   <div id="resumo-run" class="resumo"></div>
   <div class="acoes">
-    <label class="toggle"><input type="checkbox" id="ver-bastidores"> bastidores</label>
+    <label class="toggle"><input type="checkbox" id="ver-bastidores"> backstage</label>
     <label class="toggle"><input type="checkbox" id="ver-thinking"> thinking</label>
     <button id="btn-runs" class="btn">runs</button>
-    <button id="btn-parar" class="btn btn-perigo" hidden>parar</button>
-    <button id="btn-novo" class="btn" hidden>novo run</button>
+    <button id="btn-parar" class="btn btn-perigo" hidden>stop</button>
+    <button id="btn-novo" class="btn" hidden>new run</button>
   </div>
 </header>
 
 <div id="painel-runs" class="painel" hidden>
-  <div class="painel-h">runs anteriores</div>
+  <div class="painel-h">previous runs</div>
   <div id="lista-runs"></div>
 </div>
 
 <main id="tela-nova" class="nova">
   <form id="form-run" class="cartao-form">
-    <h1>Um pipeline novo</h1>
-    <p class="ajuda">Dois Claude Codes no mesmo diretório: o de cima traduz e delega,
-      o de baixo trabalha e reporta marcos.</p>
-    <label>Diretório de trabalho
+    <h1>A new pipeline</h1>
+    <p class="ajuda">Two Claude Codes in the same directory: the top one translates and delegates,
+      the bottom one works and reports milestones.</p>
+    <label>Working directory
       <input name="cwd" required placeholder="/private/tmp/hl-demo" value="/private/tmp/hl-demo">
     </label>
-    <label>Tarefa
-      <textarea name="task" required rows="4" placeholder="Crie um hello.py que…">Crie um hello.py que recebe um nome como argumento e imprime 'Olá, <nome>!', com pelo menos 3 testes automatizados, e rode os testes no final.</textarea>
+    <label>Task
+      <textarea name="task" required rows="4" placeholder="Create a hello.py that…">Create a hello.py that takes a name as an argument and prints 'Hello, <name>!', with at least 3 automated tests, and run the tests at the end.</textarea>
     </label>
     <label>Pipeline
       <select name="pipeline" id="sel-pipeline"></select>
       <small class="ajuda" id="desc-pipeline"></small>
     </label>
-    <label>Modo de permissão
+    <label>Permission mode
       <select name="permission_mode">
-        <option value="auto">auto — resolve os pedidos comuns sozinho</option>
-        <option value="acceptEdits">acceptEdits — aceita edições, pergunta o resto</option>
-        <option value="manual">manual — pergunta tudo</option>
-        <option value="bypassPermissions">bypassPermissions — não pergunta nada</option>
+        <option value="auto">auto — resolves the common requests on its own</option>
+        <option value="acceptEdits">acceptEdits — accepts edits, asks about the rest</option>
+        <option value="manual">manual — asks about everything</option>
+        <option value="bypassPermissions">bypassPermissions — asks nothing</option>
       </select>
-      <small class="ajuda">Vale para todos os níveis: modos de classes diferentes fazem
-        o Claude Code reter as mensagens entre eles.</small>
+      <small class="ajuda">Applies to all levels: modes of different classes make
+        Claude Code hold the messages between them.</small>
     </label>
-    <button class="btn btn-principal" type="submit">começar</button>
+    <button class="btn btn-principal" type="submit">start</button>
     <div id="erro-form" class="erro" hidden></div>
   </form>
 </main>
 
 <main id="tela-run" class="palco-grid" hidden>
   <aside class="rail">
-    <div class="rail-h">níveis</div>
+    <div class="rail-h">levels</div>
     <div id="niveis"></div>
-    <div class="rail-h">tarefa</div>
+    <div class="rail-h">task</div>
     <div id="tarefa" class="tarefa"></div>
   </aside>
 
@@ -68,20 +68,20 @@
     <div id="gaveta" class="gaveta" hidden>
       <div class="gaveta-h">
         <span id="gaveta-titulo"></span>
-        <button id="gaveta-fechar" class="btn">fechar</button>
+        <button id="gaveta-fechar" class="btn">close</button>
       </div>
       <pre id="gaveta-corpo"></pre>
     </div>
 
     <form id="form-msg" class="compositor">
-      <select id="alvo" title="para quem vai a mensagem"></select>
-      <input id="msg" placeholder="fale com o professor…" autocomplete="off">
-      <button class="btn btn-principal" type="submit">enviar</button>
+      <select id="alvo" title="who the message goes to"></select>
+      <input id="msg" placeholder="talk to the professor…" autocomplete="off">
+      <button class="btn btn-principal" type="submit">send</button>
     </form>
   </section>
 
   <aside class="fios">
-    <div class="rail-h">fios <span id="conta-fios" class="conta"></span></div>
+    <div class="rail-h">wires <span id="conta-fios" class="conta"></span></div>
     <div id="fios" class="fluxo"></div>
   </aside>
 </main>

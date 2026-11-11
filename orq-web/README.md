@@ -117,7 +117,7 @@ first agent and the others are linked to it as executors (recipe `professor-exec
 replaceable by `lider.prompt`). Without `lider`, independent agents. The page refuses to open if any
 `maquina:pasta` already has a live agent. **📄 upload JSON** takes a ready-made one; **📷 save open tabs**
 photographs what is open into a new set. The server opens it in a thread (`handlers.open_set_job`) and the
-progress goes in `conjuntos_abrindo` of `/api/state`. Format and details: `docs/04-pagina-orq-web.md`, 4.13.
+progress goes in `conjuntos_abrindo` of `/api/state`. Format and details: `docs/04-orq-web-page.md`, 4.13.
 
 ## Quota ran out: account switch on its own
 

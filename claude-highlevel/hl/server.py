@@ -1,8 +1,8 @@
-"""Servidor local: REST para comandar, SSE para assistir.
+"""Local server: REST to command, SSE to watch.
 
-SSE em vez de WebSocket porque o fluxo é de mão única (servidor → navegador) e porque
-ele já traz reconexão com `Last-Event-ID` — que é exatamente o nosso `seq`. Assim o
-projeto inteiro continua sem dependência externa.
+SSE instead of WebSocket because the flow is one-way (server → browser) and because
+it already comes with reconnection through `Last-Event-ID` — which is exactly our `seq`. That way
+the whole project stays free of external dependencies.
 """
 from __future__ import annotations
 
@@ -37,9 +37,9 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "HighLevel"
     registry: Registry
 
-    # ------------------------------------------------------------- utilidades
+    # -------------------------------------------------------------- utilities
 
-    def log_message(self, fmt: str, *args: Any) -> None:      # silencia o log padrão
+    def log_message(self, fmt: str, *args: Any) -> None:      # silences the default log
         pass
 
     def _json(self, payload: Any, code: int = 200) -> None:
@@ -63,7 +63,7 @@ class Handler(BaseHTTPRequestHandler):
         _, _, qs = self.path.partition("?")
         return dict(pair.split("=", 1) for pair in qs.split("&") if "=" in pair)
 
-    # --------------------------------------------------------------- roteador
+    # ----------------------------------------------------------------- router
 
     def do_GET(self) -> None:
         self._dispatch("GET")
@@ -81,7 +81,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     getattr(self, name)(*match.groups())
                 except KeyError as exc:
-                    self._json({"erro": f"não encontrado: {exc}"}, 404)
+                    self._json({"erro": f"not found: {exc}"}, 404)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
                 except Exception as exc:                       # noqa: BLE001
@@ -103,7 +103,7 @@ class Handler(BaseHTTPRequestHandler):
     def post_runs(self) -> None:
         body = self._body()
         if not body.get("cwd") or not body.get("task"):
-            self._json({"erro": "cwd e task são obrigatórios"}, 400)
+            self._json({"erro": "cwd and task are required"}, 400)
             return
         run = self.registry.create(
             cwd=body["cwd"], task=body["task"],
@@ -131,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
     def post_message(self, run_id: str) -> None:
         body = self._body()
         if not body.get("text"):
-            self._json({"erro": "text é obrigatório"}, 400)
+            self._json({"erro": "text is required"}, 400)
             return
         alvo = self.registry.get(run_id).send(body.get("to"), body["text"])
         self._json({"entregue_a": alvo})
@@ -163,16 +163,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             run = self.registry.get(run_id)
         except KeyError:
-            # Run arquivado: entrega o histórico inteiro e encerra. Não há nada para
-            # esperar, e segurar a conexão só faria o EventSource reconectar em loop.
+            # Archived run: delivers the whole history and ends. There is nothing to
+            # wait for, and holding the connection would only make the EventSource reconnect in a loop.
             self._abrir_sse()
             for evento in self.registry.events_of(run_id, since):
                 self._emit(evento)
             self.wfile.write(b"event: fim\ndata: {}\n\n")
             self.wfile.flush()
             return
-        # Inscrever e ler o atraso no mesmo passo: é o que impede um evento de cair
-        # no vão entre reconectar e voltar a escutar.
+        # Subscribing and reading the backlog in the same step: this is what keeps an event
+        # from falling into the gap between reconnecting and listening again.
         sub, backlog = run.bus.subscribe(since)
         self._abrir_sse()
         try:
@@ -202,13 +202,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(f"id: {event['seq']}\ndata: {payload}\n\n".encode())
         self.wfile.flush()
 
-    # --------------------------------------------------------------- estáticos
+    # ------------------------------------------------------------ static files
 
     def _static(self, path: str) -> None:
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
         target = (WEB_DIR / rel).resolve()
         if not str(target).startswith(str(WEB_DIR.resolve())) or not target.is_file():
-            self._json({"erro": "não encontrado"}, 404)
+            self._json({"erro": "not found"}, 404)
             return
         kind = {".html": "text/html", ".js": "text/javascript",
                 ".css": "text/css", ".json": "application/json"}.get(target.suffix, "text/plain")
@@ -224,11 +224,11 @@ def serve(host: str = "127.0.0.1", port: int = 7333, runs_root: Path = Path("run
     Handler.registry = Registry(runs_root)
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
-    print(f"HighLevel em http://{host}:{port}  (runs em {runs_root})", flush=True)
+    print(f"HighLevel at http://{host}:{port}  (runs in {runs_root})", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nencerrando runs…", flush=True)
+        print("\nshutting down runs…", flush=True)
     finally:
         Handler.registry.stop_all()
         httpd.server_close()

@@ -1,4 +1,4 @@
-"""Uma sessão Claude Code viva, dentro de um PTY que o app controla."""
+"""A live Claude Code session, inside a PTY that the app controls."""
 from __future__ import annotations
 
 import errno
@@ -14,14 +14,14 @@ from pathlib import Path
 
 from . import config, gates
 
-SCREEN_WINDOW = 8000        # bytes recentes que representam "a tela agora"
-QUIETUDE = 2.5              # segundos sem repintar que já contam como sessão parada
+SCREEN_WINDOW = 8000        # recent bytes that stand for "the screen right now"
+QUIETUDE = 2.5              # seconds without repainting that already count as a stopped session
 RING = 64_000
 
 
 @dataclass
 class LevelSpec:
-    """O que define um nível do pipeline."""
+    """What defines a level of the pipeline."""
     name: str
     system_prompt: str
     permission_mode: str = "acceptEdits"
@@ -46,9 +46,9 @@ class Session:
     _reader: threading.Thread | None = None
     _sockets_before: set[str] = field(default_factory=set)
     _ultima_saida: float = 0.0
-    on_gate: object = None          # callable(Session, Gate) — só para log
+    on_gate: object = None          # callable(Session, Gate) — for logging only
 
-    # ---------------------------------------------------------------- ciclo
+    # ----------------------------------------------------------- life cycle
 
     def argv(self) -> list[str]:
         cmd = [
@@ -73,7 +73,7 @@ class Session:
             cwd=str(self.cwd),
             stdin=slave, stdout=slave, stderr=slave,
             env=config.child_env(),
-            start_new_session=True,      # grupo próprio: dá para matar a árvore toda
+            start_new_session=True,      # its own group: the whole tree can be killed
         )
         os.close(slave)
         self._reader = threading.Thread(target=self._pump, name=f"pty-{self.spec.name}", daemon=True)
@@ -89,11 +89,11 @@ class Session:
         return nomes
 
     def wait_ready(self, timeout: float = 45.0) -> bool:
-        """Pronta = registrada como peer e sem diálogo na tela.
+        """Ready = registered as a peer and with no dialog on screen.
 
-        O transcript NÃO serve como sinal: o JSONL só nasce no primeiro turno, e um
-        nível que ainda não recebeu mensagem nenhuma nunca teria um. Quem aparece no
-        instante em que a sessão entra no ar é o socket de peer, nomeado pelo pid.
+        The transcript does NOT work as a signal: the JSONL is only born on the first turn, and a
+        level that has not received any message yet would never have one. What shows up at the
+        instant the session goes live is the peer socket, named after the pid.
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -109,16 +109,16 @@ class Session:
         return False
 
     def prompt_visible(self) -> bool:
-        """A caixa de entrada já foi desenhada — só o socket não garante isso.
+        """The input box has already been drawn — the socket alone does not guarantee that.
 
-        Procurar o ❯ na tela normalizada não serve: ele é também o cursor de seleção
-        dos diálogos, e um "❯ No, exit" passava por caixa de entrada. Quem sabe a
-        diferença é `gates.prompt_box_visible`, sobre os bytes crus.
+        Looking for the ❯ on the normalized screen does not work: it is also the selection
+        cursor of the dialogs, and a "❯ No, exit" used to pass for an input box. The one that knows
+        the difference is `gates.prompt_box_visible`, over the raw bytes.
         """
         return gates.prompt_box_visible(self._raw_screen())
 
     def screen_is_clear(self) -> bool:
-        """Nenhum diálogo de boot esperando resposta na tela."""
+        """No boot dialog waiting for an answer on screen."""
         text = self.screen()
         return not any(gate.matches(text) for gate in gates.BOOT_GATES)
 
@@ -142,7 +142,7 @@ class Session:
                 pass
             self._master = None
 
-    # ---------------------------------------------------------------- estado
+    # ----------------------------------------------------------------- state
 
     @property
     def alive(self) -> bool:
@@ -160,15 +160,16 @@ class Session:
         return gates.screen_text(self._raw_screen())
 
     def activity(self) -> str:
-        """ocioso · trabalhando · bloqueado · morto — o chip de estado da interface.
+        """ocioso (idle) · trabalhando (working) · bloqueado (blocked) · morto (dead) — the
+        state chip of the interface.
 
-        Procurar o rodapé "esc to interrupt" na tela não basta: ele fica preso no buffer
-        depois que a sessão para, e o nível ficaria "trabalhando" para sempre. E o rodapé
-        de ocioso não serve de contraprova, porque muda conforme o modo de permissão.
+        Looking for the "esc to interrupt" footer on screen is not enough: it stays stuck in the
+        buffer after the session stops, and the level would be "trabalhando" forever. And the idle
+        footer does not work as a cross-check, because it changes with the permission mode.
 
-        O sinal confiável é o próprio ritmo do terminal: enquanto há turno em andamento a
-        TUI repinta o tempo todo (o spinner); quando acaba, ela emudece. Então trabalhando
-        é o rodapé na tela **e** saída recente no PTY.
+        The reliable signal is the rhythm of the terminal itself: while a turn is in progress the
+        TUI repaints all the time (the spinner); when it ends, it goes quiet. So trabalhando
+        is the footer on screen **and** recent output on the PTY.
         """
         if not self.alive:
             return "morto"
@@ -180,17 +181,17 @@ class Session:
         return "ocioso"
 
     def blocked_on(self) -> "gates.Block | None":
-        """O que está travando a sessão agora, se está travada."""
+        """What is blocking the session right now, if it is blocked."""
         return gates.find_block(self.screen())
 
-    # ---------------------------------------------------------------- escrita
+    # ---------------------------------------------------------------- writing
 
     def send_text(self, text: str) -> None:
-        """Manda uma mensagem como se você tivesse digitado.
+        """Sends a message as if you had typed it.
 
-        Texto comum vai em bracketed paste: sem isso, uma quebra de linha submete a
-        mensagem pela metade. Slash command vai como digitação normal, que é o caminho
-        que o próprio Claude Code espera para reconhecer o comando.
+        Ordinary text goes in bracketed paste: without it, a line break submits the
+        message half-way. A slash command goes as normal typing, which is the path
+        that Claude Code itself expects in order to recognize the command.
         """
         if text.lstrip().startswith("/"):
             self.send_keys(text.encode())
@@ -201,7 +202,7 @@ class Session:
 
     def send_keys(self, data: bytes) -> None:
         if self._master is None:
-            raise RuntimeError(f"sessão {self.spec.name} não está aberta")
+            raise RuntimeError(f"session {self.spec.name} is not open")
         try:
             os.write(self._master, data)
         except OSError as exc:
@@ -211,7 +212,7 @@ class Session:
     def interrupt(self) -> None:
         self.send_keys(gates.ESC)
 
-    # ---------------------------------------------------------------- leitura
+    # ---------------------------------------------------------------- reading
 
     def _pump(self) -> None:
         sink = open(self.raw_log, "wb") if self.raw_log else None

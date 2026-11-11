@@ -307,8 +307,8 @@ in an editable preview and only saves on confirmation.
 
 ### 5.7 Docs
 
-`docs/04-pagina-orq-web.md` gains 4.12 "Sets"; `docs/07-referencia.md` the routes and the schema of the JSON;
-`docs/05-arquitetura.md` the sequence "opening a set" in 5.5 and `ORQ_SETS_DIR` in 5.4.
+`docs/04-orq-web-page.md` gains 4.12 "Sets"; `docs/07-reference.md` the routes and the schema of the JSON;
+`docs/05-architecture.md` the sequence "opening a set" in 5.5 and `ORQ_SETS_DIR` in 5.4.
 
 Estimated size: ~900 lines (sets.py ~200, handlers ~150, supervisor ~60, app.js ~200, tests ~300), plus docs.
 Suggested order: supervisor (5.2) → sets.py and routes without a leader → page → leader and tasks → snapshot → QA and docs.

@@ -1,399 +1,400 @@
 # claude-multiconta
 
-Esquema para usar **várias contas do Claude Code** (e o Codex) na mesma máquina, cada uma
-isolada, com aliases para abrir e logar cada conta e um `usage-all` que mostra o uso de todas
-com um marcador de ritmo. Feito para levar de máquina em máquina: Mac (zsh) e Linux (bash).
+A setup for using **several Claude Code accounts** (and Codex) on the same machine, each
+one isolated, with aliases to open and log in to each account and a `usage-all` that shows
+the usage of all of them with a pace marker. Made to be carried from machine to machine:
+Mac (zsh) and Linux (bash).
 
-## Comandos, num relance
+## Commands at a glance
 
-| comando | o que faz |
+| command | what it does |
 |---|---|
-| `claude` | o Claude Code na conta padrão (`default_account`, hoje Work), numa sessão tmux nova `claude-<pasta>` |
-| `claude-work`, `claude-gmail`, … | abre o Claude Code naquela conta, numa sessão tmux nova (`claude-<pasta>` para a padrão, `claude-<conta>-<pasta>` para as outras) |
-| `claude-work-login`, `claude-gmail-login`, … | faz login naquela conta (imprime link, você cola o código) |
-| `claude-usage-work`, `claude-usage-gmail`, … | uso daquela conta, com barra e ritmo |
-| `claude-whoami` | qual e-mail/plano está em cada conta e qual delas é o `claude` puro |
-| `codex-login` | login do Codex por *device auth* (sem navegador local) |
-| `codex-usage` | uso do Codex (comando próprio; não entra no `usage-all`) |
-| `usage-all` | uso de todas as contas do Claude, **resumido**: uma linha por conta e, por janela, % usado, mini-barra com marcador de ritmo e tempo até o reset |
-| `usage-all -v` | o mesmo, **completo**: barra larga por janela, pontos acima/abaixo do ritmo e horário do reset |
-| `usage-all gmail` | só as contas citadas (nomes do `accounts.json`); combina com `-v` |
-| `usage-hist` | **histórico**: por conta, hoje, ritmo, previsão de 100%, barras das últimas 24 h e alertas; `dia`, `semana`, `calibrar`, `estado`; o coletor roda a cada 5 min no node4 |
-| `usage-sessoes` | **quem está gastando cada conta**, em todas as máquinas: por conta, a cota e uma linha por pasta e tipo (as execuções de um script juntas), com a parte de cada uma no peso da conta e os processos abertos parados há mais de 1 h; `-v` mostra cada sessão com processo, tmux, quem lançou e prompt; `--horas N`, `--conta C`, `--json` |
-| `TOTAL` (última linha) | consolidado da semana entre as contas: % livre, o equivalente em contas inteiras, ritmo, em quanto tempo acaba tudo no ritmo atual e o próximo reset semanal; no `--json` vem na chave `_total` |
-| `orq` | **orquestrador**: escolhe até 4 projetos de qualquer máquina e abre uma janela com 4 painéis, cada um no ssh, no tmux e na conta certa |
-| `orq web` | atalho para o `orq-web` (projeto `orq-web`): página local com cota, abas e chat com os agentes |
-| `claude-last` | lista, para a pasta atual, a conversa mais recente de cada conta, da mais nova para a mais velha |
-| `claude-resume` | retoma a conversa mais recente da pasta atual: na conta dela se ela estiver boa, senão na melhor conta agora; `claude-resume 2` abre a linha 2 do `claude-last` |
-| `usage-all --melhor` | imprime a melhor conta para abrir agora (a cota que vence primeiro); `-v` mostra a ordem e o motivo; é o que `claude` e `claude-resume` usam |
-| `claude-resume --as gmail` | retoma a mesma conversa **usando outra conta** (ex.: a original acabou a cota) |
-| `tmux ls`, `tmux attach -t claude-<pasta>` | voltar a uma sessão do Claude (attach é manual) |
-| `./add-account.sh nome email "rótulo"` | cria uma conta nova e gera os três aliases dela |
-| `./add-account.sh --remove nome` | tira a conta dos aliases (sem apagar nada) |
-| `./install.sh` | instala ou atualiza tudo nesta máquina, baixando `claude` e `codex` se faltarem (`--no-install` pula) |
-| `./install.sh --uninstall` | remove scripts e aliases (as contas ficam) |
-| `./make-tarball.sh` | empacota o projeto para enviar a outra máquina |
+| `claude` | Claude Code on the default account (`default_account`, today Work), in a new tmux session `claude-<folder>` |
+| `claude-work`, `claude-gmail`, … | opens Claude Code on that account, in a new tmux session (`claude-<folder>` for the default one, `claude-<account>-<folder>` for the others) |
+| `claude-work-login`, `claude-gmail-login`, … | logs in to that account (prints a link, you paste the code) |
+| `claude-usage-work`, `claude-usage-gmail`, … | usage of that account, with bar and pace |
+| `claude-whoami` | which e-mail/plan is in each account and which of them is the plain `claude` |
+| `codex-login` | Codex login by *device auth* (no local browser) |
+| `codex-usage` | Codex usage (its own command; not part of `usage-all`) |
+| `usage-all` | usage of all the Claude accounts, **brief**: one line per account and, per window, % used, a mini-bar with a pace marker and the time until the reset |
+| `usage-all -v` | the same, **full**: a wide bar per window, points above/below the pace and the reset time |
+| `usage-all gmail` | only the accounts named (names from `accounts.json`); combines with `-v` |
+| `usage-hist` | **history**: per account, today, pace, 100% forecast, bars for the last 24 h and alerts; `dia`, `semana`, `calibrar`, `estado`; the collector runs every 5 min on node4 |
+| `usage-sessoes` | **who is spending each account**, on all the machines: per account, the quota and one line per folder and type (the executions of a script together), with each one's share of the account's weight and the open processes idle for more than 1 h; `-v` shows each session with process, tmux, who launched it and prompt; `--horas N`, `--conta C`, `--json` |
+| `TOTAL` (last line) | the week consolidated across the accounts: % free, the equivalent in whole accounts, pace, how long until everything runs out at the current pace and the next weekly reset; in `--json` it comes under the `_total` key |
+| `orq` | **orchestrator**: picks up to 4 projects from any machine and opens a window with 4 panes, each one on the right ssh, tmux and account |
+| `orq web` | shortcut for `orq-web` (the `orq-web` project): a local page with quota, tabs and chat with the agents |
+| `claude-last` | lists, for the current folder, the most recent conversation of each account, newest first |
+| `claude-resume` | resumes the most recent conversation of the current folder: on its own account if that one is in good shape, otherwise on the best account right now; `claude-resume 2` opens line 2 of `claude-last` |
+| `usage-all --melhor` | prints the best account to open now (the quota that expires first); `-v` shows the order and the reason; it is what `claude` and `claude-resume` use |
+| `claude-resume --as gmail` | resumes the same conversation **using another account** (e.g. the original one ran out of quota) |
+| `tmux ls`, `tmux attach -t claude-<folder>` | go back to a Claude session (attach is manual) |
+| `./add-account.sh name email "label"` | creates a new account and generates its three aliases |
+| `./add-account.sh --remove name` | takes the account out of the aliases (without deleting anything) |
+| `./install.sh` | installs or updates everything on this machine, downloading `claude` and `codex` if they are missing (`--no-install` skips that) |
+| `./install.sh --uninstall` | removes scripts and aliases (the accounts stay) |
+| `./make-tarball.sh` | packages the project to send to another machine |
 
-Os aliases de cada conta são gerados a partir do `accounts.json`, então uma conta nova ganha
-os seus três aliases e entra no `usage-all` automaticamente.
+The aliases of each account are generated from `accounts.json`, so a new account gets its
+three aliases and joins `usage-all` automatically.
 
-## Como funciona
+## How it works
 
-### 1. Uma conta por diretório
+### 1. One account per directory
 
-O Claude Code guarda login, histórico e configuração no diretório apontado pela variável
-`CLAUDE_CONFIG_DIR`. Sem a variável, ele usa `~/.claude`. O truque todo é dar a cada conta
-o seu próprio diretório:
+Claude Code keeps login, history and configuration in the directory pointed to by the
+`CLAUDE_CONFIG_DIR` variable. Without the variable, it uses `~/.claude`. The whole trick is
+to give each account its own directory:
 
-| conta | diretório | como o alias abre |
+| account | directory | how the alias opens it |
 |---|---|---|
-| `work` | `~/.claude` (padrão) | `env -u CLAUDE_CONFIG_DIR claude` |
+| `work` | `~/.claude` (default) | `env -u CLAUDE_CONFIG_DIR claude` |
 | `gmail` | `~/.claude-gmail` | `CLAUDE_CONFIG_DIR=~/.claude-gmail claude` |
 
-Cada terminal pode estar numa conta diferente ao mesmo tempo, e o login de uma nunca
-sobrescreve a outra. Note que a conta padrão é aberta **removendo** a variável em vez de
-apontar para `~/.claude`: se a variável apontar explicitamente para `~/.claude`, o Claude Code
-procura a credencial com outro nome e aparece como deslogado.
+Each terminal can be on a different account at the same time, and the login of one never
+overwrites the other. Note that the default account is opened by **removing** the variable
+instead of pointing it at `~/.claude`: if the variable points explicitly at `~/.claude`,
+Claude Code looks for the credential under another name and shows up as logged out.
 
-### 2. `claude` puro e as sessões tmux
+### 2. Plain `claude` and the tmux sessions
 
-`claude` sem nada abre **a melhor conta agora**, escolhida por `usage-all --melhor` (usa primeiro a cota que vence
-antes do reset; detalhes abaixo); sem cota legível, a conta padrão (`default_account`, hoje `work`).
-`CLAUDE_CONTA=gmail claude` força uma conta, e `claude-<conta>` abre sempre aquela.
-E tanto ele quanto `claude-<conta>` abrem o Claude **numa sessão tmux nova**, para você poder
-fechar o terminal, cair a conexão, e depois voltar exatamente onde estava:
+`claude` with nothing else opens **the best account right now**, chosen by `usage-all --melhor` (it uses first the quota that expires
+before the reset; details below); with no readable quota, the default account (`default_account`, today `work`).
+`CLAUDE_CONTA=gmail claude` forces an account, and `claude-<account>` always opens that one.
+And both it and `claude-<account>` open Claude **in a new tmux session**, so you can close
+the terminal, lose the connection, and later come back exactly where you were:
 
 ```sh
 cd ~/Projects/foo
-claude                  # sessão tmux "claude-foo" com a conta Work
-claude-gmail           # sessão tmux "claude-gmail-foo" com a conta Gmail
-claude                  # de novo na mesma pasta: "claude-foo-2"
-tmux ls                 # lista as sessões
+claude                  # tmux session "claude-foo" with the Work account
+claude-gmail           # tmux session "claude-gmail-foo" with the Gmail account
+claude                  # again in the same folder: "claude-foo-2"
+tmux ls                 # lists the sessions
 tmux attach -t claude-foo
 ```
 
-- O nome é `<prefixo>-<pasta atual>`, com `-2`, `-3`… se já existir. Caracteres estranhos
-  viram `-`. A conta padrão usa o prefixo `claude`, as outras `claude-<conta>`, então
-  `tmux attach -t claude-<pasta>` funciona igual ao esquema antigo.
-- O attach é manual, de propósito: `tmux ls` mostra o que está aberto.
-- Já **dentro** de uma sessão tmux, ou numa máquina sem tmux, o comando roda direto.
-- Argumentos passam normalmente: `claude --resume`, `claude-gmail -p "pergunta"`.
-- Subcomandos rápidos **não** abrem tmux: `auth`, `mcp`, `config`, `doctor`, `update`, `install`,
-  `plugin`, `agents`, `-p`/`--print`, `--version`, `--help`. Então `claude auth status` responde
-  na hora, no terminal atual.
+- The name is `<prefix>-<current folder>`, with `-2`, `-3`… if it already exists. Odd
+  characters become `-`. The default account uses the prefix `claude`, the others
+  `claude-<account>`, so `tmux attach -t claude-<folder>` works the same as in the old scheme.
+- Attach is manual, on purpose: `tmux ls` shows what is open.
+- Already **inside** a tmux session, or on a machine without tmux, the command runs directly.
+- Arguments pass through normally: `claude --resume`, `claude-gmail -p "question"`.
+- Quick subcommands do **not** open tmux: `auth`, `mcp`, `config`, `doctor`, `update`, `install`,
+  `plugin`, `agents`, `-p`/`--print`, `--version`, `--help`. So `claude auth status` answers
+  right away, in the current terminal.
 
-Para saber qual conta o `claude` puro está usando, e o que há em cada diretório:
+To find out which account plain `claude` is using, and what is in each directory:
 
 ```sh
 claude-whoami
-#   claude-work  ~/.claude          ✓ you@example.org  (team, Work)  ← `claude` puro
+#   claude-work  ~/.claude          ✓ you@example.org  (team, Work)  ← plain `claude`
 #   claude-gmail   ~/.claude-gmail   ✓ you@example.com  (max, ...)
-claude auth status           # o mesmo, só para o `claude` puro (JSON com email e configDirectory)
+claude auth status           # the same, only for plain `claude` (JSON with email and configDirectory)
 ```
 
-Dentro do Claude Code, `/status` também mostra a conta.
-- Para desligar o tmux em alguma máquina, `"tmux": false` no `accounts.json` e `./install.sh`.
-- O `install.sh` também grava `"tui": "default"` no `settings.json` de **cada conta**: é o
-  renderizador que escreve a conversa no scrollback nativo, então o tmux (`prefix + [`, PgUp,
-  roda do mouse) enxerga o histórico inteiro. O outro modo, `fullscreen`, guarda a conversa num
-  buffer próprio e ela some depois de uma tela. Equivale a digitar `/tui default` em cada conta.
-  Para outro valor, `"tui": "fullscreen"` no `accounts.json`; para o instalador não mexer nisso,
-  `"tui": false`. Sessão já aberta só muda depois de reiniciar o `claude`.
+Inside Claude Code, `/status` also shows the account.
+- To turn tmux off on some machine, `"tmux": false` in `accounts.json` and `./install.sh`.
+- `install.sh` also writes `"tui": "default"` to the `settings.json` of **each account**: it is
+  the renderer that writes the conversation to the native scrollback, so tmux (`prefix + [`, PgUp,
+  mouse wheel) sees the whole history. The other mode, `fullscreen`, keeps the conversation in a
+  buffer of its own and it is gone after one screen. It is the same as typing `/tui default` on each account.
+  For another value, `"tui": "fullscreen"` in `accounts.json`; for the installer to leave this alone,
+  `"tui": false`. A session that is already open only changes after `claude` is restarted.
 
-Todos os aliases chamam o binário via `env`, que resolve `claude` pelo `PATH` e ignora a
-função, então não há recursão nem risco do `claude-gmail` cair na conta padrão.
+All the aliases call the binary through `env`, which resolves `claude` from the `PATH` and
+ignores the function, so there is no recursion and no risk of `claude-gmail` falling back to the default account.
 
-### 3. Login sem navegador
+### 3. Login without a browser
 
-O `claude auth login` normalmente abre o navegador padrão, e o navegador autoriza a conta que
-**já estiver logada** no claude.ai, seja qual for o e-mail pré-preenchido. Foi assim que uma
-conta já sobrescreveu a outra uma vez.
+`claude auth login` normally opens the default browser, and the browser authorizes the account
+that is **already logged in** to claude.ai, whatever e-mail is pre-filled. That is how one
+account already overwrote the other once.
 
-Por isso os aliases de login passam `BROWSER=~/.local/bin/claude-login-url`, um script que
-não abre nada: só imprime a URL. Você abre a URL onde quiser, logado na conta certa (ou em
-janela anônima), autoriza, e cola o código que aparece de volta no terminal. Funciona igual
-numa máquina com desktop e num servidor por SSH.
+That is why the login aliases pass `BROWSER=~/.local/bin/claude-login-url`, a script that
+opens nothing: it only prints the URL. You open the URL wherever you want, logged in to the
+right account (or in a private window), authorize, and paste the code that appears back into
+the terminal. It works the same on a machine with a desktop and on a server over SSH.
 
 ```sh
 claude-gmail-login
-# >>> Abra esta URL logado na conta certa (ou em janela anônima) e cole o código aqui:
+# >>> Open this URL logged in to the right account (or in a private window) and paste the code here:
 #     https://claude.ai/oauth/authorize?...
 # Paste code here if prompted > ...
 ```
 
-O Codex tem o mesmo fluxo nativo: `codex-login` roda `codex login --device-auth`, que mostra
-um código para você confirmar no site.
+Codex has the same flow natively: `codex-login` runs `codex login --device-auth`, which shows
+a code for you to confirm on the site.
 
-Para conferir em qual conta cada diretório está: `claude-gmail auth status`.
+To check which account each directory is on: `claude-gmail auth status`.
 
-**O onboarding é pulado de propósito.** O `claude auth login` grava a credencial, mas não marca
-o assistente de primeira execução (tema, dicas, login) como concluído. Sem essa marca, o primeiro
-`claude-<conta>` abre o assistente, que termina num **segundo** login pelo navegador, com callback
-em localhost. Esse login é redundante e quebra com `Redirect URI ... not supported`. Por isso o
-`install.sh` grava `hasCompletedOnboarding: true` (e `theme: dark`, se não houver tema) no
-`.claude.json` de cada conta: `~/.claude.json` para a conta em `~/.claude`, `<config_dir>/.claude.json`
-para as outras. A mudança é idempotente e não mexe em quem já tem a marca. Se aparecer esse erro numa
-conta, rode o `./install.sh` de novo.
+**Onboarding is skipped on purpose.** `claude auth login` writes the credential, but does not mark
+the first-run wizard (theme, tips, login) as completed. Without that mark, the first
+`claude-<account>` opens the wizard, which ends in a **second** login through the browser, with a callback
+on localhost. That login is redundant and breaks with `Redirect URI ... not supported`. That is why
+`install.sh` writes `hasCompletedOnboarding: true` (and `theme: dark`, if there is no theme) to the
+`.claude.json` of each account: `~/.claude.json` for the account in `~/.claude`, `<config_dir>/.claude.json`
+for the others. The change is idempotent and does not touch anyone who already has the mark. If this error shows up on an
+account, run `./install.sh` again.
 
-### 4. Uso com marcador de ritmo
+### 4. Usage with a pace marker
 
-`usage-all -v` consulta a API de uso da Anthropic com a credencial de cada conta e
-desenha, para cada janela de limite, uma barra de 20 células, os pontos acima (+) ou abaixo (−) do
-ritmo e o horário do reset (só a hora quando é hoje):
+`usage-all -v` queries Anthropic's usage API with the credential of each account and
+draws, for each limit window, a bar of 20 cells, the points above (+) or below (−) the
+pace and the reset time (only the hour when it is today):
 
 ```
 → Gmail  you@example.com
-  sessão 5h   2% ░░░░░░░┃░░░░░░░░░░░░ -37  18:09
-  semana 7d  62% ████████████░░░░░░░┃ -34  20:59
-  Fable 7d   82% ████████████████░░░┃ -14  20:59 ⚠
+  session 5h   2% ░░░░░░░┃░░░░░░░░░░░░ -37  18:09
+  week 7d     62% ████████████░░░░░░░┃ -34  20:59
+  Fable 7d    82% ████████████████░░░┃ -14  20:59 ⚠
 ```
 
-- A parte cheia (`█`) é o **uso** que a API reporta. O script não estima isso.
-- O `┃` é o **tempo**: a fração da janela que já passou. Para "ficar no ritmo", a barra
-  cheia deveria chegar exatamente até ele. Exemplo: se em 30 min de uma janela de 5 h você
-  gastou 50%, passaram 10% do tempo, o `┃` fica em 10% e a barra (50%) passa muito dele.
-- O número ao lado é o desvio, na cor da barra: verde abaixo do ritmo, amarelo acima, vermelho com
-  15 pontos ou mais acima. `⚠` marca janela que a API diz estar perto do limite.
-- Como o tempo é calculado: no Claude a API só dá o horário de reset, então o script assume
-  janelas fixas de 5 h e 7 dias e conta para trás. Se a janela não está ativa (reset já passou)
-  o marcador some.
-- As cores só saem quando a saída é um terminal; num pipe ou arquivo é texto puro.
+- The filled part (`█`) is the **usage** the API reports. The script does not estimate it.
+- The `┃` is the **time**: the fraction of the window that has already passed. To "stay on pace", the filled
+  bar should reach exactly up to it. Example: if in 30 min of a 5 h window you
+  spent 50%, 10% of the time has passed, the `┃` sits at 10% and the bar (50%) goes far past it.
+- The number next to it is the deviation, in the color of the bar: green below the pace, yellow above, red at
+  15 points or more above. `⚠` marks a window the API says is close to the limit.
+- How the time is computed: for Claude the API only gives the reset time, so the script assumes
+  fixed windows of 5 h and 7 days and counts backwards. If the window is not active (the reset has already passed)
+  the marker disappears.
+- The colors only come out when the output is a terminal; in a pipe or a file it is plain text.
 
-Sem argumento, `usage-all` percorre **todas** as contas do `accounts.json`; com um ou mais
-nomes, mostra só aquelas. O formato completo (`-v`) é o das barras acima; o padrão é o resumido
-descrito a seguir. `--json` é a saída que o `orq` e o `orq-web` consomem. O Codex é outro
-serviço e tem comando próprio, `codex-usage` (`bin/codex-usage-fast`), com os mesmos modos.
-
-```
-usage-all                 # todas as contas do Claude, resumido
-usage-all work         # só essa conta (pode listar várias)
-usage-all -v              # completo: barra larga, desvio do ritmo e horário do reset
-usage-all -v gmail        # combina os dois
-usage-all --json          # para scripts
-```
-
-O resumido é o padrão (`-v`/`--verbose` dá o completo). No resumido,
-cada conta vira uma linha de tabela. Por janela: a % usada, uma mini-barra de 10 células
-(cada célula = 10%) com o mesmo marcador `┃` de ritmo do modo completo e, à direita, o tempo
-até o reset. Só o nome das janelas sai em cima da tabela (a legenda está no `--help`); a seta
-marca a melhor conta para abrir agora (a do `usage-all --melhor`) e o TOTAL resume a semana da frota.
+With no argument, `usage-all` goes through **all** the accounts in `accounts.json`; with one or more
+names, it shows only those. The full format (`-v`) is the one with the bars above; the default is the brief one
+described next. `--json` is the output that `orq` and `orq-web` consume. Codex is another
+service and has its own command, `codex-usage` (`bin/codex-usage-fast`), with the same modes.
 
 ```
-                   sessão 5h              semana 7d              Fable 7d
+usage-all                 # all the Claude accounts, brief
+usage-all work         # only that account (you can list several)
+usage-all -v              # full: wide bar, deviation from the pace and reset time
+usage-all -v gmail        # combines the two
+usage-all --json          # for scripts
+```
+
+The brief format is the default (`-v`/`--verbose` gives the full one). In the brief format,
+each account becomes one table row. Per window: the % used, a mini-bar of 10 cells
+(each cell = 10%) with the same `┃` pace marker as the full mode and, on the right, the time
+until the reset. Only the names of the windows are printed above the table (the legend is in `--help`); the arrow
+marks the best account to open now (the one from `usage-all --melhor`) and the TOTAL sums up the fleet's week.
+
+```
+                   session 5h              week 7d               Fable 7d
   Work      5% ░░░░░░░░┃░ 00h35   42% ████░░░░┃░ 1d04h   65% ██████░░┃░ 1d04h
 → Gmail        0% ░░┃░░░░░░░ 03h45   62% ██████░░░┃ 06h35   82% ████████░┃ 06h35
   Work 3    0% ░┃░░░░░░░░ 04h05   19% ██░░░┃░░░░ 3d07h   35% ████░┃░░░░ 3d07h
   Work 2    2% ┃░░░░░░░░░ 04h35    5% ░┃░░░░░░░░ 5d20h    0% ░┃░░░░░░░░ 5d20h
 
-TOTAL  32% ███░░░┃░░░  queima 0,5×  zera ∞  reset Gmail 06h21
+TOTAL  32% ███░░░┃░░░  burn 0,5×  runs out ∞  reset Gmail 06h21
 ```
 
-O `┃` é o **tempo**: quanto da janela já passou. Barra que não chega no `┃` está abaixo do
-ritmo (verde); barra que passa dele está acima (amarela; vermelha com 15 pontos ou mais de
-diferença). A % e a barra têm a mesma cor. Quando o `┃` cai dentro da parte preenchida, ele
-vira um entalhe na cor da barra, como em `███┃░░░░░░` (37% usado com 34% da sessão decorrida:
-no ritmo). Janela que ainda não começou aparece com o `┃` na primeira célula e a duração
-cheia em cinza, pois o relógio só dispara no primeiro uso.
+The `┃` is the **time**: how much of the window has already passed. A bar that does not reach the `┃` is below the
+pace (green); a bar that goes past it is above (yellow; red at 15 points or more of
+difference). The % and the bar have the same color. When the `┃` falls inside the filled part, it
+becomes a notch in the color of the bar, as in `███┃░░░░░░` (37% used with 34% of the session elapsed:
+on pace). A window that has not started yet appears with the `┃` in the first cell and the full
+duration in gray, because the clock only starts on the first use.
 
-As contas do Claude saem ordenadas pela **folga no semanal** (`semana 7d`, todos os modelos):
-a diferença entre o usado e o ritmo. Quem está mais abaixo do ritmo vem primeiro; quem está
-mais acima, por último. No exemplo, a Work 3 gastou só 8% da semana, mas com 6% dela
-decorrida está acima do ritmo, por isso vem depois da Work (19% com 37% decorridos).
-Conta com erro vai para o fim.
+The Claude accounts come out sorted by the **slack in the weekly window** (`week 7d`, all models):
+the difference between what was used and the pace. Whoever is furthest below the pace comes first; whoever is
+furthest above, last. In the example, Work 3 spent only 8% of the week, but with 6% of it
+elapsed it is above the pace, so it comes after Work (19% with 37% elapsed).
+An account with an error goes to the end.
 
-`sessão 5h` é a janela de 5 h, `semana 7d` a de 7 dias corridos a partir do primeiro uso
-(por isso cada conta reseta num dia e horário diferentes); um nome de modelo (ex.: `Fable 7d`)
-é o limite semanal só daquele modelo.
+`session 5h` is the 5 h window, `week 7d` the one of 7 consecutive days starting from the first use
+(which is why each account resets on a different day and time); a model name (e.g. `Fable 7d`)
+is the weekly limit for that model only.
 
-### 4b. Retomar a conversa certa com várias contas
+### 4b. Resuming the right conversation with several accounts
 
-Cada conta guarda o histórico no próprio diretório (`<config_dir>/projects/<pasta>/`), então
-o `--resume` de uma conta não enxerga as conversas das outras. O `claude-last` olha todas as
-contas e mostra, para a pasta atual, a conversa mais recente de cada uma:
+Each account keeps its history in its own directory (`<config_dir>/projects/<folder>/`), so
+the `--resume` of one account does not see the conversations of the others. `claude-last` looks at all the
+accounts and shows, for the current folder, the most recent conversation of each one:
 
 ```
 $ claude-last -a ~
-~   (claude-resume N abre a conversa N)
- 1  Work      20h  Wifi do MacBook com problemas
- 2  Work      20h  Comando usage-all com formatação
- 3  Work       1d  Log de Dropbox por API
+~   (claude-resume N opens conversation N)
+ 1  Work      20h  MacBook wifi problems
+ 2  Work      20h  usage-all command with formatting
+ 3  Work       1d  Dropbox log through the API
     = claude-work --resume 00000000-0000-0000-0000-000000000000
 ```
 
-`claude-resume` abre a linha 1 **na conta dela, se ela estiver boa** (janela de 5 h abaixo de 70% e 15+ pontos
-sobrando na semana); senão, na melhor conta agora (`usage-all --melhor`), copiando a conversa como o `--as` faz.
-Não imprime nada. `claude-resume 2` abre a linha 2, e argumentos
-extras vão para o `claude`. Com `-a`, os dois comandos usam as 15 conversas mais recentes da
-pasta, de qualquer conta. Conversas vazias e as de renovação de token ficam de fora.
+`claude-resume` opens line 1 **on its own account, if that one is in good shape** (5 h window below 70% and 15+ points
+left in the week); otherwise, on the best account right now (`usage-all --melhor`), copying the conversation the way `--as` does.
+It prints nothing. `claude-resume 2` opens line 2, and extra
+arguments go to `claude`. With `-a`, both commands use the 15 most recent conversations of the
+folder, from any account. Empty conversations and the token-renewal ones are left out.
 
-**Retomar com outra conta.** Quando a conta da conversa acabou a cota, `claude-resume --as gmail`
-(ou `--as gmail 2`, `--as gmail -a 3`) copia a conversa para a conta `gmail` e abre por lá. A
-conversa é só um arquivo local, então a outra conta continua de onde parou. Junto vão os anexos
-da conversa e os arquivos de memória do projeto que a conta destino ainda não tem. A original
-fica intacta na conta de origem; se você continuar nas duas, viram ramos separados. Se a conta
-destino já tinha uma cópia diferente dessa conversa, ela é guardada como `<id>.jsonl.bak-<data>`.
-A primeira mensagem na conta nova é mais cara: ela relê a conversa inteira, sem o cache da outra.
+**Resuming with another account.** When the conversation's account has run out of quota, `claude-resume --as gmail`
+(or `--as gmail 2`, `--as gmail -a 3`) copies the conversation to the `gmail` account and opens it there. The
+conversation is just a local file, so the other account continues from where it stopped. The conversation's
+attachments go along, and so do the project's memory files that the destination account does not have yet. The original
+stays intact on the source account; if you continue on both, they become separate branches. If the destination
+account already had a different copy of this conversation, it is kept as `<id>.jsonl.bak-<date>`.
+The first message on the new account costs more: it rereads the whole conversation, without the other one's cache.
 
-### 4c. Orquestrador: 4 projetos de uma vez (`orq`)
-
-```
-orq            # escolhe os projetos e abre a grade (se ela já existe, só volta para ela)
-orq --new      # fecha a grade e escolhe de novo (os agentes remotos continuam rodando)
-orq --list     # só mostra a lista
-```
-
-O `orq` pergunta a todas as máquinas de `orq_hosts` (no `accounts.json`) e ao laptop quais
-pastas têm conversas recentes, e mostra uma lista única. Você digita até 4 números, ou
-`maquina:/caminho` para uma pasta nova. Ficam de fora conversas de `claude -p` (scripts e cron)
-e as de `/tmp`.
+### 4c. Orchestrator: 4 projects at once (`orq`)
 
 ```
-  #  máquina    pasta                              conta        há  assunto
+orq            # picks the projects and opens the grid (if it already exists, just goes back to it)
+orq --new      # closes the grid and picks again (the remote agents keep running)
+orq --list     # only shows the list
+```
+
+`orq` asks all the machines in `orq_hosts` (in `accounts.json`) and the laptop which
+folders have recent conversations, and shows a single list. You type up to 4 numbers, or
+`machine:/path` for a new folder. Conversations from `claude -p` (scripts and cron)
+and the ones in `/tmp` are left out.
+
+```
+  #  machine    folder                             account     ago  subject
   1  laptop     ~/Projects/claude-multiconta       work    0min  Usage-all account and brief parameters
   2  server0  ~/Projects/cluster    work    0min  HANDOVER-2026-10-04
-  3  node0    ~/acervo                           work3   8min  Cópia disco USB para NAS
-  4  server0  ~/Projects/myproject               gmail        1d  Atualização do projeto
+  3  node0    ~/acervo                           work3   8min  USB disk copy to the NAS
+  4  server0  ~/Projects/myproject               gmail        1d  Project update
 ```
 
-**Conta.** Os projetos são espalhados pelas contas com mais folga no 7d (usado − máx). Cada agente
-já rodando numa conta, inclusive os de grades anteriores, pesa 20 pontos contra ela; ficar na conta
-da conversa tem 10 pontos de preferência, para não copiar conversas à toa. Conta sem cota (5h ou 7d
-em 95%) nunca é escolhida. Antes de abrir, o `orq` mostra a conta de cada projeto e o motivo. Se a
-conta mudar, a conversa vai junto (o mesmo `claude-resume --as`).
+**Account.** The projects are spread over the accounts with the most slack in the 7d window (used − max). Each agent
+already running on an account, including the ones from earlier grids, weighs 20 points against it; staying on the conversation's
+account has a 10-point preference, so conversations are not copied for nothing. An account with no quota (5h or 7d
+at 95%) is never chosen. Before opening, `orq` shows the account of each project and the reason. If the
+account changes, the conversation goes along (the same `claude-resume --as`).
 
-**Grade.** Uma janela tmux própria (servidor `tmux -L orq`, separado do seu tmux normal) com até 4
-painéis. A borda de cada painel mostra projeto, máquina, conta e o assunto atual. Clique ou
-`Ctrl-b` + seta muda de painel, `Ctrl-b z` amplia, `Ctrl-b d` sai sem matar nada.
+**Grid.** A tmux window of its own (server `tmux -L orq`, separate from your normal tmux) with up to 4
+panes. The border of each pane shows project, machine, account and the current subject. A click or
+`Ctrl-b` + arrow changes pane, `Ctrl-b z` zooms, `Ctrl-b d` leaves without killing anything.
 
-**Agentes que sobrevivem.** Nas máquinas remotas cada projeto roda numa sessão tmux
-`orq-<pasta>` de lá. Fechar o laptop ou cair o ssh não mata o agente: o painel oferece
-reconectar, e o `orq` volta para a mesma sessão. No tmux remoto o prefixo é `Ctrl-a` (raramente
-necessário) e a rolagem é pela roda do mouse. Máquina sem tmux (node1) roda direto, sem essa
-proteção.
+**Agents that survive.** On the remote machines each project runs in a tmux session
+`orq-<folder>` over there. Closing the laptop or losing the ssh does not kill the agent: the pane offers
+to reconnect, and `orq` goes back to the same session. In the remote tmux the prefix is `Ctrl-a` (rarely
+needed) and scrolling is with the mouse wheel. A machine without tmux (node1) runs directly, without this
+protection.
 
-**Alertas.** Quando um agente termina ou pede permissão, sai uma notificação do iTerm2 com o nome
-do projeto. Ela vai pelo próprio terminal (OSC 9 atravessando os dois tmux), sem serviço externo.
-Os hooks entram só nos agentes do `orq`, via `claude --settings`, sem mexer no `settings.json`
-das contas. Rode o `orq` direto no iTerm2, não dentro de outro tmux, senão o alerta não chega.
+**Alerts.** When an agent finishes or asks for permission, an iTerm2 notification goes out with the name
+of the project. It goes through the terminal itself (OSC 9 crossing both tmux), with no external service.
+The hooks go only into the `orq` agents, through `claude --settings`, without touching the `settings.json`
+of the accounts. Run `orq` directly in iTerm2, not inside another tmux, otherwise the alert does not arrive.
 
-**Página web (`orq web`).** O chat com os agentes virou um projeto próprio, o
-[`orq-web`](../orq-web) (`~/Projects/orq-web`): pacote Python com testes e CI, dois comandos:
+**Web page (`orq web`).** The chat with the agents became a project of its own,
+[`orq-web`](../orq-web) (`~/Projects/orq-web`): a Python package with tests and CI, two commands:
 
-- **`orq-web`**, no laptop: página local (só `127.0.0.1`, token no link) com a cota das contas
-  em cima, uma aba por agente de qualquer máquina e um chat no estilo do Remote Control:
-  Markdown, ferramentas dobráveis, permissões por botão e formulário para o `AskUserQuestion`.
-  `orq web` aqui é só um atalho para ele.
-- **`orq-agent`**, em cada máquina: o supervisor que roda o `claude -p` em stream-json na pasta e
-  na conta certas, atrás de um socket Unix, dentro de uma sessão tmux `orqs-<projeto>`. É o que a
-  página abre nas máquinas; sobrevive ao ssh cair e a conversa é uma sessão normal do Claude Code.
+- **`orq-web`**, on the laptop: a local page (`127.0.0.1` only, token in the link) with the accounts' quota
+  at the top, one tab per agent from any machine and a chat in the style of Remote Control:
+  Markdown, collapsible tools, permissions by button and a form for `AskUserQuestion`.
+  `orq web` here is just a shortcut for it.
+- **`orq-agent`**, on each machine: the supervisor that runs `claude -p` in stream-json in the right folder and
+  account, behind a Unix socket, inside a tmux session `orqs-<project>`. It is what the
+  page opens on the machines; it survives the ssh dropping and the conversation is a normal Claude Code session.
 
-Instalação: `cd ~/Projects/orq-web && ./install.sh` nesta máquina, ou `./deploy.sh` para todas
-as de `orq_hosts` (copia o pacote, sem pip). O `permission_mode` do `accounts.json` vale para
-os agentes da página. Detalhes no README do orq-web.
+Installation: `cd ~/Projects/orq-web && ./install.sh` on this machine, or `./deploy.sh` for all
+the ones in `orq_hosts` (it copies the package, no pip). The `permission_mode` in `accounts.json` applies to
+the page's agents. Details in the orq-web README.
 
-**Cota no meio do trabalho.** Ao sair do claude num painel (`/exit`), o `orq-run` confere a conta:
-se ela acabou, retoma a conversa na conta com mais folga em 5 s. Senão, mostra
-`[Enter] retomar  [c] outra conta  [n] conversa nova  [q] fechar`.
+**Quota in the middle of the work.** When you leave claude in a pane (`/exit`), `orq-run` checks the account:
+if it has run out, it resumes the conversation on the account with the most slack in 5 s. Otherwise, it shows
+`[Enter] resume  [c] another account  [n] new conversation  [q] close`.
 
-### 5. Onde cada sistema guarda a credencial (o script descobre sozinho)
+### 5. Where each system keeps the credential (the script finds out by itself)
 
-- **macOS**: no Keychain. Para `~/.claude` o item se chama `Claude Code-credentials`; para
-  qualquer outro diretório, `Claude Code-credentials-` seguido dos 8 primeiros caracteres do
-  SHA-256 do caminho absoluto. O script calcula esse sufixo, então funciona com qualquer
-  usuário e qualquer diretório.
-- **Linux**: no arquivo `$CLAUDE_CONFIG_DIR/.credentials.json`.
-- **Codex**: `~/.codex/auth.json` nos dois sistemas.
+- **macOS**: in the Keychain. For `~/.claude` the item is called `Claude Code-credentials`; for
+  any other directory, `Claude Code-credentials-` followed by the first 8 characters of the
+  SHA-256 of the absolute path. The script computes that suffix, so it works with any
+  user and any directory.
+- **Linux**: in the file `$CLAUDE_CONFIG_DIR/.credentials.json`.
+- **Codex**: `~/.codex/auth.json` on both systems.
 
-Os tokens nunca são impressos. O token de acesso vence a cada ~8 h; quando isso acontece o
-`usage-all` pede ao próprio Claude Code para renovar, disparando um pedido mínimo
-(`claude -p "ok" --model haiku`, custo desprezível) naquela conta, e segue. Isso não tem relação com a assinatura: "token expirado" nunca significa plano
-vencido. Só se a renovação falhar é que ele pede `claude-<conta>-login`.
+The tokens are never printed. The access token expires every ~8 h; when that happens
+`usage-all` asks Claude Code itself to renew it, firing a minimal request
+(`claude -p "ok" --model haiku`, negligible cost) on that account, and carries on. This has nothing to do with the subscription: "token expired" never means the plan
+has lapsed. Only if the renewal fails does it ask for `claude-<account>-login`.
 
-### 6. Aliases gerados, não escritos à mão
+### 6. Aliases generated, not written by hand
 
-O `install.sh` lê o `accounts.json` e escreve `~/.config/claude-multiconta/aliases.sh` com
-todos os aliases, mais a linha que garante `~/.local/bin` no `PATH` e a dica de abertura do
-terminal. No `.zshrc` (Mac) ou `.bashrc` (Linux) entra uma única linha de `source`, marcada
-com `# >>> claude-multiconta >>>` para o instalador reconhecer e não duplicar. No zsh com
-Powerlevel10k a linha vai **antes** do bloco de *instant prompt*, porque a dica é impressa
-na abertura e o p10k reclama de saída depois desse bloco.
+`install.sh` reads `accounts.json` and writes `~/.config/claude-multiconta/aliases.sh` with
+all the aliases, plus the line that makes sure `~/.local/bin` is on the `PATH` and the hint shown when
+the terminal opens. A single `source` line goes into `.zshrc` (Mac) or `.bashrc` (Linux), marked
+with `# >>> claude-multiconta >>>` so the installer recognizes it and does not duplicate it. In zsh with
+Powerlevel10k the line goes **before** the *instant prompt* block, because the hint is printed
+at startup and p10k complains about output after that block.
 
-Rodar `./install.sh` de novo é seguro: sobrescreve os scripts, regera os aliases e deixa o
-`.zshrc`/`.bashrc` como está.
+Running `./install.sh` again is safe: it overwrites the scripts, regenerates the aliases and leaves
+`.zshrc`/`.bashrc` as it is.
 
-### 7. Adicionar uma conta
+### 7. Adding an account
 
 ```sh
-cd ~/Projects/claude-multiconta        # ou a pasta onde o tarball foi extraído
-./add-account.sh conta3 fulano@exemplo.com "Fulano (exemplo.com)"
-# num terminal novo (ou: . ~/.config/claude-multiconta/aliases.sh):
-claude-conta3-login      # abre link, cola código
-claude-conta3            # usar
-claude-usage-conta3      # uso desta conta
-usage-all                # já inclui a conta nova
+cd ~/Projects/claude-multiconta        # or the folder where the tarball was extracted
+./add-account.sh account3 someone@example.com "Someone (example.com)"
+# in a new terminal (or: . ~/.config/claude-multiconta/aliases.sh):
+claude-account3-login    # opens a link, paste the code
+claude-account3          # use it
+claude-usage-account3    # usage of this account
+usage-all                # already includes the new account
 ```
 
-O comando faz três coisas: registra a conta no `accounts.json` com `config_dir` igual a
-`~/.claude-conta3`, cria esse diretório e roda o `install.sh`, que regera os aliases. Como o
-`usage-all` percorre o JSON, ele passa a incluir a conta sem nenhuma edição.
+The command does three things: it registers the account in `accounts.json` with `config_dir` equal to
+`~/.claude-account3`, creates that directory and runs `install.sh`, which regenerates the aliases. Since
+`usage-all` goes through the JSON, it starts including the account with no editing at all.
 
-Regras: o nome só pode ter `[a-z0-9_-]`; nome ou diretório repetido é recusado. O terceiro
-argumento é o rótulo que aparece no cabeçalho do uso; se omitido, vira `nome (email)`.
+Rules: the name can only have `[a-z0-9_-]`; a repeated name or directory is refused. The third
+argument is the label that appears in the usage header; if omitted, it becomes `name (email)`.
 
-Para tirar uma conta dos aliases, mantendo o diretório e o login:
+To take an account out of the aliases, keeping the directory and the login:
 
 ```sh
-./add-account.sh --remove conta3
+./add-account.sh --remove account3
 ```
 
-Feito numa máquina, rode `./make-tarball.sh` e reinstale nas outras para o `accounts.json`
-ficar igual em todas. Cada máquina faz o próprio login da conta nova.
+Once that is done on one machine, run `./make-tarball.sh` and reinstall on the others so that `accounts.json`
+is the same on all of them. Each machine does its own login for the new account.
 
-### 8. Levar para outra máquina
+### 8. Taking it to another machine
 
 ```sh
-./make-tarball.sh                                   # gera ~/Projects/claude-multiconta-AAAAMMDD.tar.gz
-scp ~/Projects/claude-multiconta-*.tar.gz user@maquina:
-ssh user@maquina
+./make-tarball.sh                                   # generates ~/Projects/claude-multiconta-YYYYMMDD.tar.gz
+scp ~/Projects/claude-multiconta-*.tar.gz user@machine:
+ssh user@machine
 tar xzf claude-multiconta-*.tar.gz && ./claude-multiconta/install.sh
-exec bash                                           # ou abra um terminal novo
+exec bash                                           # or open a new terminal
 claude-work-login ; claude-gmail-login ; codex-login
 usage-all
 ```
 
-Se o `.bashrc` da máquina já tinha uma função `claude()` própria (o esquema antigo do tmux), o
-`install.sh` avisa: remova aquele bloco, senão as duas definições brigam.
+If the machine's `.bashrc` already had its own `claude()` function (the old tmux scheme),
+`install.sh` warns you: remove that block, otherwise the two definitions fight.
 
-O `install.sh` **instala o `claude` e o `codex` se não existirem**: o Claude pelo script
-oficial (`claude.ai/install.sh`, vai para `~/.local/bin`), o Codex via `npm` se houver, senão
-baixando o binário oficial do GitHub (~100 MB) para `~/.local/bin/codex`. Para pular essa etapa,
-`./install.sh --no-install`. O único pré-requisito de verdade é `python3` (3.9 ou mais para
-mostrar horários em São Paulo; com 3.8 usa o fuso local da máquina) e `curl`.
+`install.sh` **installs `claude` and `codex` if they do not exist**: Claude through the official
+script (`claude.ai/install.sh`, it goes to `~/.local/bin`), Codex through `npm` if there is one, otherwise
+by downloading the official binary from GitHub (~100 MB) to `~/.local/bin/codex`. To skip this step,
+`./install.sh --no-install`. The only real prerequisites are `python3` (3.9 or later to
+show times in São Paulo; with 3.8 it uses the machine's local time zone) and `curl`.
 
-O tarball leva scripts, aliases e a lista de contas, **nunca credenciais**: cada máquina faz
-o próprio login.
+The tarball carries scripts, aliases and the list of accounts, **never credentials**: each machine does
+its own login.
 
-## Arquivos do projeto
+## Project files
 
-| arquivo | o que é |
+| file | what it is |
 |---|---|
-| `accounts.json` | fonte única de verdade: nome, e-mail, rótulo e `config_dir` de cada conta; também `default_account` (o que o `claude` puro abre), `tmux`, `tui`, `permission_mode` (agentes da página), o fuso horário, `orq_hosts` e `codex` (instalar o Codex e criar `codex-login`/`codex-usage`) |
-| `install.sh` | instala `claude`/`codex` se faltarem, copia `bin/*` para `~/.local/bin`, gera `~/.config/claude-multiconta/aliases.sh` e adiciona a linha de source no `.zshrc` ou `.bashrc` |
-| `add-account.sh` | adiciona/remove uma conta no `accounts.json`, cria o diretório e reroda o `install.sh` |
-| `bin/usage-all` | uso do Claude por conta, direto na API OAuth: resumido, `-v` com barras e `--json` |
-| `bin/codex-usage-fast` | o mesmo para o Codex (alias `codex-usage`); separado do `usage-all` |
-| `bin/usage-hist` | histórico de uso num SQLite (coletor a cada 5 min por timer do systemd), com painel, dia, semana, calibração tokens → pontos e alertas; o `usage-all` e o `usage-sessoes` leem dele |
-| `bin/usage-sessoes` | sessões e consumo por conta em todas as máquinas: lê as conversas em `~/.claude*/projects/` e os processos vivos, por ssh (o próprio script vai pelo stdin, não precisa estar instalado lá) |
-| `bin/orq` | orquestrador: lista projetos de todas as máquinas e monta a grade tmux; `orq web` chama o `orq-web` |
-| `bin/orq-run` | roda em cada painel: abre o claude na conta certa, troca de conta quando a cota acaba |
-| `bin/orq-hook` | hook dos agentes do orq: notificação do iTerm2 quando param |
-| `bin/claude-last` | conversa mais recente de cada conta numa pasta; base da função `claude-resume` |
-| `bin/claude-login-url` | usado como `$BROWSER` no login: não abre navegador, só imprime a URL |
-| `bin/claude-whoami` | roda `claude auth status` em cada conta e mostra e-mail, plano e qual é o `claude` puro |
-| `make-tarball.sh` | empacota tudo em `~/Projects/claude-multiconta-AAAAMMDD.tar.gz` |
+| `accounts.json` | single source of truth: name, e-mail, label and `config_dir` of each account; also `default_account` (what plain `claude` opens), `tmux`, `tui`, `permission_mode` (the page's agents), the time zone, `orq_hosts` and `codex` (install Codex and create `codex-login`/`codex-usage`) |
+| `install.sh` | installs `claude`/`codex` if they are missing, copies `bin/*` to `~/.local/bin`, generates `~/.config/claude-multiconta/aliases.sh` and adds the source line to `.zshrc` or `.bashrc` |
+| `add-account.sh` | adds/removes an account in `accounts.json`, creates the directory and reruns `install.sh` |
+| `bin/usage-all` | Claude usage per account, straight from the OAuth API: brief, `-v` with bars and `--json` |
+| `bin/codex-usage-fast` | the same for Codex (alias `codex-usage`); separate from `usage-all` |
+| `bin/usage-hist` | usage history in an SQLite database (collector every 5 min by a systemd timer), with dashboard, day, week, tokens → points calibration and alerts; `usage-all` and `usage-sessoes` read from it |
+| `bin/usage-sessoes` | sessions and consumption per account on all the machines: reads the conversations in `~/.claude*/projects/` and the live processes, over ssh (the script itself goes through stdin, it does not need to be installed there) |
+| `bin/orq` | orchestrator: lists projects from all the machines and builds the tmux grid; `orq web` calls `orq-web` |
+| `bin/orq-run` | runs in each pane: opens claude on the right account, switches account when the quota runs out |
+| `bin/orq-hook` | hook of the orq agents: iTerm2 notification when they stop |
+| `bin/claude-last` | most recent conversation of each account in a folder; the basis of the `claude-resume` function |
+| `bin/claude-login-url` | used as `$BROWSER` at login: opens no browser, only prints the URL |
+| `bin/claude-whoami` | runs `claude auth status` on each account and shows e-mail, plan and which one is the plain `claude` |
+| `make-tarball.sh` | packages everything into `~/Projects/claude-multiconta-YYYYMMDD.tar.gz` |
 
-## Desinstalar
+## Uninstalling
 
 ```sh
-./install.sh --uninstall     # tira scripts, aliases e a linha de source; os diretórios das contas ficam
+./install.sh --uninstall     # removes scripts, aliases and the source line; the account directories stay
 ```

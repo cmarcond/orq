@@ -1,19 +1,19 @@
-"""Portões de boot e detecção de bloqueio, lidos da tela do terminal.
+"""Boot gates and block detection, read from the terminal screen.
 
-Uma sessão recém-aberta pode parar num diálogo antes de escrever qualquer coisa no
-transcript: confiança no diretório, aceite do modo bypass. E, no meio do trabalho, um
-pedido de permissão trava a sessão sem deixar rastro no JSONL — o `tool_use` já foi
-gravado, o `tool_result` nunca chega. Nos dois casos, quem sabe é o PTY.
+A freshly opened session can stop at a dialog before writing anything to the
+transcript: directory trust, accepting bypass mode. And, in the middle of the work, a
+permission request freezes the session without leaving a trace in the JSONL — the `tool_use` has
+already been recorded, the `tool_result` never arrives. In both cases, the one that knows is the PTY.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-# CSI, OSC, designação de charset, teclas de modo — tudo que não é texto.
+# CSI, OSC, charset designation, mode keys — everything that is not text.
 _ANSI = re.compile(
-    rb"\x1b\[[0-9;?<>=]*[a-zA-Z]"      # inclui os modos privados: \x1b[>4m, \x1b[<u
-    rb"|\x1b[78]"                       # salvar e restaurar cursor
+    rb"\x1b\[[0-9;?<>=]*[a-zA-Z]"      # includes the private modes: \x1b[>4m, \x1b[<u
+    rb"|\x1b[78]"                       # save and restore cursor
     rb"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
     rb"|\x1b[()][AB0]"
     rb"|\x1b[>=<]"
@@ -26,60 +26,60 @@ ESC = b"\x1b"
 
 
 def screen_text(raw: bytes) -> str:
-    """Bytes crus do PTY viram uma linha de texto comparável."""
+    """Raw PTY bytes become one comparable line of text."""
     return " ".join(_ANSI.sub(b" ", raw).decode("utf-8", "replace").split())
 
 
 def compact(text: str) -> str:
-    """Sem espaço nenhum.
+    """No whitespace at all.
 
-    A TUI reposiciona o cursor no meio das palavras, então a mesma frase aparece ora
-    como "esc to interrupt", ora como "esctointerrupt", dependendo de onde caíram os
-    escapes. Comparar sem espaço torna a detecção imune a isso.
+    The TUI repositions the cursor in the middle of words, so the same phrase shows up
+    sometimes as "esc to interrupt", sometimes as "esctointerrupt", depending on where the
+    escapes landed. Comparing without whitespace makes the detection immune to that.
     """
     return re.sub(r"\s+", "", text)
 
 
-# Movimento de cursor ocupa espaço na tela; cor e limpeza, não.
+# Cursor movement takes up space on the screen; colour and clearing do not.
 _MOVE = re.compile(rb"\x1b\[[0-9;]*[CDGHf]")
 
 
 def plain_lines(raw: bytes) -> list[str]:
-    """O PTY sem ANSI, legível por uma pessoa.
+    """The PTY without ANSI, readable by a person.
 
-    Diferente de `screen_text`, que achata tudo numa linha só para comparação. Aqui há uma
-    sutileza: a TUI costuma escrever os espaços entre palavras como *movimento de cursor*,
-    não como espaço literal. Apagar todo escape gruda as palavras ("esctointerrupt");
-    trocar todo escape por espaço quebra palavras no meio, onde só houve troca de cor.
-    Então movimento vira espaço, e o resto some.
+    Unlike `screen_text`, which flattens everything into a single line for comparison. There is a
+    subtlety here: the TUI usually writes the spaces between words as *cursor movement*,
+    not as a literal space. Deleting every escape glues the words together ("esctointerrupt");
+    replacing every escape with a space breaks words in the middle, where there was only a colour change.
+    So movement becomes a space, and the rest disappears.
     """
     texto = _ANSI.sub(b"", _MOVE.sub(b" ", raw)).decode("utf-8", "replace")
     linhas = [linha.rstrip() for linha in texto.replace("\r", "\n").split("\n")]
     return [linha for linha in linhas if linha.strip()]
 
 
-WORKING_MARK = "esctointerrupt"     # rodapé da TUI enquanto há turno em andamento
+WORKING_MARK = "esctointerrupt"     # TUI footer while a turn is in progress
 
-# O ❯ sozinho NÃO identifica a caixa de entrada: é também o cursor de seleção dos
-# diálogos ("❯ No, exit"). O que separa os dois é o que vem logo depois — a caixa
-# desenha um espaço não-quebrável de padding, o cursor do diálogo emenda direto no
-# texto da opção. Cuidado: `screen_text` normaliza espaços e come o nbsp, então esta
-# comparação só funciona nos bytes crus.
+# The ❯ alone does NOT identify the input box: it is also the selection cursor of the
+# dialogs ("❯ No, exit"). What separates the two is what comes right after — the box
+# draws a non-breaking space as padding, the dialog cursor runs straight into the
+# option text. Careful: `screen_text` normalizes whitespace and eats the nbsp, so this
+# comparison only works on the raw bytes.
 PROMPT_BOX = "\u276f\u00a0"
 
-# Todo modal da TUI anuncia como se responde a ele. Nenhum rodapé de sessão ociosa ou
-# trabalhando ("esc to interrupt") usa essas frases.
+# Every TUI modal announces how to answer it. No footer of an idle or working session
+# ("esc to interrupt") uses these phrases.
 DIALOG_MARKS = ("Enter to confirm", "Esc to cancel")
 
 
 def prompt_box_visible(raw: bytes) -> bool:
-    """A caixa de entrada está desenhada e nenhum diálogo por cima dela.
+    """The input box is drawn and there is no dialog on top of it.
 
-    Dois sinais, porque sozinho nenhum basta: o nbsp distingue a caixa do cursor de
-    seleção, e a ausência dos rodapés de modal cobre o diálogo que a gente ainda não
-    conhece — que é justamente o caso perigoso, o que nenhum `Gate` pega.
+    Two signals, because neither is enough alone: the nbsp tells the box from the selection
+    cursor, and the absence of the modal footers covers the dialog we do not know about
+    yet — which is precisely the dangerous case, the one no `Gate` catches.
     """
-    texto = _ANSI.sub(b"", raw).decode("utf-8", "replace")   # sem normalizar espaços
+    texto = _ANSI.sub(b"", raw).decode("utf-8", "replace")   # without normalizing whitespace
     if PROMPT_BOX not in texto:
         return False
     plano = compact(screen_text(raw))
@@ -98,19 +98,19 @@ class Gate:
         return any(compact(n) in flat for n in self.needles)
 
 
-# A ordem importa: o aceite do bypass aparece antes de tudo.
+# Order matters: the bypass acceptance shows up before everything else.
 BOOT_GATES: tuple[Gate, ...] = (
     Gate(
         name="bypass",
         needles=("Yes, I accept",),
-        keys=DOWN + ENTER,          # a opção 1 é "No, exit"
-        describe="aviso do modo bypass permissions",
+        keys=DOWN + ENTER,          # option 1 is "No, exit"
+        describe="bypass permissions mode warning",
     ),
     Gate(
         name="trust",
-        # O texto já mudou de redação entre versões; as antigas ficam para trás como
-        # compatibilidade. O foco abre em "No, exit" — como no bypass —, então
-        # responder com ENTER puro *sai* do Claude em vez de confiar no diretório.
+        # The wording has already changed between versions; the old ones stay behind for
+        # compatibility. The focus opens on "No, exit" — as in bypass —, so
+        # answering with a bare ENTER *exits* Claude instead of trusting the directory.
         needles=(
             "Yes, I trust this folder",
             "Is this a project you created or one you trust",
@@ -118,7 +118,7 @@ BOOT_GATES: tuple[Gate, ...] = (
             "Do you trust the files",
         ),
         keys=DOWN + ENTER,
-        describe="diálogo de confiança do diretório",
+        describe="directory trust dialog",
     ),
 )
 
@@ -136,11 +136,11 @@ _OPTION = re.compile(r"(?:❯\s*)?([1-9])\.\s+([^0-9❯]{2,70}?)(?=\s+[1-9]\.\s|
 
 @dataclass(frozen=True)
 class Block:
-    """Uma sessão parada esperando decisão humana."""
+    """A session stopped waiting for a human decision."""
     kind: str                       # "permission" | "held-message"
     options: list[tuple[str, str]]
-    hint: str                       # o que fazer para liberar
-    keys_to_allow: bytes            # teclas que liberam, sabendo qual opção está em foco
+    hint: str                       # what to do to unblock it
+    keys_to_allow: bytes            # keys that unblock it, knowing which option is focused
 
 
 def find_boot_gate(text: str, answered: set[str]) -> Gate | None:
@@ -151,16 +151,16 @@ def find_boot_gate(text: str, answered: set[str]) -> Gate | None:
 
 
 def find_block(text: str) -> Block | None:
-    """O que está travando a sessão agora, lido da tela."""
+    """What is blocking the session right now, read from the screen."""
     flat = compact(text)
     if any(compact(n) in flat for n in _HELD_NEEDLES):
-        # Mensagem de peer retida porque as sessões estão em classes de permissão
-        # diferentes. O foco começa em "Deny", então liberar exige descer uma linha.
+        # Peer message held because the sessions are in different permission
+        # classes. The focus starts on "Deny", so allowing requires moving down one line.
         return Block(
             kind="held-message",
             options=[("1", "Deny — drop it and tell the sender it was declined"),
                      ("2", "Deliver this message to Claude")],
-            hint="mensagem de peer retida: classes de permissão diferentes entre os níveis",
+            hint="peer message held: different permission classes between the levels",
             keys_to_allow=DOWN + ENTER,
         )
     if any(compact(n) in flat for n in _PERMISSION_NEEDLES):
@@ -169,7 +169,7 @@ def find_block(text: str) -> Block | None:
         return Block(
             kind="permission",
             options=options or [("1", "Yes")],
-            hint="pedido de permissão de ferramenta",
+            hint="tool permission request",
             keys_to_allow=ENTER,
         )
     return None

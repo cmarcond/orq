@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""usage-sessoes: quem está gastando cada conta do Claude Code, em todas as máquinas.
+"""usage-sessoes: who is spending each Claude Code account, on every machine.
 
-Uso: usage-sessoes [-v] [--horas N] [--conta C ...] [--maquinas m1,m2] [--json] [--tudo]
+Usage: usage-sessoes [-v] [--horas N] [--conta C ...] [--maquinas m1,m2] [--json] [--tudo]
 
-Para cada máquina (o laptop e as `orq_hosts` do accounts.json), numa conexão ssh só, junta:
-  - os processos do claude vivos: conta (CLAUDE_CONFIG_DIR), pasta, tipo (interativo, orq, script -p,
-    daemon), sessão tmux, quem lançou e há quanto tempo;
-  - o consumo de cada sessão nas últimas N horas (padrão 5), lido das conversas que o Claude Code grava
-    em ~/.claude*/projects/: respostas, tokens de saída, cache novo e lido, modelos, primeira mensagem.
-Agrupa por conta, mostra a cota atual (usage-all) e quanto cada sessão pesou dentro da conta.
+For each machine (the laptop and the `orq_hosts` in accounts.json), over a single ssh connection, it gathers:
+  - the live claude processes: account (CLAUDE_CONFIG_DIR), folder, type (interativo, orq, script -p,
+    daemon), tmux session, who launched it and how long ago;
+  - what each session consumed in the last N hours (default 5), read from the conversations Claude Code
+    saves in ~/.claude*/projects/: responses, output tokens, new and read cache, models, first message.
+It groups by account, shows the current quota (usage-all) and how much each session weighed within the account.
 
-O "peso" pondera os tipos de token pela proporção de preço da Anthropic (entrada 1, cache novo 1,25,
-cache lido 0,1, saída 5). A Anthropic não publica quanto cada token pesa na cota, então a parte de cada
-sessão é uma estimativa relativa, não a porcentagem exata da cota. Uso pelo claude.ai (navegador,
-celular) não grava arquivo nas máquinas e não aparece aqui.
+The "weight" weights the token types by Anthropic's price ratio (input 1, new cache 1,25,
+read cache 0,1, output 5). Anthropic does not publish how much each token weighs on the quota, so each
+session's share is a relative estimate, not the exact percentage of the quota. Usage through claude.ai
+(browser, phone) writes no file on the machines and does not show up here.
 
-  (padrão)         resumido: uma linha por conta, uma por pasta e tipo (execuções de um script juntas),
-                   e só os processos abertos parados há mais de 1 h. ● = respondeu nos últimos 10 min;
-                   parte = fatia da linha no consumo da conta; ≈pts = pontos da semana estimados pelos
-                   tokens (calibração do usage-hist; ? = amostra pequena)
-  -v               completo: cada sessão, com processo, tmux, quem lançou e o começo do prompt
-  --horas N        janela de consumo (padrão 5, a janela curta da cota)
-  --conta C        só essas contas (nome do accounts.json; pode repetir)
-  --maquinas a,b   só essas máquinas (padrão: laptop + orq_hosts)
-  --tudo           mostra também processos auxiliares (--chrome-native-host)
-  --json           saída em JSON
-  --ao-vivo        varre as máquinas agora, mesmo com o banco do usage-hist fresco
-  --agente         (interno) coleta nesta máquina e imprime JSON; é o que vai pelo ssh. Com
-                   --mensagens --desde ISO, devolve uma linha por resposta (é o que o coletor do usage-hist usa)
+  (default)        brief: one line per account, one per folder and type (runs of one script together),
+                   and only the open processes idle for more than 1 h. ● = responded in the last 10 min;
+                   share = the line's slice of the account's consumption; ≈pts = points of the week
+                   estimated from the tokens (usage-hist calibration; ? = small sample)
+  -v               full: each session, with process, tmux, who launched it and the start of the prompt
+  --horas N        consumption window in hours (default 5, the quota's short window)
+  --conta C        only these accounts (name from accounts.json; can be repeated)
+  --maquinas a,b   only these machines (default: laptop + orq_hosts)
+  --tudo           also shows helper processes (--chrome-native-host)
+  --json           JSON output
+  --ao-vivo        scans the machines now, even when the usage-hist database is fresh
+  --agente         (internal) collects on this machine and prints JSON; this is what goes over ssh. With
+                   --mensagens --desde ISO, it returns one line per response (this is what the usage-hist collector uses)
 """
 
 import argparse
@@ -50,14 +50,14 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 CONF = os.path.expanduser(os.environ.get("CLAUDE_MULTICONTA_CONF", "~/.config/claude-multiconta/accounts.json"))
-WEIGHTS = {"input": 1.0, "cache_new": 1.25, "cache_read": 0.1, "output": 5.0}  # proporção de preço por token
-ACTIVE_MIN = 10  # minutos: sessão com resposta mais recente que isso conta como "trabalhando agora"
-TRIES, ATTEMPT_TIMEOUT, RETRY_PAUSE = 2, 25, 4  # ssh por máquina: tentativas, limite de cada uma (s), pausa
+WEIGHTS = {"input": 1.0, "cache_new": 1.25, "cache_read": 0.1, "output": 5.0}  # price ratio per token
+ACTIVE_MIN = 10  # minutes: a session with a response more recent than this counts as "working now"
+TRIES, ATTEMPT_TIMEOUT, RETRY_PAUSE = 2, 25, 4  # ssh per machine: attempts, limit of each one (s), pause
 
 
-# ================================================================ coleta (roda em cada máquina)
+# ================================================================ collection (runs on each machine)
 def load_accounts(path: str = CONF) -> Tuple[Dict[str, str], Dict[str, str], List[str]]:
-    """(config_dir real -> nome, nome -> rótulo, orq_hosts)."""
+    """(real config_dir -> name, name -> label, orq_hosts)."""
     try:
         conf = json.load(open(path))
     except (OSError, ValueError):
@@ -76,7 +76,7 @@ def account_of(config_dir: str, dirs: Dict[str, str]) -> str:
 
 
 def project_key(cwd: str) -> str:
-    """Nome da pasta de projeto que o Claude Code usa para `cwd`: /home/x/P -> -home-x-P."""
+    """Name of the project folder Claude Code uses for `cwd`: /home/x/P -> -home-x-P."""
     return re.sub(r"[^A-Za-z0-9]", "-", cwd)
 
 
@@ -105,7 +105,7 @@ def parse_ts(s: str) -> Optional[dt.datetime]:
 
 
 def transcript_files(home: str) -> List[Tuple[str, str, Optional[str]]]:
-    """(arquivo, config_dir, sessão-mãe se for subagente). Subagentes ficam em <sessão>/subagents/."""
+    """(file, config_dir, parent session if it is a subagent). Subagents live in <session>/subagents/."""
     out = []
     for f in glob.glob(os.path.join(home, ".claude*", "projects", "*", "*.jsonl")):
         out.append((f, f[: f.index(os.sep + "projects" + os.sep)], None))
@@ -116,8 +116,8 @@ def transcript_files(home: str) -> List[Tuple[str, str, Optional[str]]]:
 
 
 def sessions_since(home: str, since: dt.datetime, dirs: Dict[str, str]) -> List[dict]:
-    """Consumo por sessão desde `since`. Cada resposta conta uma vez (o arquivo repete a mensagem a cada
-    bloco de conteúdo: id da mensagem + requestId deduplicam); subagentes somam na sessão-mãe."""
+    """Consumption per session since `since`. Each response counts once (the file repeats the message for
+    each content block: message id + requestId deduplicate); subagents add to the parent session."""
     rows: Dict[Tuple[str, str], dict] = {}
     seen = set()
     for f, cfg, parent in transcript_files(home):
@@ -175,7 +175,7 @@ def sessions_since(home: str, since: dt.datetime, dirs: Dict[str, str]) -> List[
                     r["subagent_responses"] += 1
                 r["first"], r["last"] = min(r["first"], ts), max(r["last"], ts)
                 if not parent:
-                    r["cwd"] = r["cwd"] or e.get("cwd") or ""  # a pasta onde a sessão abriu, não para onde foi
+                    r["cwd"] = r["cwd"] or e.get("cwd") or ""  # the folder where the session opened, not where it went
                     r["entrypoint"] = r["entrypoint"] or e.get("entrypoint") or ""
                 model = m.get("model") or "?"
                 if model != "<synthetic>":
@@ -193,10 +193,10 @@ def sessions_since(home: str, since: dt.datetime, dirs: Dict[str, str]) -> List[
 
 
 def messages_since(home: str, since: dt.datetime, dirs: Dict[str, str]) -> Tuple[List[dict], Dict[str, dict]]:
-    """Uma linha por resposta com consumo desde `since` (para o banco do usage-hist) e, por sessão, a pasta, o
-    tipo e o começo do primeiro prompt. A chave (id da mensagem | requestId) deduplica: o arquivo repete a
-    mensagem a cada bloco de conteúdo, e coletas sobrepostas reenviam as mesmas. Subagentes ficam com a
-    sessão-mãe e `sub` = 1."""
+    """One line per response with consumption since `since` (for the usage-hist database) and, per session, the
+    folder, the type and the start of the first prompt. The key (message id | requestId) deduplicates: the file
+    repeats the message for each content block, and overlapping collections send the same ones again. Subagents
+    stay with the parent session and `sub` = 1."""
     since_s = since.isoformat().replace("+00:00", "Z")
     out: List[dict] = []
     sessions: Dict[str, dict] = {}
@@ -262,7 +262,7 @@ def messages_since(home: str, since: dt.datetime, dirs: Dict[str, str]) -> Tuple
 
 
 def parse_etime(s: str) -> int:
-    """`[[dd-]hh:]mm:ss` do ps -> segundos."""
+    """`[[dd-]hh:]mm:ss` from ps -> seconds."""
     days, _, rest = s.strip().rpartition("-")
     parts = [int(p) for p in rest.split(":")]
     while len(parts) < 3:
@@ -280,7 +280,7 @@ def is_claude(args: str) -> bool:
 def kind_of(args: str, parent: str) -> str:
     if "--chrome-native-host" in args:
         return "chrome"
-    if " daemon " in args + " " or " daemon " in parent + " ":  # o daemon e as reservas que ele mantém
+    if " daemon " in args + " " or " daemon " in parent + " ":  # the daemon and the spares it keeps
         return "daemon"
     if "orqweb.agent" in parent or "--permission-prompt-tool stdio" in args:
         return "orq"
@@ -295,7 +295,7 @@ def session_arg(args: str) -> Optional[str]:
 
 
 def tmux_sessions() -> Dict[str, str]:
-    """pane_id (%N) -> nome da sessão tmux, no servidor padrão e no da grade do orq (-L orq)."""
+    """pane_id (%N) -> tmux session name, on the default server and on the orq grid's one (-L orq)."""
     out = {}
     tmux = shutil.which("tmux")
     if not tmux:
@@ -317,7 +317,7 @@ def tmux_sessions() -> Dict[str, str]:
 
 
 def ps_table() -> Dict[int, Tuple[int, int, str]]:
-    """pid -> (ppid, segundos vivo, linha de comando), pelo ps (Linux e macOS)."""
+    """pid -> (ppid, seconds alive, command line), from ps (Linux and macOS)."""
     r = subprocess.run(["ps", "-axww", "-o", "pid=,ppid=,etime=,command="], capture_output=True, text=True, timeout=15)
     out = {}
     for line in r.stdout.splitlines():
@@ -332,7 +332,7 @@ def ps_table() -> Dict[int, Tuple[int, int, str]]:
 
 
 def env_and_cwd(pid: int) -> Tuple[Dict[str, str], str]:
-    """Ambiente (só as variáveis que importam) e pasta do processo."""
+    """Environment (only the variables that matter) and the process's folder."""
     want = ("CLAUDE_CONFIG_DIR", "TMUX_PANE")
     env, cwd = {}, ""
     if os.path.isdir("/proc"):
@@ -346,7 +346,7 @@ def env_and_cwd(pid: int) -> Tuple[Dict[str, str], str]:
         except OSError:
             pass
         return env, cwd
-    try:  # macOS: o ps -E acrescenta o ambiente ao fim da linha de comando
+    try:  # macOS: ps -E appends the environment to the end of the command line
         line = subprocess.run(["ps", "-E", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=5).stdout
         for k in want:
             m = re.search(rf"(?:^|\s){k}=(\S+)", line)
@@ -360,8 +360,8 @@ def env_and_cwd(pid: int) -> Tuple[Dict[str, str], str]:
 
 
 def last_activity(home: str, cfg: str, cwd: str, session: Optional[str] = None) -> Optional[str]:
-    """Última escrita na conversa do processo (a do `--resume`, se houver; senão a mais recente daquela
-    conta e pasta). O processo pode estar parado há dias."""
+    """Last write to the process's conversation (the `--resume` one, if any; otherwise the most recent one for
+    that account and folder). The process may have been idle for days."""
     pattern = f"{session}.jsonl" if session else "*.jsonl"
     files = glob.glob(os.path.join(cfg, "projects", project_key(cwd), pattern)) if cwd else []
     if session and not files:
@@ -381,7 +381,7 @@ def live_processes(home: str, dirs: Dict[str, str]) -> List[dict]:
             continue
         parent = table.get(ppid, (0, 0, ""))[2]
         chain, up = [], ppid
-        for _ in range(5):  # ancestrais: a reserva de um daemon pode ser filha de outra reserva
+        for _ in range(5):  # ancestors: a daemon's spare can be the child of another spare
             if up not in table or up in (0, 1):
                 break
             chain.append(table[up][2])
@@ -423,8 +423,8 @@ def machine_id() -> str:
 
 
 def collect(hours: float, home: Optional[str] = None, messages: bool = False, since_iso: Optional[str] = None) -> dict:
-    """O que o agente devolve: sessões agregadas (padrão) ou, com `messages`, uma linha por resposta desde
-    `since_iso` (ou das últimas `hours`), sempre com os processos vivos."""
+    """What the agent returns: aggregated sessions (default) or, with `messages`, one line per response since
+    `since_iso` (or from the last `hours`), always with the live processes."""
     home = home or os.path.expanduser("~")
     dirs, _, _ = load_accounts()
     now = dt.datetime.now(dt.timezone.utc)
@@ -446,7 +446,7 @@ def collect(hours: float, home: Optional[str] = None, messages: bool = False, si
 
 
 def agent_args(argv: List[str]) -> dict:
-    """Interpreta os argumentos do agente (os mesmos pelo ssh ou localmente) e coleta."""
+    """Parses the agent's arguments (the same over ssh or locally) and collects."""
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--agente", action="store_true")
     ap.add_argument("--horas", type=float, default=5.0)
@@ -456,19 +456,19 @@ def agent_args(argv: List[str]) -> dict:
     return collect(a.horas, messages=a.mensagens, since_iso=a.desde)
 
 
-# ================================================================ junção (roda onde a pessoa chamou)
+# ================================================================ joining (runs where the person called it)
 def local_name() -> str:
     return "laptop" if sys.platform == "darwin" else socket.gethostname().split(".")[0]
 
 
 def fetch(host: str, hours: float, me: str, args: Optional[List[str]] = None, timeout: Optional[float] = None) -> Tuple[str, Optional[dict], Optional[str]]:
-    """Roda o agente na máquina (aqui mesmo, se for esta; senão por ssh, com o script pelo stdin) e devolve
-    (máquina, dados, erro). `args` são os do agente; o padrão é o das sessões agregadas das últimas `hours`."""
+    """Runs the agent on the machine (right here, if it is this one; otherwise over ssh, with the script on stdin)
+    and returns (machine, data, error). `args` are the agent's; the default is the aggregated sessions of the last `hours`."""
     args = args if args is not None else ["--horas", f"{hours:g}"]
     if host == me:
         try:
             return host, agent_args(["--agente"] + args), None
-        except Exception as e:  # noqa: BLE001 - o relatório sai mesmo sem esta máquina
+        except Exception as e:  # noqa: BLE001 - the report comes out even without this machine
             return host, None, str(e)[:120]
     src = open(os.path.abspath(__file__)).read()
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "python3 - --agente " + shlex.join(args)]
@@ -476,27 +476,27 @@ def fetch(host: str, hours: float, me: str, args: Optional[List[str]] = None, ti
     err = "?"
     for attempt in range(TRIES):
         if attempt:
-            time.sleep(RETRY_PAUSE)  # ssh logo depois de outra conexão às vezes trava: espera e tenta de novo
+            time.sleep(RETRY_PAUSE)  # ssh right after another connection sometimes hangs: wait and try again
         try:
             r = subprocess.run(cmd, input=src, capture_output=True, text=True, timeout=attempt_timeout)
         except subprocess.TimeoutExpired:
-            err = f"sem resposta em {attempt_timeout:g} s"
+            err = f"no response in {attempt_timeout:g} s"
             continue
         if r.returncode == 0:
             try:
                 return host, json.loads(r.stdout), None
             except ValueError:
-                err = "resposta inválida"
+                err = "invalid response"
                 continue
-        err = ((r.stderr.strip().splitlines() or ["falhou"])[-1])[:120]
+        err = ((r.stderr.strip().splitlines() or ["failed"])[-1])[:120]
         if "No route to host" in err or "Could not resolve" in err:
-            break  # máquina fora da rede: tentar de novo não adianta
+            break  # machine off the network: trying again does not help
     return host, None, err
 
 
 def gather(hosts: List[str], hours: float, args: Optional[List[str]] = None, timeout: Optional[float] = None, per_host_args=None) -> Tuple[Dict[str, dict], Dict[str, str]]:
-    """Todas as máquinas em paralelo (uma conexão por máquina). Duas entradas que apontam para a mesma
-    máquina (um nome antigo, ou o local também listado) entram uma vez só, pelo machine-id."""
+    """Every machine in parallel (one connection per machine). Two entries that point to the same
+    machine (an old name, or the local one also listed) are counted only once, by machine-id."""
     me = local_name()
     results: Dict[str, Tuple[Optional[dict], Optional[str]]] = {}
     lock = threading.Lock()
@@ -527,7 +527,7 @@ def gather(hosts: List[str], hours: float, args: Optional[List[str]] = None, tim
 
 
 def quota() -> Dict[str, dict]:
-    """Cota atual de cada conta pelo usage-all ao lado deste script (ou no PATH). Vazio se não der."""
+    """Current quota of each account from the usage-all next to this script (or on the PATH). Empty if it fails."""
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-all")
     exe = here if os.path.exists(here) else shutil.which("usage-all")
     if not exe:
@@ -540,8 +540,8 @@ def quota() -> Dict[str, dict]:
 
 
 def match_processes(machines: Dict[str, dict]) -> None:
-    """Liga cada processo vivo à sessão dele: pela sessão do `--resume`, senão pela conta + pasta (a sessão
-    mais recente ali). Marca `live` na sessão e `session` no processo."""
+    """Links each live process to its session: by the `--resume` session, otherwise by account + folder (the
+    most recent session there). Sets `live` on the session and `session` on the process."""
     for host, data in machines.items():
         sessions = data["sessions"]
         for s in sessions:
@@ -560,7 +560,7 @@ def match_processes(machines: Dict[str, dict]) -> None:
 
 
 def build(machines: Dict[str, dict], accounts: Optional[List[str]] = None) -> Dict[str, dict]:
-    """Por conta: sessões (com a parte de cada uma no peso da conta) e processos vivos sem consumo."""
+    """Per account: sessions (with each one's share of the account's weight) and live processes with no consumption."""
     match_processes(machines)
     by: Dict[str, dict] = defaultdict(lambda: {"sessions": [], "idle": [], "weight": 0.0})
     for data in machines.values():
@@ -581,7 +581,7 @@ def build(machines: Dict[str, dict], accounts: Optional[List[str]] = None) -> Di
     return out
 
 
-# ================================================================ saída
+# ================================================================ output
 def human(n: float) -> str:
     for unit, div in (("M", 1e6), ("k", 1e3)):
         if n >= div:
@@ -610,13 +610,13 @@ def describe_proc(p: dict) -> str:
     who = f"tmux {p['tmux']}" if p.get("tmux") else ""
     if p["kind"] in ("script", "orq") and p.get("parent"):
         par = p["parent"]
-        par = re.sub(r"^/bin/(ba|z)?sh -c source \S+ .*?&& ", "", par)  # o shell da ferramenta Bash do claude
-        who = (who + " · " if who else "") + "lançado por " + par[:60]
+        par = re.sub(r"^/bin/(ba|z)?sh -c source \S+ .*?&& ", "", par)  # the shell of claude's Bash tool
+        who = (who + " · " if who else "") + "launched by " + par[:60]
     return f"pid {p['pid']} {p['kind']}" + (f" ({who})" if who else "")
 
 
-STALE_MIN = 15  # minutos: dado do banco mais velho que isso ganha uma nota no resumo
-IDLE_MIN = 60  # minutos: no resumido, só aparece processo aberto e parado há mais que isso
+STALE_MIN = 15  # minutes: database data older than this gets a note in the brief output
+IDLE_MIN = 60  # minutes: the brief output only shows a process that is open and idle for longer than this
 
 
 def quota_cells(qq: dict) -> str:
@@ -637,7 +637,7 @@ def bar(share: float, cells: int = 8) -> str:
 
 
 def box(headers: List[str], groups: List[List[List[str]]], right: Tuple[int, ...] = ()) -> List[str]:
-    """Tabela com bordas de caixa; `groups` são blocos de linhas separados por uma linha divisória."""
+    """Table with box borders; `groups` are blocks of rows separated by a divider line."""
     cols = len(headers)
     width = [len(h) for h in headers]
     for g in groups:
@@ -660,9 +660,9 @@ def box(headers: List[str], groups: List[List[List[str]]], right: Tuple[int, ...
 
 
 def brief_groups(by: Dict[str, dict], now: dt.datetime, top: int = 5, tpp: Optional[Dict[str, Optional[float]]] = None) -> Dict[str, dict]:
-    """O resumido como dados, por conta: `groups` (uma por máquina + pasta + tipo, as execuções de um script
-    juntas, com parte, peso, ≈pts, se respondeu agora e os processos vivos), `rest` (o que passou de `top`) e
-    `stale` (processos abertos parados há mais de IDLE_MIN). É o que a tabela do terminal e a página mostram."""
+    """The brief output as data, per account: `groups` (one per machine + folder + type, the runs of one script
+    together, with share, weight, ≈pts, whether it responded just now and the live processes), `rest` (what went
+    past `top`) and `stale` (open processes idle for more than IDLE_MIN). It is what the terminal table and the page show."""
     out: Dict[str, dict] = {}
     for acc, a in by.items():
         groups: Dict[Tuple[str, str, str], dict] = {}
@@ -702,12 +702,12 @@ def brief_groups(by: Dict[str, dict], now: dt.datetime, top: int = 5, tpp: Optio
 
 
 def render_brief(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hours: float, errs: Dict[str, str], now: dt.datetime, top: int = 5, tpp: Optional[Dict[str, Optional[float]]] = None, source: str = "") -> str:
-    """Resumido: uma tabela, um bloco por conta; uma linha por máquina + pasta + tipo (as execuções de um
-    script juntas) e os processos abertos parados há mais de IDLE_MIN minutos (os esquecidos). ● antes da pasta:
-    respondeu nos últimos ACTIVE_MIN minutos; o tipo só aparece quando não é interativo."""
-    head = f"últimas {hours:g} h"
+    """Brief: one table, one block per account; one line per machine + folder + type (the runs of one
+    script together) and the open processes idle for more than IDLE_MIN minutes (the forgotten ones). ● before
+    the folder: responded in the last ACTIVE_MIN minutes; the type only shows when it is not interativo."""
+    head = f"last {hours:g} h"
     if errs:
-        head += " · sem resposta: " + ", ".join(errs)
+        head += " · no response: " + ", ".join(errs)
     data = brief_groups(by, now, top, tpp)
     blocks = []
     for acc in sorted(by, key=lambda a: (-(q.get(a, {}).get("5h") or 0), -by[a]["weight"])):
@@ -721,29 +721,29 @@ def render_brief(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str]
             rows.append([g["host"], folder, f"{hhmm(g['first'])}–{hhmm(g['last'])}", f"{bar(g['share'])} {g['share'] * 100:>3.0f}%"] + ([pts(g["w"])] if pts else []))
         rest = d["rest"]
         if rest:
-            rows.append(["", f"  … mais {rest['n']}", "", f"{bar(rest['share'])} {rest['share'] * 100:>3.0f}%"] + ([pts(rest["w"])] if pts else []))
+            rows.append(["", f"  … {rest['n']} more", "", f"{bar(rest['share'])} {rest['share'] * 100:>3.0f}%"] + ([pts(rest["w"])] if pts else []))
         for p_ in d["stale"]:
-            rows.append([p_["host"], "  " + p_["folder"][:24], f"parado {ago(p_['idle_s'])}", ""] + ([""] if pts else []))
+            rows.append([p_["host"], "  " + p_["folder"][:24], f"idle {ago(p_['idle_s'])}", ""] + ([""] if pts else []))
         if not rows:
-            rows.append(["", "  sem consumo", "", ""] + ([""] if pts else []))
+            rows.append(["", "  no usage", "", ""] + ([""] if pts else []))
         rows[0] = [labels.get(acc, acc), quota_cells(q.get(acc, {}))] + rows[0]
         for r in rows[1:]:
             r[:0] = ["", ""]
         blocks.append(rows)
     tail = [source] if source else []
     if not blocks:
-        return "\n".join([head, "", "nenhuma sessão com consumo e nenhum processo do claude vivo"] + tail)
-    cols = ["conta", "5h · 7d", "máquina", "pasta", "horário", "parte"] + (["≈pts"] if tpp is not None else [])
+        return "\n".join([head, "", "no session with consumption and no live claude process"] + tail)
+    cols = ["account", "5h · 7d", "machine", "folder", "time", "share"] + (["≈pts"] if tpp is not None else [])
     table = box(cols, blocks, right=(6,) if tpp is not None else ())
     return "\n".join([head] + table + tail)
 
 
 def render(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hours: float, hosts_ok: List[str], errs: Dict[str, str], now: dt.datetime, show_all: bool) -> str:
-    """Completo (-v): cada sessão, com processo, tmux, quem lançou e o começo do prompt."""
+    """Full (-v): each session, with process, tmux, who launched it and the start of the prompt."""
     lines = []
-    head = f"Sessões e consumo · últimas {hours:g} h · máquinas: {', '.join(hosts_ok) or 'nenhuma'}"
+    head = f"Sessions and consumption · last {hours:g} h · machines: {', '.join(hosts_ok) or 'none'}"
     if errs:
-        head += " · sem resposta: " + ", ".join(f"{h} ({e})" for h, e in errs.items())
+        head += " · no response: " + ", ".join(f"{h} ({e})" for h, e in errs.items())
     lines += [head, ""]
     order = sorted(by, key=lambda a: -(q.get(a, {}).get("5h") or 0))
     for acc in order:
@@ -752,19 +752,19 @@ def render(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hour
         cota = ""
         if qq.get("err"):
             limited = "429" in str(qq["err"]) or "rate" in str(qq["err"]).lower()
-            cota = "   cota: indisponível agora" + (" (a API limitou as consultas; tente em alguns minutos)" if limited else "")
+            cota = "   quota: unavailable now" + (" (the API rate-limited the queries; try again in a few minutes)" if limited else "")
         elif qq:
-            cota = f"   cota: 5h {qq.get('5h', 0):.0f}% · 7d {qq.get('7d', 0):.0f}%"
-        lines.append(f"■ {labels.get(acc, acc)}{cota}   peso na janela {human(a['weight'])}")
+            cota = f"   quota: 5h {qq.get('5h', 0):.0f}% · 7d {qq.get('7d', 0):.0f}%"
+        lines.append(f"■ {labels.get(acc, acc)}{cota}   weight in the window {human(a['weight'])}")
         if a["sessions"]:
-            lines.append(f"   {'máquina':10} {'pasta':24} {'sessão':8}  {'tipo':10} {'horário':11} {'resp':>4} {'saída':>7} {'parte':>5}  estado")
+            lines.append(f"   {'machine':10} {'folder':24} {'session':8}  {'type':10} {'time':11} {'resp':>4} {'output':>7} {'share':>5}  state")
         for s in a["sessions"]:
             last = parse_ts(s["last"])
             recent = last is not None and (now - last).total_seconds() < ACTIVE_MIN * 60
             if s["live"]:
-                state = ("● trabalhando · " if recent else "○ aberta · ") + "; ".join(describe_proc(p) for p in s["live"])
+                state = ("● working · " if recent else "○ open · ") + "; ".join(describe_proc(p) for p in s["live"])
             else:
-                state = "● trabalhando (processo em outra máquina?)" if recent else "encerrada"
+                state = "● working (process on another machine?)" if recent else "ended"
             sub = f" +{s['subagent_responses']} sub" if s["subagent_responses"] else ""
             kind = KIND.get(s["entrypoint"], s["entrypoint"] or "?")
             lines.append(
@@ -775,14 +775,14 @@ def render(by: Dict[str, dict], q: Dict[str, dict], labels: Dict[str, str], hour
                 lines.append(f"   {'':10} ↳ {s['prompt'][:100]}")
         idle = [p for p in a["idle"] if show_all or p["kind"] != "chrome"]
         if idle:
-            lines.append("   processos vivos sem consumo na janela:")
+            lines.append("   live processes with no consumption in the window:")
             for p in sorted(idle, key=lambda p: (p["host"], p["pid"])):
-                last = f"última atividade {ago((now - parse_ts(p['last_activity'])).total_seconds())} atrás" if p.get("last_activity") else "sem conversa nessa pasta"
-                lines.append(f"   {p['host'][:10]:10} {os.path.basename(p['cwd'] or '?')[:24]:24} {describe_proc(p)} · vivo há {ago(p['seconds'])} · {last}")
+                last = f"last activity {ago((now - parse_ts(p['last_activity'])).total_seconds())} ago" if p.get("last_activity") else "no conversation in this folder"
+                lines.append(f"   {p['host'][:10]:10} {os.path.basename(p['cwd'] or '?')[:24]:24} {describe_proc(p)} · alive for {ago(p['seconds'])} · {last}")
         lines.append("")
     if not order:
-        lines.append("nenhuma sessão com consumo e nenhum processo do claude vivo")
-    lines.append("parte = peso da sessão dentro da conta (tokens ponderados pelo preço: estimativa, não % exata da cota)")
+        lines.append("no session with consumption and no live claude process")
+    lines.append("share = the session's weight within the account (tokens weighted by price: an estimate, not the exact % of the quota)")
     return "\n".join(lines)
 
 
@@ -814,7 +814,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         machines, errs, tpp = snap["machines"], snap["errors"], snap.get("tpp") or {}
         t = parse_ts(snap["ts"])
         mins = int((dt.datetime.now(dt.timezone.utc) - t).total_seconds() // 60)
-        source = f"dados de {mins} min atrás · --ao-vivo atualiza" if mins >= STALE_MIN else ""
+        source = f"data from {mins} min ago · --ao-vivo refreshes" if mins >= STALE_MIN else ""
     else:
         machines, errs = gather(hosts, a.horas)
         tpp, source = None, ""
@@ -832,7 +832,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def from_database(hours: float) -> Optional[dict]:
-    """As máquinas a partir do banco do usage-hist (aqui ou por ssh), se ele tem coleta recente."""
+    """The machines from the usage-hist database (here or over ssh), if it has a recent collection."""
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-hist")
     if not os.path.exists(here):
         return None
@@ -842,7 +842,7 @@ def from_database(hours: float) -> Optional[dict]:
         mod = importlib.util.module_from_spec(spec)
         loader.exec_module(mod)
         return mod.sessions_snapshot(hours)
-    except Exception:  # noqa: BLE001 - sem banco, varre as máquinas
+    except Exception:  # noqa: BLE001 - with no database, scan the machines
         return None
 
 
