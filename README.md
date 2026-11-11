@@ -10,6 +10,13 @@
 > with tiered agent pipelines (teacher/executor). Python standard library, tests
 > and CI per project. Host names, addresses and accounts in the docs and tests
 > are placeholders. The rest of the documentation is in Portuguese.
+>
+> English architecture and security overview: [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md).
+>
+> **Project history.** Development started on 9 October 2026. The commit
+> history here is the original one, with host names, addresses and account
+> identifiers replaced by placeholders. The project was designed and directed by
+> the author and written with Claude Code as the coding agent.
 
 Vários Claude Codes, várias contas, várias máquinas, uma página.
 
