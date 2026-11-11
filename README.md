@@ -18,8 +18,8 @@ are placeholders.
 
 | project | what it is | CI |
 |---|---|---|
-| [`claude-multiconta/`](claude-multiconta/) | Claude Code accounts isolated by `CLAUDE_CONFIG_DIR`, aliases, `usage-all` (quota with a pace marker), `orq` (tmux grid), `claude-last`/`claude-resume`. Shell + Python 3.8, no dependencies | `sh -n`, `py_compile`, pytest for `usage-all` |
-| [`orq-web/`](orq-web/) | the `orq-agent` supervisor (Claude Code in stream-json behind a Unix socket) and `orq-web` (the page: quota, per-machine tabs, chat, permissions, attachments, converting terminal sessions). Python 3.8+ stdlib; frontend in ES modules | ruff, pytest 3.8–3.12, `node --test`, Docker image on GHCR |
+| [`claude-multiconta/`](claude-multiconta/) | Claude Code accounts isolated by `CLAUDE_CONFIG_DIR`, aliases, `usage-all` (quota with a pace marker), `orq` (tmux grid), `claude-last`/`claude-resume`. Shell + Python 3.8, no dependencies | `sh -n`, `py_compile`, a valid `accounts.json`, pytest over the whole `tests/` directory (Python 3.8 and 3.12) |
+| [`orq-web/`](orq-web/) | the `orq-agent` supervisor (Claude Code in stream-json behind a Unix socket) and `orq-web` (the page: quota, per-machine tabs, chat, permissions, attachments, converting terminal sessions). Python 3.8+ stdlib; frontend in ES modules | ruff, pytest 3.8–3.12, `node --test`; the Docker image is built and smoke-tested, not published (the deploy script builds it on the target machine) |
 | [`claude-highlevel/`](claude-highlevel/) | a pipeline of Claude Codes in levels (teacher/executor) with a PTY and its own screen. Historical reference: the idea is being reimplemented inside orq-web (see `orq-web/docs/PLAN.md`, phase 3) | fast pytest |
 
 **Full manual in [`docs/`](docs/README.md)**: overview, installation and deploy, accounts and quota, a guide to the page, architecture, links and levels, command and API reference, operations. There is also an architecture and security overview in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

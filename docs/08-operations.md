@@ -69,14 +69,16 @@ Useful logs: `~/.cache/orq/<agent>/supervisor.log` (what the supervisor said on 
 
 ## 8.4 Security, in short
 
-- The local server only listens on `127.0.0.1` with the token in the link. Over the network: password,
-  cookie, lockout after repeated attempts, port published only on ZeroTier, `Host` checked.
+- By default the server listens only on `127.0.0.1`, with the token in the link. With `ORQ_BIND` on
+  another address it refuses to start without a password file. Over the network: password, cookie
+  (in-memory session, 30 days without use), lockout after repeated attempts, port published only on
+  ZeroTier, `Host` checked.
 - The container has neither Claude credentials nor `claude`; it reaches the machines over ssh with the
   user's key (read-only) and its own `ssh_config`.
 - Nothing the model writes runs in the page's origin: sanitized Markdown, CSP, `_outbox/` files in a
   sandbox, HTML always as a download.
-- Session credentials (`.key`) only travel over ssh and are kept with mode 0600; access tokens are
-  never printed.
+- Session credentials (`.key`) are read by `orq-agent link`, only travel over ssh and are kept with
+  mode 0600; the accounts' access tokens are read only by `usage-all` and are never printed.
 - `permission_mode: auto` lets Claude decide the routine cases; `manual` asks about everything. The
   agents run with the rights of the machine's user.
 

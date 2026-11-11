@@ -90,9 +90,12 @@ The script sends the code over ssh (a tarball through stdin, in a single connect
    host's `~/.ssh/config` changes for a machine and the container also needs goes along: `ProxyJump`
    and a specific `KexAlgorithms` list (for example, to work around a machine that can only be reached
    through another one);
-4. brings up `docker compose` with the image `ghcr.io/cmarcond/orq-web:latest` published by CI (if
-   Docker is logged in to GHCR) or built there (`ORQ_BUILD_LOCAL=1` forces a build from the code that
-   was sent, useful before the commit reaches `main`);
+4. brings up `docker compose`. The image is named `ghcr.io/cmarcond/orq-web:latest`, and the script
+   first tries `docker compose pull`; that only succeeds if an image exists under that name in GHCR
+   and Docker on server0 can read it. No workflow in this repository pushes one (CI only builds and
+   smoke-tests the image), so in practice the pull fails and the script builds the image there, from
+   the code that was sent (`docker compose up -d --build`). `ORQ_BUILD_LOCAL=1` skips the pull attempt
+   and always builds from the code that was sent;
 5. publishes port 8765 only on the ZeroTier IP.
 
 The image is `python:3.12-slim` with the ssh client; the user inside it has the same uid and home as
@@ -104,10 +107,13 @@ hostname), `ORQ_EXTRA_HOSTS=laptop`, `ORQ_USAGE_HOST=<hostname>`. A `HEALTHCHECK
 every 30 s.
 
 To get in: `http://<zerotier ip>:8765/`, password `ssh server0 cat ~/.config/orq-web/password`. The
-session cookie lasts as long as the server lives.
+sessions are kept in the server's memory: a session ends when the server restarts, on logout, or
+after 30 days without use (each authenticated request renews it; the cookie itself has `Max-Age` of
+30 days).
 
-To update after a commit on `main`: wait for the `orq-web` workflow to publish the image (about 3
-minutes) and run `push-server0.sh` again; it recreates the container. `docker ps` on server0 shows
+To update: run `push-server0.sh` again; it sends the current code, rebuilds the image on server0 and
+recreates the container (use `ORQ_BUILD_LOCAL=1` to be sure the build comes from the code sent and
+not from an image pulled from a registry). `docker ps` on server0 shows
 `healthy` in ~30 s.
 
 **Large packets that vanish on ZeroTier.** If ssh to a machine hangs right at the key exchange (the
@@ -184,9 +190,9 @@ cd orq-web && make test && make lint   # venv in .venv (uv, Python 3.12); the sy
 
 | variable | default | effect |
 |---|---|---|
-| `ORQ_BIND` | `127.0.0.1` | listening address; anything other than `127.0.0.1` requires the password |
+| `ORQ_BIND` | `127.0.0.1` | listening address; with anything other than `127.0.0.1`, `localhost` or `::1` the server refuses to start unless the password file exists and is not empty |
 | `ORQ_PASSWORD_FILE` | `~/.config/orq-web/password` | login password; without the file, only the token in the link |
-| `ORQ_ALLOWED_HOSTS` | `127.0.0.1,localhost` | accepted `Host` headers, in addition to `ORQ_BIND` |
+| `ORQ_ALLOWED_HOSTS` | empty | extra accepted `Host` headers (comma-separated), in addition to `127.0.0.1`, `localhost` and the `ORQ_BIND` address, which are always accepted |
 | `ORQ_LOCAL_HOST` | `laptop` | this machine's name on the page; `none` = no local agents (container) |
 | `ORQ_EXTRA_HOSTS` | empty | machines in addition to `orq_hosts` (the container adds `laptop`) |
 | `ORQ_SSH_CONFIG` | empty | its own `ssh -F` (the container) |
@@ -202,11 +208,13 @@ cd orq-web && make test && make lint   # venv in .venv (uv, Python 3.12); the sy
 One workflow per sub-project, triggered only by changes in its folder:
 
 - **claude-multiconta**: syntax of all the scripts (`py_compile` or `sh -n`), a valid `accounts.json`,
-  pytest for `usage-all` and `claude-last`, on Python 3.8 and 3.12.
+  pytest over the whole `claude-multiconta/tests` directory (alias generation, `claude-last`,
+  `usage-all`, `usage-hist`, `usage-sessoes`), on Python 3.8 and 3.12.
 - **orq-web**: `ruff check`, `ruff format --check` and pytest on 3.8, 3.11 and 3.12; `node --test` on
   Node 22; then it builds the image, runs a smoke test (starts the container with an empty
-  `accounts.json`, requests `/login` and checks that `/api/state` without a password returns 403) and,
-  only on a `push` to `main`, publishes `ghcr.io/cmarcond/orq-web:latest` and `:<short sha>`.
+  `accounts.json` and a password file, requests `/login` and checks that `/api/state` without
+  credentials returns 403). The workflow has no publish step: the image is not pushed to any
+  registry, and the deploy script builds it on the target machine.
 - **claude-highlevel**: fast pytest, since it is a historical reference.
 
 The supervisor's code runs on the remote machines, some with an old Python: that is why everything in

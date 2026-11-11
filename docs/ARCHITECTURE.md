@@ -1,8 +1,8 @@
 # Architecture and security overview
 
-This is an English summary of the Portuguese manual in [`docs/`](README.md) and of the code as it is
-in this repository. Where the Portuguese docs and the code disagree, this file follows the code and
-says so. Host names (`server0`, `node0`…), addresses and account names (`work`, `work2`…) are
+This is a one-file overview of the architecture and the security model, drawn from the manual in
+[`docs/`](README.md) and from the code as it is in this repository. The code is the reference: if
+the manual and the code ever disagree, the code is right. Host names (`server0`, `node0`…), addresses and account names (`work`, `work2`…) are
 placeholders.
 
 ## What it is and who it is for
@@ -126,8 +126,9 @@ Stated from the code. The design assumption is one trusted user on a private net
 
 **Bind and allowed-hosts checks.**
 
-- `ORQ_BIND` defaults to `127.0.0.1`. With any other address the server refuses to start unless the
-  password file exists and is non-empty (`check_bind` in `server/app.py`).
+- `ORQ_BIND` defaults to `127.0.0.1`. With any address other than `127.0.0.1`, `localhost` or `::1`
+  the server refuses to start unless the password file exists and is non-empty (`check_bind` in
+  `server/app.py`).
 - Every GET and every authenticated request is rejected with 403 unless the `Host` header (port
   removed) is `127.0.0.1`, `localhost`, the bind address or an entry of `ORQ_ALLOWED_HOSTS`.
 - The docs describe the container as published only on the private-network (ZeroTier) address of
@@ -167,10 +168,11 @@ and `X-Content-Type-Options: nosniff`; HTML is always sent as a download, never 
   and the automatic account switch copy the transcript (with its attachments and missing project
   memory files) into the target account's directory.
 - Linking agents of different accounts or machines copies each session's card and `.key` file (the
-  credential of that session's messaging socket) into the other account's `sessions/` directory. The
-  key travels inside the ssh connection and is written with mode 0600. This contradicts a literal
-  reading of the sentence in `docs/06` that orq "does not read the token": the code does read and
-  transmit the session `.key`; it does not handle the account's OAuth token.
+  credential of that session's messaging socket) into the other account's `sessions/` directory.
+  Between machines the key travels inside the ssh connection, as a field of the JSON record that
+  `orq-agent peer` reads from standard input (`--mirror`) and writes to standard output, and it is
+  written with mode 0600. So the code does read and transmit the session `.key`; it does not handle
+  the account's OAuth token (`docs/06`, section 6.4).
 - The agent socket has mode 0600; no further authentication happens on it.
 - The container mounts `~/.ssh` and `~/.config/claude-multiconta` read-only and has no Claude
   credentials, but it holds an ssh key that can run commands as the user on every listed machine.
@@ -226,16 +228,3 @@ From `docs/06` (6.6), `docs/08` (8.3, 8.5), `orq-web/README.md` and `orq-web/doc
 - Not done yet: history of level runs and a per-project milestone timeline; model and effort per
   level; recipes editable from the page; set progress in the side panel; opening only the missing
   agents of a set; search in the project list; switching account before the quota runs out.
-
-Places where the Portuguese docs and the code in this repository differ:
-
-- `orq-web/README.md` ("Segurança") says the server listens only on `127.0.0.1`; the code also
-  supports other bind addresses with a mandatory password, as `docs/02` and `docs/05` describe.
-- `docs/05` says a short-lived bridge lives 1.5 s; in `server/bridge.py` it ends by itself after
-  delivering and is killed after 30 s at most.
-- `docs/02`, the top-level README and `docker-compose.yml` say CI publishes the image to GHCR; the
-  workflow in this repository builds and smoke-tests the image but has no publish step.
-- `docs/02` says the session cookie lasts as long as the server lives; in `server/auth.py` sessions
-  are in memory and also expire after 30 days without use.
-- `docs/02` lists the `claude-multiconta` CI tests as `usage-all` and `claude-last`; the workflow
-  runs the whole `tests` directory (five files).

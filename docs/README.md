@@ -34,7 +34,7 @@ claude-orq/
 │   ├── tests/           pytest + node --test
 │   └── docs/PLAN.md    plan by phases (history of the decisions)
 ├── claude-highlevel/    historical reference: the teacher/executor levels with a PTY; reimplemented in orq-web
-└── .github/workflows/   one workflow per sub-project; the orq-web one publishes the image to GHCR
+└── .github/workflows/   one workflow per sub-project; the orq-web one also builds and smoke-tests the image
 ```
 
 ## Conventions in this manual

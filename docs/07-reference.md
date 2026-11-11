@@ -57,8 +57,8 @@ name, `data` date, `ARQ` file, `INI-FIM` start-end.
 ## 7.2 The server's HTTP API
 
 Authentication: the `X-Orq-Token` header (the token in the link) or `?t=` on the SSE, or the session
-cookie obtained from `POST /login` (form field `password`). The `Host` header must be in
-`ORQ_ALLOWED_HOSTS`. Errors come as `{"err": "text"}` with 400/403/404/409/500.
+cookie obtained from `POST /login` (form field `password`). The `Host` header (without the port) must be `127.0.0.1`,
+`localhost`, the `ORQ_BIND` address or an entry of `ORQ_ALLOWED_HOSTS`; otherwise the answer is 403. Errors come as `{"err": "text"}` with 400/403/404/409/500.
 
 | route | body / parameters | response |
 |---|---|---|

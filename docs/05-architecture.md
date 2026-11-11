@@ -61,7 +61,7 @@ agent), `ls`/`cat` (the `_outbox/`), `link`/`unlink`/`links`/`link-run`/`peer` (
 
 | module | responsibility |
 |---|---|
-| `app.py` | port, token, second server on the same port (reuses the link), building the `Context`, shutdown |
+| `app.py` | port, bind address (`ORQ_BIND`; outside the loopback addresses it refuses to start without the password file), token, second server on the same port (reuses the link), building the `Context`, shutdown |
 | `handlers.py` | routes (7.2), SSE, token/cookie, CSP, static files, upload, files, levels, links, injected notes |
 | `auth.py` | password login with a session cookie; lockout by IP after repeated attempts (429 for one minute) |
 | `external.py` | everything that leaves the process: `usage-all --json`, `claude-last --projects`, `orq --status-json` + `orq-agent links` (in the same ssh connection), `orq-agent spawn/convert/link/unlink/ls/cat`, writing files. An injectable `Runner` makes it testable without ssh |
@@ -86,8 +86,9 @@ there was a request from the page in the last 60 s. Three mechanisms keep the li
 **Bridge**: when a tab is opened, the page requests `/stream?since=N`; the server opens `orq-agent
 attach <label> --since N` (local, or `ssh host …`) and forwards each line as an SSE event. One tab per
 label: the previous one is closed. `deliver(label, obj)` writes to the tab's bridge or, when there is
-no tab, to a short-lived bridge that lives 1.5 s (`fresh=True` forces a new one, used by the migration
-because the old one pointed to the process that died).
+no tab, to a short-lived bridge: it receives the message and then end-of-input, and ends by itself
+once `attach` has delivered; a 30 s timer kills it if it has not ended by then (`fresh=True` forces a
+new one, used by the migration because the old one pointed to the process that died).
 
 **Migrator**: on each new list of agents, it looks for `state == "quota"`; picks the account with the
 most slack other than the current one; registers the agent as provisional on the new account

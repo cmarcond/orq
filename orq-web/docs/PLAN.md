@@ -79,6 +79,11 @@ The monorepo is the source of truth from here on; the folders `~/Projects/orq-we
 old copies. The server0 deploy still goes through `push-server0.sh`; to pull from GHCR, `docker login ghcr.io`
 there with a `read:packages` PAT.
 
+> Note on the current state: this phase records the plan as it was carried out in the private
+> monorepo. The `orq-web` workflow in this repository builds and smoke-tests the image and has no step
+> that pushes it to GHCR; `deploy/server0/deploy.sh` builds the image on the target machine when the
+> pull fails.
+
 ### 2.1 Layout
 
 ```
