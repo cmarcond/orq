@@ -1,465 +1,465 @@
-# Plano: deploy no server0, monorepo com CI/CD e níveis (highlevel) no orq-web
+# Plan: deploy on server0, monorepo with CI/CD and levels (highlevel) in orq-web
 
-Decisões tomadas em 2026-10-11:
+Decisions taken on 2026-10-11:
 
-| tema | decisão |
+| topic | decision |
 |---|---|
-| container | só o servidor `orq-web`; fala com **todas** as máquinas por ssh, inclusive o próprio server0. Sem `claude` dentro |
-| acesso pela rede | página de login com cookie; senha única num arquivo do server0; HTTP puro, pois o ZeroTier é rede privada |
-| GitHub | **monorepo privado** com `orq-web`, `claude-multiconta` e `claude-highlevel`; CI por projeto; imagem Docker no GHCR |
-| highlevel | **reimplementar** a ideia dentro do orq-web: níveis como agentes da página, compatíveis com abas, socket e replay |
+| container | only the `orq-web` server; it talks to **all** the machines over ssh, including server0 itself. No `claude` inside |
+| access over the network | login page with cookie; a single password in a file on server0; plain HTTP, since ZeroTier is a private network |
+| GitHub | **private monorepo** with `orq-web`, `claude-multiconta` and `claude-highlevel`; CI per project; Docker image on GHCR |
+| highlevel | **reimplement** the idea inside orq-web: levels as agents of the page, compatible with tabs, socket and replay |
 
-Teste de viabilidade feito antes do plano: duas sessões `claude -p` em stream-json, nomeadas com `-n`,
-conversam pelo canal nativo. O professor achou o executor com `ListAgents`, delegou com `SendMessage`,
-o executor fez o trabalho e respondeu, e o professor relatou. Portanto os níveis não precisam de PTY.
+Feasibility test done before the plan: two `claude -p` sessions in stream-json, named with `-n`,
+talk through the native channel. The teacher found the executor with `ListAgents`, delegated with `SendMessage`,
+the executor did the work and replied, and the teacher reported. So the levels do not need a PTY.
 
-Ordem: cada fase começa pelos testes (unitários e de integração com `fake_claude`), depois o código,
-depois a verificação real nas máquinas. Nada vai para o server0 sem a suíte verde.
+Order: each phase starts with the tests (unit and integration with `fake_claude`), then the code,
+then the real verification on the machines. Nothing goes to server0 without the suite green.
 
 ---
 
-## Fase 1 — acesso pela rede e container no server0  ✅ feita em 2026-10-11
+## Phase 1 — access over the network and container on server0  ✅ done on 2026-10-11
 
-No ar em `http://10.0.0.10:8765/` (senha: `ssh server0 cat ~/.config/orq-web/password`).
-O container enxerga server0, node3 e laptop por ssh; a cota vem do server0; `tmux run-shell` resolve o
-Keychain do laptop. Diferenças em relação ao planejado: não existe `ORQ_BIN` no container (nada roda local);
-o `push-server0.sh` manda o código por uma conexão ssh só, porque scp/sftp caíam na rede instável.
+Live at `http://10.0.0.10:8765/` (password: `ssh server0 cat ~/.config/orq-web/password`).
+The container sees server0, node3 and laptop over ssh; the quota comes from server0; `tmux run-shell` solves the
+laptop's Keychain. Differences from what was planned: there is no `ORQ_BIN` in the container (nothing runs locally);
+`push-server0.sh` sends the code over a single ssh connection, because scp/sftp kept dropping on the unstable network.
 
-### 1.1 Login com cookie (`orqweb/server/auth.py`)
+### 1.1 Login with cookie (`orqweb/server/auth.py`)
 
-- `ORQ_PASSWORD_FILE` (padrão `~/.config/orq-web/password`): a senha, uma linha. Sem o arquivo, o
-  servidor continua só com o token do link, como hoje.
-- `GET /login` página mínima; `POST /login` compara em tempo constante, cria uma sessão aleatória em
-  memória e devolve `Set-Cookie: orq=…; HttpOnly; SameSite=Strict; Path=/`. Falha dorme 1 s e conta;
-  cinco falhas seguidas do mesmo IP bloqueiam por 1 min.
-- `authed()` aceita cookie **ou** token (o token continua valendo para o uso local e para o `?t=` do SSE).
-- `POST /logout` apaga a sessão. Sessões expiram em 30 dias sem uso.
-- A página, sem cookie e sem token, redireciona para `/login`.
+- `ORQ_PASSWORD_FILE` (default `~/.config/orq-web/password`): the password, one line. Without the file, the
+  server continues with only the link's token, as today.
+- `GET /login` minimal page; `POST /login` compares in constant time, creates a random session in
+  memory and returns `Set-Cookie: orq=…; HttpOnly; SameSite=Strict; Path=/`. A failure sleeps 1 s and counts;
+  five failures in a row from the same IP block for 1 min.
+- `authed()` accepts cookie **or** token (the token remains valid for local use and for the `?t=` of the SSE).
+- `POST /logout` deletes the session. Sessions expire after 30 days without use.
+- The page, without cookie and without token, redirects to `/login`.
 
-Testes (`tests/test_auth.py`): senha certa dá cookie e acesso a `/api/state` e ao SSE; senha errada
-dá 403 e não dá cookie; sem arquivo de senha nada muda; bloqueio após cinco falhas; logout invalida;
-cookie não vale com `Host` que não seja o permitido.
+Tests (`tests/test_auth.py`): the right password gives a cookie and access to `/api/state` and to the SSE; a wrong password
+gives 403 and no cookie; without a password file nothing changes; block after five failures; logout invalidates;
+the cookie is not valid with a `Host` other than the allowed one.
 
-### 1.2 Escutar fora do 127.0.0.1
+### 1.2 Listening outside 127.0.0.1
 
-- `ORQ_BIND` (padrão `127.0.0.1`). Com qualquer outro valor, **o arquivo de senha passa a ser
-  obrigatório**: o servidor recusa subir sem ele.
-- `ok_host()` passa a aceitar o IP/nome de `ORQ_BIND` além de localhost.
-- `ORQ_LOCAL_HOST` (padrão `laptop`): o nome que o servidor dá à máquina onde roda. No container ele
-  vale `nenhum`: não há agentes locais, tudo é ssh, inclusive `server0`.
+- `ORQ_BIND` (default `127.0.0.1`). With any other value, **the password file becomes
+  mandatory**: the server refuses to start without it.
+- `ok_host()` now accepts the IP/name in `ORQ_BIND` besides localhost.
+- `ORQ_LOCAL_HOST` (default `laptop`): the name the server gives to the machine where it runs. In the container it
+  is `nenhum`: there are no local agents, everything is ssh, including `server0`.
 
-Testes: bind externo sem senha recusa; `Host` do ZeroTier aceito; sem host local a lista de projetos
-e de agentes não tenta rodar nada localmente.
+Tests: external bind without a password refuses; the ZeroTier `Host` accepted; without a local host the list of projects
+and of agents does not try to run anything locally.
 
 ### 1.3 Container
 
-- `Dockerfile`: `python:3.12-slim`, `openssh-client`, `tmux` não (não roda agente), usuário sem root,
-  `COPY orqweb/`, `CMD orq-web`. Imagem pequena.
-- `docker-compose.yml` para o server0: porta `10.0.0.10:8765:8765`; volumes só leitura:
-  `~/.ssh` (chave e `known_hosts`), `~/.config/claude-multiconta/accounts.json`, `~/.config/orq-web/password`;
+- `Dockerfile`: `python:3.12-slim`, `openssh-client`, no `tmux` (it runs no agent), non-root user,
+  `COPY orqweb/`, `CMD orq-web`. Small image.
+- `docker-compose.yml` for server0: port `10.0.0.10:8765:8765`; read-only volumes:
+  `~/.ssh` (key and `known_hosts`), `~/.config/claude-multiconta/accounts.json`, `~/.config/orq-web/password`;
   `restart: unless-stopped`.
-- No container, `~/.local/bin` não existe: `ORQ_BIN` aponta para onde? Os utilitários (`usage-all`,
-  `claude-last`, `orq --status-json`) rodam **por ssh no server0**, não dentro do container. A cota
-  (`usage-all --json`) também passa a vir por ssh de uma máquina com as credenciais: `ORQ_USAGE_HOST`
-  (padrão: o host local; no container, `server0`).
-- `deploy/server0.sh`: `docker compose pull && docker compose up -d`, mais a criação do arquivo de
-  senha se não existir (`openssl rand -base64 18`), com permissão `600`. A senha você lê por ssh:
+- In the container, `~/.local/bin` does not exist: where does `ORQ_BIN` point? The utilities (`usage-all`,
+  `claude-last`, `orq --status-json`) run **over ssh on server0**, not inside the container. The quota
+  (`usage-all --json`) also now comes over ssh from a machine with the credentials: `ORQ_USAGE_HOST`
+  (default: the local host; in the container, `server0`).
+- `deploy/server0.sh`: `docker compose pull && docker compose up -d`, plus the creation of the password
+  file if it does not exist (`openssl rand -base64 18`), with permission `600`. You read the password over ssh:
   `ssh server0 cat ~/.config/orq-web/password`.
 
-Testes: `docker build` na CI; teste de fumaça que sobe o container com um `accounts.json` falso e um
-arquivo de senha, confere `GET /login` 200 e que `/api/state` sem cookie dá 403.
+Tests: `docker build` in the CI; a smoke test that starts the container with a fake `accounts.json` and a
+password file, checks `GET /login` 200 and that `/api/state` without a cookie gives 403.
 
-Verificação real: subir no server0, abrir `http://10.0.0.10:8765/` do laptop e do celular pelo
-ZeroTier, logar, abrir uma aba do `kaggle@server0` e do `dev@node3`.
+Real verification: bring it up on server0, open `http://10.0.0.10:8765/` from the laptop and from the phone through
+ZeroTier, log in, open a tab for `kaggle@server0` and for `dev@node3`.
 
-## Fase 2 — monorepo privado e CI/CD  ✅ feita em 2026-10-11
+## Phase 2 — private monorepo and CI/CD  ✅ done on 2026-10-11
 
-`https://github.com/cmarcond/orq`. CI por projeto verde; imagem `ghcr.io/cmarcond/orq-web:latest`.
-O monorepo é a fonte de verdade a partir daqui; as pastas `~/Projects/orq-web` e `~/Projects/claude-multiconta` são
-cópias antigas. O deploy do server0 continua pelo `push-server0.sh`; para puxar do GHCR, `docker login ghcr.io`
-lá com um PAT `read:packages`.
+`https://github.com/cmarcond/orq`. CI per project green; image `ghcr.io/cmarcond/orq-web:latest`.
+The monorepo is the source of truth from here on; the folders `~/Projects/orq-web` and `~/Projects/claude-multiconta` are
+old copies. The server0 deploy still goes through `push-server0.sh`; to pull from GHCR, `docker login ghcr.io`
+there with a `read:packages` PAT.
 
 ### 2.1 Layout
 
 ```
-claude-orq/                     (nome a confirmar)
-├── orq-web/                    histórico preservado (git subtree add do repo atual)
-├── claude-multiconta/          snapshot atual (não tinha git)
-├── claude-highlevel/           snapshot do server0 (31/08, o mais novo), só referência até a fase 3
+claude-orq/                     (name to be confirmed)
+├── orq-web/                    history preserved (git subtree add of the current repo)
+├── claude-multiconta/          current snapshot (it had no git)
+├── claude-highlevel/           snapshot from server0 (31/08, the newest), reference only until phase 3
 ├── .github/workflows/
-│   ├── orq-web.yml             testes py 3.8–3.12 + node; build da imagem; push no GHCR em main e tags
-│   ├── claude-multiconta.yml   `sh -n install.sh`, `py_compile bin/*`, testes do usage-all (a criar)
+│   ├── orq-web.yml             py 3.8–3.12 + node tests; image build; push to GHCR on main and tags
+│   ├── claude-multiconta.yml   `sh -n install.sh`, `py_compile bin/*`, usage-all tests (to be created)
 │   └── highlevel.yml           `pytest -m "not slow"`
-└── README.md                   mapa dos três
+└── README.md                   map of the three
 ```
 
-- Workflows com `paths:` para rodar só o que mudou.
-- Imagem: `ghcr.io/<usuario>/orq-web:latest` e `:<sha>`; `GITHUB_TOKEN` basta para publicar.
-- O server0 faz `docker login ghcr.io` uma vez com um PAT de `read:packages`, guardado só lá.
-- Sem deploy automático: o CI publica, você (ou eu, por ssh) roda `deploy/server0.sh`.
+- Workflows with `paths:` to run only what changed.
+- Image: `ghcr.io/<user>/orq-web:latest` and `:<sha>`; `GITHUB_TOKEN` is enough to publish.
+- server0 does `docker login ghcr.io` once with a `read:packages` PAT, kept only there.
+- No automatic deploy: the CI publishes, you (or I, over ssh) run `deploy/server0.sh`.
 
-Testes: a própria CI verde no primeiro push é o teste; mais um `tests/test_packaging.py` que confere
-que `orqweb/server/static` entra no pacote e que o `Dockerfile` copia o que o `orq-web` importa.
+Tests: the CI itself green on the first push is the test; plus a `tests/test_packaging.py` that checks
+that `orqweb/server/static` goes into the package and that the `Dockerfile` copies what `orq-web` imports.
 
-### 2.2 Testes do claude-multiconta que não existem ainda
+### 2.2 Tests of claude-multiconta that do not exist yet
 
-`usage-all` ganha testes com respostas da API gravadas (fixtures JSON): janelas, ritmo, ordenação,
-`--json`. `install.sh` ganha um teste de shell que roda num `HOME` temporário e confere aliases e
-`settings.json`. Pequeno, mas tira o projeto do zero de cobertura.
+`usage-all` gets tests with recorded API responses (JSON fixtures): windows, pace, ordering,
+`--json`. `install.sh` gets a shell test that runs in a temporary `HOME` and checks aliases and
+`settings.json`. Small, but it takes the project off zero coverage.
 
-## Fase 3 — níveis (highlevel) dentro do orq-web  ✅ feita em 2026-10-11
+## Phase 3 — levels (highlevel) inside orq-web  ✅ done on 2026-10-11
 
-O que mudou em relação ao planejado, descoberto no teste real com duas sessões `claude -p`:
-- o `SendMessage` recusa nome com `@` ("to must be a bare teammate name"), então `-n` recebe o rótulo
-  saneado (`config.session_name`: `kaggle@server0` → `kaggle-server0`); `{acima}`/`{abaixo}` nos papéis
-  viram esses nomes, não os rótulos;
-- a mensagem chega como `user` com `isReplay`/`isSynthetic` e `origin = {kind: "peer", name, body, msg_id}`;
-  o supervisor carimba `orq_origin: "agent"`. O `tool_result` do SendMessage traz o `msg_id`, que a página
-  usa para marcar o fio como entregue;
-- o executor costuma responder para o endereço `uds:/tmp/cc-socks/<pid>.sock` em vez do nome; a página
-  mostra como "resposta";
-- cada mensagem de peer reabre o turno com um novo `system init` no stream (inofensivo);
-- as receitas listam só os níveis que sobem ACIMA do agente da aba (ele é o executor, sem papel novo);
-  não há `bootstrap`: a primeira mensagem da pessoa já vai ao professor, cujo papel manda delegar;
-- o papel viaja pelo stdin do `orq-agent spawn --role-file -` (por ssh) e fica em `~/.cache/orq/<nome>/role.txt`;
-- Python < 3.11 no servidor usa um leitor TOML mínimo (`pipelines._parse_minimal`), testado contra o `tomllib`.
+What changed from what was planned, discovered in the real test with two `claude -p` sessions:
+- `SendMessage` refuses a name with `@` ("to must be a bare teammate name"), so `-n` receives the sanitised
+  label (`config.session_name`: `kaggle@server0` → `kaggle-server0`); `{acima}`/`{abaixo}` in the roles
+  become those names, not the labels;
+- the message arrives as `user` with `isReplay`/`isSynthetic` and `origin = {kind: "peer", name, body, msg_id}`;
+  the supervisor stamps `orq_origin: "agent"`. The `tool_result` of SendMessage carries the `msg_id`, which the page
+  uses to mark the wire as delivered;
+- the executor usually replies to the address `uds:/tmp/cc-socks/<pid>.sock` instead of the name; the page
+  shows it as "reply";
+- each peer message reopens the turn with a new `system init` in the stream (harmless);
+- the recipes list only the levels that are added ABOVE the tab's agent (it is the executor, with no new role);
+  there is no `bootstrap`: the person's first message already goes to the teacher, whose role tells it to delegate;
+- the role travels through the stdin of `orq-agent spawn --role-file -` (over ssh) and stays in `~/.cache/orq/<name>/role.txt`;
+- Python < 3.11 on the server uses a minimal TOML reader (`pipelines._parse_minimal`), tested against `tomllib`.
 
-### 3.1 O que muda no supervisor
+### 3.1 What changes in the supervisor
 
-- Todo agente da página sobe com `-n <rótulo>` (ex.: `kaggle@server0`), para ser endereçável pelo
-  `SendMessage`. Agentes já abertos precisam ser reabertos uma vez.
-- `orq-agent spawn` ganha `--role-file` (texto do papel, via `--append-system-prompt`) e `--parent`
-  (rótulo do agente de baixo). O estado grava `level` e `parent`.
-- `stamp_origin` ganha `agent`: mensagem `user` que chegou pelo `SendMessage` de outro agente (o
-  JSONL marca a origem; confirmar o campo no teste).
+- Every agent of the page starts with `-n <label>` (e.g. `kaggle@server0`), to be addressable by
+  `SendMessage`. Agents already open need to be reopened once.
+- `orq-agent spawn` gains `--role-file` (text of the role, via `--append-system-prompt`) and `--parent`
+  (label of the agent below). The state records `level` and `parent`.
+- `stamp_origin` gains `agent`: a `user` message that arrived through another agent's `SendMessage` (the
+  JSONL marks the origin; confirm the field in the test).
 
-### 3.2 Receitas
+### 3.2 Recipes
 
-`orqweb/pipelines/*.toml`, portadas do highlevel (`professor-executor`, `professor-arquiteto-executor`).
-`{acima}`/`{abaixo}` viram os rótulos reais. Lidas pelo servidor (Python 3.11+ tem `tomllib`); a
-máquina do agente só recebe o texto do papel.
+`orqweb/pipelines/*.toml`, ported from highlevel (`professor-executor`, `professor-arquiteto-executor`).
+`{acima}`/`{abaixo}` become the real labels. Read by the server (Python 3.11+ has `tomllib`); the
+agent's machine only receives the text of the role.
 
-### 3.3 Botões
+### 3.3 Buttons
 
-- **Upgrade** numa aba: escolhe a receita (ou a padrão), sobe o(s) nível(is) de cima na mesma máquina e
-  pasta, com `--parent` apontando para o agente atual. A aba passa a conversar com o nível de cima; o
-  agente original vira o executor, escondido atrás.
-- **Downgrade**: encerra os níveis de cima; a aba volta a falar com o executor.
-- A aba ganha o painel **fios**, como no highlevel: `SendMessage` do nível de cima (saída), chegada no
-  de baixo (entrega), resposta de volta. Vem dos eventos que já passam pelo socket: `tool_use
-  SendMessage` num stream e `user` com `orq_origin=agent` no outro.
-- Cartões de **níveis**: estado de cada um (ocioso, trabalhando, pedindo permissão), clicável para ver
-  o chat cru daquele nível.
+- **Upgrade** on a tab: picks the recipe (or the default one), starts the level(s) above on the same machine and
+  folder, with `--parent` pointing to the current agent. The tab starts talking to the level above; the
+  original agent becomes the executor, hidden behind.
+- **Downgrade**: closes the levels above; the tab goes back to talking to the executor.
+- The tab gains the **wires** panel, as in highlevel: `SendMessage` from the level above (output), arrival at the
+  one below (delivery), reply back. It comes from the events that already pass through the socket: `tool_use
+  SendMessage` in one stream and `user` with `orq_origin=agent` in the other.
+- **Level** cards: state of each one (idle, working, asking permission), clickable to see
+  that level's raw chat.
 
-### 3.4 Testes
+### 3.4 Tests
 
-- `fake_claude` aprende `SendMessage`/`ListAgents`: ao receber "delegue X", emite `tool_use SendMessage`
-  e, num segundo processo falso, a mensagem chega como `user`. Com isso o teste de integração sobe
-  executor e professor falsos pelo supervisor real e confere os fios ponta a ponta.
-- Redutor (`events.js`): ações `wireOut`, `wireIn`, `levelState`; testes no Node.
-- Handlers: `POST /api/agent/<nome>/upgrade {pipeline}` e `/downgrade`; recusa upgrade em agente de
-  terminal e em agente que já é nível de cima.
-- Verificação real: upgrade no `kaggle@server0`, pedir algo, ver o executor trabalhar nos fios,
+- `fake_claude` learns `SendMessage`/`ListAgents`: on receiving "delegue X", it emits `tool_use SendMessage`
+  and, in a second fake process, the message arrives as `user`. With that the integration test starts
+  fake executor and teacher through the real supervisor and checks the wires end to end.
+- Reducer (`events.js`): actions `wireOut`, `wireIn`, `levelState`; tests in Node.
+- Handlers: `POST /api/agent/<name>/upgrade {pipeline}` and `/downgrade`; refuses upgrade on a terminal
+  agent and on an agent that is already a level above.
+- Real verification: upgrade on `kaggle@server0`, ask for something, watch the executor work in the wires,
   downgrade.
 
-### 3.5 O que fica do claude-highlevel
+### 3.5 What remains of claude-highlevel
 
-O conceito, as receitas `.toml` e o desenho da tela (palco, fios, níveis). O código de PTY, tailer e
-portões não é portado: o supervisor já entrega eventos estruturados e permissões sem raspar terminal.
-O diretório `claude-highlevel/` fica no monorepo como referência histórica.
+The concept, the `.toml` recipes and the design of the screen (stage, wires, levels). The PTY, tailer and
+gates code is not ported: the supervisor already delivers structured events and permissions without scraping a terminal.
+The `claude-highlevel/` directory stays in the monorepo as a historical reference.
 
-## Fase 4 — acabamentos e troca de conta  ✅ feita em 2026-10-11
+## Phase 4 — finishing touches and account switch  ✅ done on 2026-10-11
 
-Da lista levantada depois da fase 3, foram feitos: fios mostram o nível de cima quando o executor
-responde ao endereço `uds:` (e o papel do professor pede resposta pelo nome `{eu}`); **↻ reabrir com
-nome** no seletor de níveis (`reopen` + `spawn --restart`); permissão pendente de um nível respondida
-no próprio cartão do painel; **troca automática de conta** quando a cota acaba (`state: quota` no
-supervisor, `Migrator` no servidor, `retry` da última mensagem, `auto_switch` no accounts.json);
-**notificações** do navegador e contagem no título da aba.
+From the list drawn up after phase 3, these were done: wires show the level above when the executor
+replies to the `uds:` address (and the teacher's role asks for a reply by the name `{eu}`); **↻ reopen with a
+name** in the level picker (`reopen` + `spawn --restart`); a level's pending permission answered
+on its own card in the panel; **automatic account switch** when the quota runs out (`state: quota` in the
+supervisor, `Migrator` in the server, `retry` of the last message, `auto_switch` in accounts.json);
+browser **notifications** and a count in the tab title.
 
-Ficam para depois: histórico de rodadas e linha do tempo de marcos; modelo/esforço por nível; receitas
-editáveis pela página; um professor para vários executores; busca na lista de projetos; painel de níveis
-melhor no celular; níveis na grade do `orq` do terminal; `orq-web --no-open`.
+Left for later: history of rounds and a timeline of milestones; model/effort per level; recipes
+editable from the page; one teacher for several executors; search in the list of projects; a better levels
+panel on the phone; levels in the grid of the terminal's `orq`; `orq-web --no-open`.
 
-## Fase 5 — conjuntos: abrir vários agentes de uma vez, com ou sem professor  ✅ feita em 2026-10-13
+## Phase 5 — sets: opening several agents at once, with or without a teacher  ✅ done on 2026-10-13
 
-O que mudou em relação ao planejado: o prompt de um agente fica no próprio `state.json` (`role`), não só em
-`role.txt`, então a fotografia não precisa ler arquivo nas máquinas; `snapshot` devolve o JSON sem salvar
-(a página mostra para editar e o `POST /api/conjuntos` salva); `lider.prompt` só vale para receitas de um
-nível (as de dois ou mais usam os papéis do TOML); a receita da fotografia vem do `pipeline` gravado no
-estado do nível pelo upgrade (inferida pelos nomes dos níveis e pelos vínculos só para níveis de antes desta versão),
-porque a lista de vínculos oscila quando o `orq-agent links` da máquina falha sob carga. Achado no QA real: um professor cuja base foi
-encerrada sem ↓ desfazer sobrevive e gruda no próximo agente de mesmo rótulo (a pasta é a mesma), e o ⇅ recusa
-com "já tem níveis"; agora abrir um rótulo (pelo + ou por um conjunto) encerra esses níveis órfãos
-(`handlers.close_orphan_levels`). Testes: `tests/test_sets.py`,
-`tests/test_handlers.py` (conjuntos), `tests/test_supervisor.py` (permissão/papel/conjunto no estado) e
+What changed from what was planned: an agent's prompt stays in `state.json` itself (`role`), not only in
+`role.txt`, so the photograph does not need to read a file on the machines; `snapshot` returns the JSON without saving
+(the page shows it for editing and `POST /api/conjuntos` saves); `lider.prompt` only applies to recipes with one
+level (those with two or more use the roles from the TOML); the photograph's recipe comes from the `pipeline` recorded in the
+level's state by the upgrade (inferred from the level names and from the links only for levels from before this version),
+because the list of links fluctuates when the machine's `orq-agent links` fails under load. Found in the real QA: a teacher whose base was
+closed without ↓ undo survives and sticks to the next agent with the same label (the folder is the same), and ⇅ refuses
+with "already has levels"; now opening a label (through + or through a set) closes those orphan levels
+(`handlers.close_orphan_levels`). Tests: `tests/test_sets.py`,
+`tests/test_handlers.py` (sets), `tests/test_supervisor.py` (permission/role/set in the state) and
 `qa/tests/test_conjuntos.py`.
 
-Um **conjunto** é um JSON que descreve agentes para abrir juntos: os trabalhos que estavam em andamento
-(cada um na sua pasta e máquina, conversa retomada) ou um grupo com um professor líder, em que cada agente
-sobe com um system prompt próprio. Um botão **⊞ conjuntos** ao lado das abas lista os salvos, abre um,
-recebe um JSON pronto, ou fotografa as abas abertas num conjunto novo. Vale também no `/m`.
+A **set** is a JSON that describes agents to open together: the jobs that were in progress
+(each one in its folder and machine, conversation resumed) or a group with a leading teacher, in which each agent
+starts with its own system prompt. A **⊞ sets** button next to the tabs lists the saved ones, opens one,
+takes a ready-made JSON, or photographs the open tabs into a new set. It also works on `/m`.
 
-Decisões tomadas com o autor em 2026-10-13: conjuntos ficam numa **pasta do servidor** editável pela página
-(`~/.config/orq-web/conjuntos/*.json`, `ORQ_SETS_DIR`; no container, volume gravável); **dois modos**, sem líder
-(agentes independentes) e com líder (professor sobre o primeiro agente, os outros vinculados a ele, receita
-`professor-executores`, como o `upgrade` já faz); o JSON pode levar **tarefa inicial**, **conta fixa** e **modo de
-permissão**; se qualquer agente do conjunto **já estiver aberto** (mesma máquina e pasta), a página **recusa e
-avisa** quais, sem abrir nada.
+Decisions taken with the author on 2026-10-13: sets live in a **folder on the server** editable from the page
+(`~/.config/orq-web/conjuntos/*.json`, `ORQ_SETS_DIR`; in the container, a writable volume); **two modes**, without a leader
+(independent agents) and with a leader (teacher over the first agent, the others linked to it, recipe
+`professor-executores`, as `upgrade` already does); the JSON can carry an **initial task**, a **fixed account** and a **permission
+mode**; if any agent of the set **is already open** (same machine and folder), the page **refuses and
+says** which ones, without opening anything.
 
-### 5.1 O formato
+### 5.1 The format
 
 ```json
 {
   "nome": "artigo-kaggle",
-  "descricao": "modelo no server0, texto no node3, professor coordena",
+  "descricao": "model on server0, text on node3, teacher coordinates",
   "permissao": "auto",
   "agentes": [
     {"maquina": "server0", "pasta": "~/Projects/kaggle", "modo": "resume",
-     "conta": "work3", "prompt": "Você cuida do modelo…", "tarefa": "Retome de onde parou e reporte."},
+     "conta": "work3", "prompt": "You look after the model…", "tarefa": "Resume from where you stopped and report."},
     {"maquina": "node3", "pasta": "~/Projects/paper", "modo": "new",
-     "prompt": "Você escreve o artigo…"}
+     "prompt": "You write the paper…"}
   ],
   "lider": {
     "receita": "professor-executores",
-    "prompt": "opcional: substitui o papel do TOML; aceita {executores}, {abaixo}, {eu}",
-    "tarefa": "opcional: primeira mensagem ao professor"
+    "prompt": "optional: replaces the role from the TOML; accepts {executores}, {abaixo}, {eu}",
+    "tarefa": "optional: first message to the teacher"
   }
 }
 ```
 
-- `nome` é o id (nome do arquivo saneado). `descricao`, `permissao`, `conta`, `prompt`, `tarefa` e `lider` são
-  opcionais. `modo` padrão: `resume` (a conversa mais recente da pasta; `new` se não houver).
-- `permissao` vale para o conjunto inteiro (`auto` | `acceptEdits` | `manual`); sem ela, o `permission_mode` da
-  máquina. Todos os agentes e níveis sobem no mesmo modo (modos diferentes retêm mensagens entre níveis).
-- `conta` ausente: `assign` escolhe pela folga, para o conjunto inteiro de uma vez, o que já distribui a carga entre
-  as contas (`PER_AGENT`) em vez de empilhar todos na mesma.
-- `prompt` de um agente vai por `--append-system-prompt`, como o papel de um nível. A nota do `_outbox/` continua.
-- Sem `lider`, cada agente é independente: nenhum vínculo é feito. Com `lider`, todos os demais são vinculados ao
-  primeiro e o professor sobe acima dele; `lider.prompt` substitui `papel` do TOML (com os mesmos marcadores).
-- Em `tarefa`, o texto é entregue como mensagem da pessoa assim que o agente confirma que subiu; com `lider`, a
-  `tarefa` dos agentes é entregue antes da do professor.
+- `nome` is the id (sanitised file name). `descricao`, `permissao`, `conta`, `prompt`, `tarefa` and `lider` are
+  optional. Default `modo`: `resume` (the most recent conversation of the folder; `new` if there is none).
+- `permissao` applies to the whole set (`auto` | `acceptEdits` | `manual`); without it, the machine's
+  `permission_mode`. All the agents and levels start in the same mode (different modes hold messages between levels).
+- `conta` absent: `assign` chooses by the slack, for the whole set at once, which already spreads the load across
+  the accounts (`PER_AGENT`) instead of piling them all on the same one.
+- An agent's `prompt` goes through `--append-system-prompt`, like a level's role. The `_outbox/` note continues.
+- Without `lider`, each agent is independent: no link is made. With `lider`, all the others are linked to the
+  first and the teacher is added above it; `lider.prompt` replaces `papel` from the TOML (with the same markers).
+- In `tarefa`, the text is delivered as the person's message as soon as the agent confirms that it started; with `lider`, the
+  agents' `tarefa` is delivered before the teacher's.
 
 ### 5.2 Supervisor (`orq-agent spawn`)
 
-- `--role-file` passa a valer para agente base, não só para nível: sem `--parent`/`--level`, é só o prompt. O
-  `state.json` grava `role: true`, e o `--restart` (troca de conta, reabrir com nome) reaproveita o `role.txt`
-  sempre que existir, não só quando há `parent`/`level`.
-- `--permission-mode` novo, gravado no `state.json` e reaproveitado no `--restart`. Sem ele, o da máquina.
-- `state.json` ganha `conjunto: <id>` (de que conjunto o agente veio), para a fotografia (5.4) e para a aba
-  mostrar de onde ele veio.
+- `--role-file` now applies to a base agent, not only to a level: without `--parent`/`--level`, it is just the prompt. The
+  `state.json` records `role: true`, and `--restart` (account switch, reopen with name) reuses `role.txt`
+  whenever it exists, not only when there is `parent`/`level`.
+- New `--permission-mode`, recorded in `state.json` and reused on `--restart`. Without it, the machine's.
+- `state.json` gains `conjunto: <id>` (which set the agent came from), for the photograph (5.4) and for the tab
+  to show where it came from.
 
-### 5.3 Servidor (`orqweb/server/sets.py` e rotas)
+### 5.3 Server (`orqweb/server/sets.py` and routes)
 
-| rota | o que faz |
+| route | what it does |
 |---|---|
-| `GET /api/conjuntos` | catálogo: id, nome, descricao, nº de agentes, líder ou não, máquinas, `aberto` (quantos agentes dele já estão abertos) |
-| `POST /api/conjuntos` `{json}` | valida e salva (cria ou substitui pelo `nome`); é o "enviar JSON" e o "salvar como conjunto" |
-| `GET /api/conjuntos/<id>` | o JSON, para baixar ou editar fora |
-| `POST /api/conjuntos/<id>/delete` | apaga o arquivo (o botão pede confirmação) |
-| `POST /api/conjuntos/<id>/open` | abre: recusa (409, lista) se algum `maquina:pasta` já tem agente vivo ou claude de terminal; senão sobe tudo |
-| `POST /api/conjuntos/snapshot` `{nome}` | fotografa as abas abertas (5.4) e salva |
+| `GET /api/conjuntos` | catalogue: id, nome, descricao, number of agents, leader or not, machines, `aberto` (how many of its agents are already open) |
+| `POST /api/conjuntos` `{json}` | validates and saves (creates or replaces by `nome`); it is the "upload JSON" and the "save as set" |
+| `GET /api/conjuntos/<id>` | the JSON, to download or edit elsewhere |
+| `POST /api/conjuntos/<id>/delete` | deletes the file (the button asks for confirmation) |
+| `POST /api/conjuntos/<id>/open` | opens: refuses (409, list) if any `maquina:pasta` already has a live agent or a terminal claude; otherwise starts everything |
+| `POST /api/conjuntos/snapshot` `{nome}` | photographs the open tabs (5.4) and saves |
 
-Abertura (`/open`): a resposta volta na hora com o plano (rótulos, contas, porquês), e o trabalho roda numa thread
-do servidor, porque abrir N agentes por ssh leva de 5 a 15 s cada. Os agentes entram como provisórios conforme sobem,
-então as abas aparecem na página pelo `/api/state` normal. Ordem: `spawn` dos agentes (em paralelo entre máquinas
-diferentes, **em sequência na mesma máquina**, porque ssh em rajada para a mesma máquina cai); depois, com líder,
-`link` de cada um com o primeiro e `upgrade` com a receita e o `prompt` do líder (mesma rotina de hoje, fatorada do
-handler para uma função); por fim, `tarefa`s entregues quando cada agente sai de `abrindo…` (espera até 90 s). O
-andamento vai em `/api/state.conjuntos_abrindo` (`{id, etapa, feitos, erros}`) e a página mostra como toast; falha num
-agente não desfaz os outros, só é listada.
+Opening (`/open`): the response comes back at once with the plan (labels, accounts, reasons), and the work runs in a thread
+of the server, because opening N agents over ssh takes 5 to 15 s each. The agents enter as provisional as they start,
+so the tabs appear on the page through the normal `/api/state`. Order: `spawn` of the agents (in parallel between different
+machines, **in sequence on the same machine**, because ssh in a burst to the same machine drops); then, with a leader,
+`link` of each one with the first and `upgrade` with the recipe and the leader's `prompt` (the same routine as today, factored out of the
+handler into a function); finally, `tarefa`s delivered when each agent leaves `opening…` (waits up to 90 s). The
+progress goes in `/api/state.conjuntos_abrindo` (`{id, etapa, feitos, erros}`) and the page shows it as a toast; a failure in one
+agent does not undo the others, it is only listed.
 
-Validação (`sets.validate`): campos conhecidos, `maquina` entre as configuradas, `conta` entre as contas, `permissao`
-entre os modos, `modo` em `resume|new`, `lider.receita` no catálogo, pelo menos um agente, `nome` saneável e sem
-colisão de `maquina:pasta` dentro do próprio conjunto.
+Validation (`sets.validate`): known fields, `maquina` among the configured ones, `conta` among the accounts, `permissao`
+among the modes, `modo` in `resume|new`, `lider.receita` in the catalogue, at least one agent, `nome` sanitisable and no
+collision of `maquina:pasta` within the set itself.
 
-### 5.4 Fotografia das abas abertas
+### 5.4 Photograph of the open tabs
 
-`snapshot` monta um conjunto a partir do estado atual: um agente por aba (máquina, pasta, conta atual, `modo:
-resume`, `prompt` se o agente subiu com `role.txt` — o servidor lê pelo `orq-agent cat` — e `permissao` do
-`state.json`); se a aba atual tem níveis acima, vira `lider` com a receita registrada em `level` e os vinculados a ela
-entram como agentes; o restante das abas entra como independente. A página pede o nome, mostra o JSON resultante
-numa prévia editável e só salva ao confirmar.
+`snapshot` builds a set from the current state: one agent per tab (machine, folder, current account, `modo:
+resume`, `prompt` if the agent started with `role.txt` — the server reads it through `orq-agent cat` — and `permissao` from
+`state.json`); if the current tab has levels above, it becomes `lider` with the recipe registered in `level` and those linked to it
+enter as agents; the rest of the tabs enter as independent. The page asks for the name, shows the resulting JSON
+in an editable preview and only saves on confirmation.
 
-### 5.5 Página
+### 5.5 Page
 
-- Botão **⊞ conjuntos** na faixa das abas (ao lado da cota) e, no `/m`, na gaveta. Abre o seletor já existente
-  (`picker`) com uma linha por conjunto: nome, descrição, `N agentes · máquinas · 👨‍🏫 líder`, e à direita **abrir**,
-  **⬇ JSON**, **✕**. Linha de cima: **📄 enviar JSON** (input de arquivo, valida no servidor e lista o erro com a
-  linha) e **📷 salvar abas abertas**.
-- Abrir com algum agente já aberto: toast vermelho "já aberto: kaggle@server0, paper@node3; feche-os ou abra
-  só os demais à mão", sem abrir nada.
-- Durante a abertura, toasts de andamento (`conjuntos_abrindo`); ao terminar, `show()` do primeiro agente (ou do
-  topo do líder).
-- A aba de um agente vindo de conjunto mostra `⊞ nome` no estado da barra inferior.
+- **⊞ sets** button in the tab strip (next to the quota) and, on `/m`, in the drawer. It opens the existing picker
+  (`picker`) with one row per set: name, description, `N agents · machines · 👨‍🏫 leader`, and on the right **open**,
+  **⬇ JSON**, **✕**. Top row: **📄 upload JSON** (file input, validates on the server and lists the error with the
+  line) and **📷 save open tabs**.
+- Opening with some agent already open: red toast "already open: kaggle@server0, paper@node3; close them or open
+  only the others by hand", without opening anything.
+- During the opening, progress toasts (`conjuntos_abrindo`); when it finishes, `show()` of the first agent (or of the
+  leader's top).
+- The tab of an agent that came from a set shows `⊞ name` in the state of the bottom bar.
 
-### 5.6 Testes
+### 5.6 Tests
 
-- `tests/test_sets.py`: validação (cada erro), catálogo com arquivo quebrado pulado, `plan` (rótulos, `assign`
-  do conjunto inteiro, marcadores do líder), recusa por agente já aberto, snapshot a partir de um estado montado.
-- `tests/test_handlers.py` + `fake_claude`: abrir conjunto de dois sem líder → dois `spawn` com `--role-file`
-  e `--permission-mode`, nenhum `link`; com líder → dois `spawn`, um `link`, um `upgrade` com papel
-  substituído, `tarefa`s entregues na ordem; `delete` e `POST` com JSON inválido (400 com motivo).
-- `tests/test_supervisor.py`: `spawn --role-file` sem nível grava `role: true`; `--restart` reaproveita papel
-  e `--permission-mode`.
-- QA (`qa/tests/test_conjuntos.py`): enviar JSON, abrir, ver abas, salvar abas abertas, apagar.
-- Verificação real: conjunto com `kaggle@server0` + uma pasta no node3 e professor; tarefa inicial chega.
+- `tests/test_sets.py`: validation (each error), catalogue with a broken file skipped, `plan` (labels, `assign`
+  of the whole set, the leader's markers), refusal because of an agent already open, snapshot from an assembled state.
+- `tests/test_handlers.py` + `fake_claude`: opening a set of two without a leader → two `spawn` with `--role-file`
+  and `--permission-mode`, no `link`; with a leader → two `spawn`, one `link`, one `upgrade` with the role
+  replaced, `tarefa`s delivered in order; `delete` and `POST` with invalid JSON (400 with the reason).
+- `tests/test_supervisor.py`: `spawn --role-file` without a level records `role: true`; `--restart` reuses the role
+  and `--permission-mode`.
+- QA (`qa/tests/test_conjuntos.py`): upload JSON, open, see tabs, save open tabs, delete.
+- Real verification: a set with `kaggle@server0` + a folder on node3 and a teacher; the initial task arrives.
 
 ### 5.7 Docs
 
-`docs/04-pagina-orq-web.md` ganha 4.12 "Conjuntos"; `docs/07-referencia.md` as rotas e o esquema do JSON;
-`docs/05-arquitetura.md` a sequência "abrir um conjunto" em 5.5 e `ORQ_SETS_DIR` em 5.4.
+`docs/04-pagina-orq-web.md` gains 4.12 "Sets"; `docs/07-referencia.md` the routes and the schema of the JSON;
+`docs/05-arquitetura.md` the sequence "opening a set" in 5.5 and `ORQ_SETS_DIR` in 5.4.
 
-Tamanho estimado: ~900 linhas (sets.py ~200, handlers ~150, supervisor ~60, app.js ~200, testes ~300), mais docs.
-Ordem sugerida: supervisor (5.2) → sets.py e rotas sem líder → página → líder e tarefas → snapshot → QA e docs.
+Estimated size: ~900 lines (sets.py ~200, handlers ~150, supervisor ~60, app.js ~200, tests ~300), plus docs.
+Suggested order: supervisor (5.2) → sets.py and routes without a leader → page → leader and tasks → snapshot → QA and docs.
 
-## Fase 6 — histórico de uso: coletor a cada 5 min, banco SQLite e comandos que calculam sobre ele  ✅ feita em 2026-10-22
+## Phase 6 — usage history: collector every 5 min, SQLite database and commands that compute over it  ✅ done on 2026-10-22
 
-**Por quê.** A API de cota (`/api/oauth/usage`, não documentada) só diz a porcentagem *de agora* de cada janela. Sem
-guardar amostras não existe "quanto gastei hoje", "a que ritmo", "quando acaba" nem "quanto um ponto de cota vale
-em tokens". E o `usage-all`, a página do orq e a troca automática de conta consultam a API cada um por si, o que
-leva a 429 (`rate_limit_error`) em rajadas. Um coletor só, a cada 5 minutos, resolve as duas coisas.
+**Why.** The quota API (`/api/oauth/usage`, undocumented) only gives the percentage *right now* of each window. Without
+keeping samples there is no "how much I spent today", "at what pace", "when it runs out" or "how much a quota point is worth
+in tokens". And `usage-all`, the orq page and the automatic account switch each query the API on their own, which
+leads to 429 (`rate_limit_error`) in bursts. A single collector, every 5 minutes, solves both things.
 
-Decisões (2026-10-22, padrões assumidos; o autor revisa depois de usar): banco **só no node4** (sempre ligado; o
-laptop consulta por ssh); guarda **tudo** (mensagens e cota; retratos de processos por 14 dias); a página do orq
-continua lendo o `usage-all --json`, que passa a vir do banco (integração própria fica para 6.8).
+Decisions (2026-10-22, defaults assumed; the author reviews after using it): database **only on node4** (always on; the
+laptop queries over ssh); it keeps **everything** (messages and quota; snapshots of processes for 14 days); the orq page
+keeps reading `usage-all --json`, which now comes from the database (its own integration is left for 6.8).
 
-### 6.1 Peças
+### 6.1 Parts
 
-| peça | onde | o que faz |
+| part | where | what it does |
 |---|---|---|
-| `bin/usage-hist` (novo, claude-multiconta) | node4 | coletor (`coletar`), instalador do timer (`instalar`/`remover`/`estado`) e todos os relatórios (`painel`, `dia`, `semana`, `calibrar`, `alertas`); também a biblioteca de banco e cálculos que o `usage-all` e o `usage-sessoes` carregam |
-| `usage-coletor.timer` (systemd de usuário) | node4 | roda `usage-hist coletar` a cada 5 min, sobrevive a reboot (linger), log no journal |
-| `~/.local/share/claude-multiconta/usage.db` (`USAGE_DB`) | node4 | SQLite em WAL; um escritor (o coletor, com trava), vários leitores |
-| `usage-sessoes --agente --desde T` | cada máquina | modo do agente que devolve as respostas (uma linha por mensagem) desde T, mais prompts e processos |
-| `usage-all`, `usage-sessoes` | qualquer máquina | leem o banco quando ele tem menos de 10 min (`--ao-vivo` força a API/varredura); do laptop, por ssh ao node4 (`usage_db_host` no accounts.json) |
+| `bin/usage-hist` (new, claude-multiconta) | node4 | collector (`coletar`), installer of the timer (`instalar`/`remover`/`estado`) and all the reports (`painel`, `dia`, `semana`, `calibrar`, `alertas`); also the library of database and calculations that `usage-all` and `usage-sessoes` load |
+| `usage-coletor.timer` (user systemd) | node4 | runs `usage-hist coletar` every 5 min, survives reboot (linger), log in the journal |
+| `~/.local/share/claude-multiconta/usage.db` (`USAGE_DB`) | node4 | SQLite in WAL; one writer (the collector, with a lock), several readers |
+| `usage-sessoes --agente --desde T` | each machine | agent mode that returns the responses (one line per message) since T, plus prompts and processes |
+| `usage-all`, `usage-sessoes` | any machine | read the database when it is less than 10 min old (`--ao-vivo` forces the API/scan); from the laptop, over ssh to node4 (`usage_db_host` in accounts.json) |
 
-### 6.2 Coleta (a cada 5 min)
+### 6.2 Collection (every 5 min)
 
-1. **Cota**: `get_windows` do `usage-all` para cada conta, em paralelo; cada janela (`session`, `weekly_all`,
-   `weekly_scoped` por modelo) vira uma amostra `(ts, conta, tipo, escopo, %, resets_at)`. Erro (429, token) vai
-   para `quota_err` e não interrompe as outras contas. Com 429, a próxima rodada espera em dobro (até 30 min).
-2. **Consumo**: em todas as máquinas, em paralelo, uma conexão ssh cada (o script vai pelo stdin, como o
-   `usage-sessoes`), o agente devolve as respostas desde a última coleta bem-sucedida daquela máquina menos 15 min
-   (sem estado na máquina: a sobreposição é deduplicada pela chave da mensagem). Primeira coleta: 7 dias para
-   trás (`--desde-horas`), para a calibração já ter dados. Máquina fora do ar: na volta, a janela cobre o buraco,
-   porque as conversas ficam gravadas nela. A cota, ao contrário, não se recupera: buraco de cota fica marcado.
-3. **Processos**: o retrato dos processos do claude vivos em cada máquina (conta, pasta, tipo, tmux, quem lançou).
-4. **Saúde**: uma linha por máquina por rodada (`runs`: ok/erro, duração), para o `estado` e os alertas.
+1. **Quota**: `get_windows` of `usage-all` for each account, in parallel; each window (`session`, `weekly_all`,
+   `weekly_scoped` per model) becomes a sample `(ts, account, kind, scope, %, resets_at)`. An error (429, token) goes
+   to `quota_err` and does not interrupt the other accounts. With 429, the next round waits twice as long (up to 30 min).
+2. **Consumption**: on all the machines, in parallel, one ssh connection each (the script goes through stdin, like
+   `usage-sessoes`), the agent returns the responses since that machine's last successful collection minus 15 min
+   (no state on the machine: the overlap is deduplicated by the message key). First collection: 7 days
+   back (`--desde-horas`), so that the calibration already has data. Machine down: when it comes back, the window covers the gap,
+   because the conversations stay recorded on it. The quota, on the contrary, cannot be recovered: a quota gap stays marked.
+3. **Processes**: the snapshot of the live claude processes on each machine (account, folder, kind, tmux, who launched it).
+4. **Health**: one row per machine per round (`runs`: ok/error, duration), for `estado` and the alerts.
 
-### 6.3 Esquema
+### 6.3 Schema
 
 ```
 quota(ts, account, kind, scope, pct, resets_at, severity)        PK (ts, account, kind, scope)
 quota_err(ts, account, err)
 messages(key PK, ts, host, account, session, project, cwd, entrypoint, model,
-         input, output, cache_new, cache_read, sub)              key = id da mensagem | requestId
+         input, output, cache_new, cache_read, sub)              key = message id | requestId
 sessions(account, session PK, host, project, cwd, entrypoint, prompt, first_ts, last_ts)
 processes(ts, host, pid, account, kind, cwd, tmux, parent, session_arg, seconds, last_activity)
 runs(ts, host, ok, err, seconds)
-meta(key PK, value)                                              versão do esquema, último 429
+meta(key PK, value)                                              schema version, last 429
 ```
-Sem texto das conversas: só números, sessão, pasta, modelo e o começo do prompt das sessões (o que identifica um
-script). Tamanho esperado: poucos MB por mês.
+No text of the conversations: only numbers, session, folder, model and the beginning of the sessions' prompt (which identifies a
+script). Expected size: a few MB per month.
 
-### 6.4 Cálculos
+### 6.4 Calculations
 
-- **Consumo no intervalo** (`consumed`): soma das subidas entre amostras consecutivas da mesma janela; se o
-  `resets_at` mudou ou a % caiu, houve reset e conta a % nova a partir de zero. Vale para 5h e 7d.
-- **Hoje** por conta: pontos da semana (7d) consumidos desde a meia-noite local, e pontos da janela de 5h.
-- **Ritmo**: pontos/h na última hora e nas últimas 6 h; **previsão**: horas até 100% no ritmo de 6 h, comparada ao
-  reset ("acaba antes do reset" vira alerta); **frota**: pontos livres somados e em quantos dias acabam no ritmo
-  de 24 h.
-- **Calibração tokens → pontos**: por conta, nos últimos 7 dias, `peso dos tokens / pontos de 7d consumidos`
-  (o peso pondera entrada 1, cache novo 1,25, cache lido 0,1, saída 5). Com isso o `usage-sessoes` e o `dia`
-  mostram **pontos estimados por sessão e por projeto**, não só a fatia relativa. Só com 5+ pontos de amostra.
-- **Perfil**: consumo por hora do dia e por dia da semana (quando você usa).
-- **Alertas** (`usage-hist alertas` e no painel):
-  - *subiu por script*: 5+ pontos de 5h em 30 min, 80%+ vindos de sessões `sdk/-p` (o caso do `claude-diario`);
-  - *subiu sem consumo nas máquinas*: a cota subiu e os tokens vistos explicam menos de 20% (claude.ai, celular
-    ou máquina fora do ar);
-  - *acaba antes do reset*: previsão de 7d ou 5h antes do horário de reset;
-  - *processo esquecido*: processo do claude parado há mais de 1 dia;
-  - *coletor parado*: última coleta há mais de 15 min, ou máquina sem resposta há mais de 1 h.
+- **Consumption in the interval** (`consumed`): sum of the rises between consecutive samples of the same window; if
+  `resets_at` changed or the % fell, there was a reset and the new % counts from zero. It applies to 5h and 7d.
+- **Today** per account: points of the week (7d) consumed since local midnight, and points of the 5h window.
+- **Pace**: points/h in the last hour and in the last 6 h; **forecast**: hours until 100% at the 6 h pace, compared with the
+  reset ("runs out before the reset" becomes an alert); **fleet**: free points added up and in how many days they run out at the
+  24 h pace.
+- **Calibration tokens → points**: per account, in the last 7 days, `weight of the tokens / 7d points consumed`
+  (the weight counts input 1, new cache 1.25, read cache 0.1, output 5). With that `usage-sessoes` and `dia`
+  show **estimated points per session and per project**, not only the relative share. Only with 5+ points of sample.
+- **Profile**: consumption per hour of the day and per day of the week (when you use it).
+- **Alerts** (`usage-hist alertas` and in the panel):
+  - *rose because of a script*: 5+ points of 5h in 30 min, 80%+ coming from `sdk/-p` sessions (the case of `claude-diario`);
+  - *rose without consumption on the machines*: the quota rose and the tokens seen explain less than 20% (claude.ai, phone
+    or a machine down);
+  - *runs out before the reset*: forecast of 7d or 5h before the reset time;
+  - *forgotten process*: claude process idle for more than 1 day;
+  - *collector stopped*: last collection more than 15 min ago, or a machine without response for more than 1 h.
 
-### 6.5 Comandos
+### 6.5 Commands
 
-| comando | o que mostra |
+| command | what it shows |
 |---|---|
-| `usage-hist` | painel: por conta, 5h e 7d agora, **hoje**, ritmo, previsão, **barras das últimas 24 h**; frota; alertas; idade da última coleta |
-| `usage-hist dia [AAAA-MM-DD]` | o dia: pontos por conta, por hora (barras) e os projetos/sessões que mais gastaram, em pontos estimados |
-| `usage-hist semana` | 7 dias × contas em pontos, total por dia, perfil por hora do dia |
-| `usage-hist calibrar` | tokens por ponto de cada conta e o tamanho da amostra |
-| `usage-hist alertas` | só os alertas (para um cron de aviso, depois) |
-| `usage-hist coletar` / `instalar` / `remover` / `estado` | coleta uma vez; instala/remove o timer; saúde do coletor e do banco |
-| `usage-all` | o de sempre, agora do banco (instantâneo, sem 429), com "do banco · há N min" no rodapé; `--ao-vivo` |
-| `usage-sessoes` | o de sempre, agora do banco, com **pontos estimados** por linha; `--ao-vivo` |
+| `usage-hist` | panel: per account, 5h and 7d now, **today**, pace, forecast, **bars of the last 24 h**; fleet; alerts; age of the last collection |
+| `usage-hist dia [YYYY-MM-DD]` | the day: points per account, per hour (bars) and the projects/sessions that spent the most, in estimated points |
+| `usage-hist semana` | 7 days × accounts in points, total per day, profile per hour of the day |
+| `usage-hist calibrar` | tokens per point of each account and the size of the sample |
+| `usage-hist alertas` | only the alerts (for a warning cron, later) |
+| `usage-hist coletar` / `instalar` / `remover` / `estado` | collects once; installs/removes the timer; health of the collector and of the database |
+| `usage-all` | the usual, now from the database (instant, no 429), with "from the database · N min ago" in the footer; `--ao-vivo` |
+| `usage-sessoes` | the usual, now from the database, with **estimated points** per row; `--ao-vivo` |
 
-Todos com `--json`. No laptop, sem banco local, os comandos rodam no node4 por ssh (`usage_db_host`), e o
-`usage-all` cai na API se o ssh não responder em 8 s.
+All with `--json`. On the laptop, with no local database, the commands run on node4 over ssh (`usage_db_host`), and
+`usage-all` falls back to the API if ssh does not respond in 8 s.
 
-### 6.6 Testes
+### 6.6 Tests
 
-- **Unidade** (`tests/test_usage_hist.py`): esquema e inserção idempotente; `consumed` com subidas, reset por
-  `resets_at` e queda de %; hoje com fuso local; ritmo, previsão e frota; calibração; cada alerta; agente
-  `--desde` (janela, dedupe, subagente, prompt).
-- **Interface**: cada relatório (`painel`, `dia`, `semana`, `calibrar`, `alertas`, `estado`) gerado sobre um banco
-  de exemplo, conferindo as linhas da tabela; `coletar` ponta a ponta com a API e o ssh falsos; `usage-all` e
-  `usage-sessoes` lendo o banco fresco, caindo para ao vivo com banco velho, e com `--ao-vivo`.
-- **Real**: timer instalado no node4, 3 rodadas, comandos no node4 e no laptop.
+- **Unit** (`tests/test_usage_hist.py`): schema and idempotent insertion; `consumed` with rises, reset by
+  `resets_at` and fall of %; today with local time zone; pace, forecast and fleet; calibration; each alert; agent
+  `--desde` (window, dedupe, subagent, prompt).
+- **Interface**: each report (`painel`, `dia`, `semana`, `calibrar`, `alertas`, `estado`) generated over a sample
+  database, checking the rows of the table; `coletar` end to end with the fake API and ssh; `usage-all` and
+  `usage-sessoes` reading the fresh database, falling back to live with an old database, and with `--ao-vivo`.
+- **Real**: timer installed on node4, 3 rounds, commands on node4 and on the laptop.
 
 ### 6.7 Deploy
 
-`usage-hist` nos dois lugares (`~/.local/bin`), `usage-all` e `usage-sessoes` novos; `usage_db_host: "node4"` no
-accounts.json (repositório e laptop); `usage-hist instalar` no node4 com a primeira coleta de 7 dias.
+`usage-hist` in both places (`~/.local/bin`), new `usage-all` and `usage-sessoes`; `usage_db_host: "node4"` in
+accounts.json (repository and laptop); `usage-hist instalar` on node4 with the first collection of 7 days.
 
-### 6.8 A página do orq lendo o banco  ✅ feita em 2026-10-22
+### 6.8 The orq page reading the database  ✅ done on 2026-10-22
 
-O servidor roda `usage-hist painel --json` a cada 60 s com a página aberta (na máquina da cota, por ssh no
-container; `External.history`, `StateCache.refresh_history`) e manda o resultado no `/api/state` como `history`.
-Os cartões de conta ganham as barras das últimas 24 h (SVG, uma por hora, escala comum, tooltip por hora) e o
-resumo hoje · ritmo · previsão (vermelho com ⚠ quando acaba antes do reset); o TOTAL, os pontos de 24 h e o
-aviso de coleta parada; os alertas ⚠ viram toast, um a um a cada 6 h (lembrados no navegador). Funções puras em
-`format.js` (`sparkSvg`, `histSummary`, `freshAlerts`) com testes no Node. De quebra, no celular o botão de
-conjuntos deixou de cobrir o título do TOTAL.
+The server runs `usage-hist painel --json` every 60 s with the page open (on the quota machine, over ssh in the
+container; `External.history`, `StateCache.refresh_history`) and sends the result in `/api/state` as `history`.
+The account cards gain the bars of the last 24 h (SVG, one per hour, common scale, tooltip per hour) and the
+summary today · pace · forecast (red with ⚠ when it runs out before the reset); the TOTAL, the 24 h points and the
+warning of a stopped collection; the ⚠ alerts become toasts, one by one every 6 h (remembered in the browser). Pure functions in
+`format.js` (`sparkSvg`, `histSummary`, `freshAlerts`) with tests in Node. As a bonus, on the phone the sets
+button stopped covering the title of the TOTAL.
 
-### 6.9 Painel da conta  ✅ feito em 2026-10-23
+### 6.9 Account panel  ✅ done on 2026-10-23
 
-Clicar no cartão de uma conta abre o painel dela: cinco números (semana, 5 h, hoje, ritmo, previsão), a curva da
-semana até o reset com o ritmo ideal e a projeção no ritmo atual, as 24 h por hora, os 7 dias e o que mais gastou
-(24 h ou 7 dias, com ≈pts). `usage-hist conta NOME [--json]`, `GET /api/conta/<nome>` (cache de 30 s), gráficos em
-`static/js/charts.js` (SVG puro, testes no Node). De quebra: o servidor ignora um segundo SIGTERM durante o
-encerramento (o `uv run` repassa o seu, e a segunda interrupção caía no meio da limpeza).
+Clicking on an account's card opens its panel: five numbers (week, 5 h, today, pace, forecast), the curve of the
+week until the reset with the ideal pace and the projection at the current pace, the 24 h per hour, the 7 days and what spent the most
+(24 h or 7 days, with ≈pts). `usage-hist conta NAME [--json]`, `GET /api/conta/<name>` (30 s cache), charts in
+`static/js/charts.js` (pure SVG, tests in Node). As a bonus: the server ignores a second SIGTERM during
+shutdown (`uv run` passes its own on, and the second interruption landed in the middle of the cleanup).
 
-### 6.10 Selo de alerta no cartão  ✅ feito em 2026-10-23
+### 6.10 Alert badge on the card  ✅ done on 2026-10-23
 
-O `usage-hist` passa a entregar os alertas estruturados (`alert_items`: conta, tipo, `warn`/`info`, rótulo curto,
-texto); a página põe um selo no cartão da conta enquanto o alerta durar (vermelho para ⚠, cinza para aviso; título
-com o texto) e a contagem de ⚠ da frota no TOTAL. O toast continua. `badgeFor`/`fleetBadge` em `format.js`, com
-testes no Node.
+`usage-hist` now delivers the alerts structured (`alert_items`: account, kind, `warn`/`info`, short label,
+text); the page puts a badge on the account's card while the alert lasts (red for ⚠, grey for a notice; title
+with the text) and the count of ⚠ of the fleet on the TOTAL. The toast continues. `badgeFor`/`fleetBadge` in `format.js`, with
+tests in Node.
 
-### 6.11 Aba "uso"  ✅ feita em 2026-10-23
+### 6.11 "usage" tab  ✅ done on 2026-10-23
 
-📊 uso abre, na janela do painel, a tabela do `usage-sessoes` a partir do banco: 5 h, 24 h ou 7 dias; por conta, a
-cota e uma linha por máquina + pasta + tipo (parte, ≈pts, agora, processo vivo) e os processos esquecidos; linhas
-de agentes abertos levam à aba deles. O agrupamento saiu do `render_brief` para `usage-sessoes.brief_groups`, que o
-terminal e a página usam (`usage-hist uso`, `GET /api/uso`, `static/js/usage.js` com testes no Node).
+📊 usage opens, in the panel's window, the `usage-sessoes` table from the database: 5 h, 24 h or 7 days; per account, the
+quota and one row per machine + folder + kind (share, ≈pts, now, live process) and the forgotten processes; rows
+of open agents lead to their tab. The grouping moved out of `render_brief` into `usage-sessoes.brief_groups`, which the
+terminal and the page use (`usage-hist uso`, `GET /api/uso`, `static/js/usage.js` with tests in Node).
 
-### 6.12 Depois (não nesta rodada)
+### 6.12 Later (not in this round)
 
-A troca automática de conta usando a previsão para trocar *antes* de acabar; aviso por notificação (ntfy/e-mail)
-dos alertas; relatório semanal automático.
+The automatic account switch using the forecast to switch *before* it runs out; warning by notification (ntfy/e-mail)
+of the alerts; automatic weekly report.
 
 ---
 
-## Estimativa e ordem
+## Estimate and order
 
-| fase | tamanho | dependências |
+| phase | size | dependencies |
 |---|---|---|
-| 1 login + bind + container + deploy | ~500 linhas + Dockerfile/compose | nenhuma |
-| 2 monorepo + CI/CD | pouco código, muita configuração | fase 1 (para a imagem valer a pena) |
-| 3 níveis | ~800 linhas (supervisor, servidor, página, fake_claude, receitas) | fase 1 (reabrir agentes com `-n`) |
+| 1 login + bind + container + deploy | ~500 lines + Dockerfile/compose | none |
+| 2 monorepo + CI/CD | little code, a lot of configuration | phase 1 (for the image to be worth it) |
+| 3 levels | ~800 lines (supervisor, server, page, fake_claude, recipes) | phase 1 (reopen agents with `-n`) |
 
-Riscos conhecidos: no container, o `laptop` só é alcançável se estiver ligado e com ssh pelo ZeroTier;
-mensagens entre níveis em classes de permissão diferentes ficam retidas (o highlevel já documenta),
-por isso todos os níveis sobem no mesmo `permission_mode`.
+Known risks: in the container, the `laptop` is only reachable if it is on and with ssh through ZeroTier;
+messages between levels in different permission classes are held (highlevel already documents it),
+which is why all the levels start in the same `permission_mode`.
