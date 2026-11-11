@@ -180,7 +180,10 @@ executors stay.
 A link between different machines goes through an ssh tunnel that the server opens on the first
 agent's machine (the toast says "túnel ssh", ssh tunnel); it takes a few seconds longer.
 
-## 4.10 Quota ran out: automatic account switch
+## 4.10 Load balancing: automatic failover to another account
+
+The page balances agents across your own accounts: each new agent opens on the account with the most
+slack. This section covers the failover, when an account reaches its limit during a conversation.
 
 When claude reports that the account is exhausted, the supervisor marks the agent as `quota` and keeps
 your last message. On the next poll of the machines (up to 15 s), the server reopens the agent on the

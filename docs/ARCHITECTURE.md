@@ -7,9 +7,11 @@ placeholders.
 
 ## What it is and who it is for
 
-`orq` is tooling for one person who pays for several Claude accounts and runs many Claude Code
-agents at the same time on several machines (a laptop and a few servers reached over ssh). It keeps
-each account in its own configuration directory, shows the usage quota of every account, and offers
+`orq` is tooling for one person who runs many Claude Code agents at the same time on several
+machines (a laptop and a few servers reached over ssh) and load-balances that work across four
+personal, paid Claude accounts, all his own. It keeps each account in its own configuration
+directory, shows the usage quota of every account, places new sessions on the account with the most
+slack, and offers
 one web page from which every agent on every machine can be opened, watched and driven. It is a
 single-user tool: there are no user accounts, roles or tenants. Everything is Python standard library
 (3.8+) on the machines, ES modules in the browser, and ssh and tmux between machines.
@@ -88,7 +90,7 @@ browser ──HTTP: SSE + POST──► orq-web (handlers) ──Bridge: `orq-ag
    paths. In the other direction, every agent is started with a system-prompt note telling it to copy
    files meant for the user to `<project>/_outbox/`; the page lists and previews them through
    `orq-agent ls` / `cat`.
-8. **Account switch.** When Claude reports the quota as exhausted (a `rate_limit_event` with status
+8. **Load balancing: failover to another account.** When Claude reports the quota as exhausted (a `rate_limit_event` with status
    `rejected`, or a turn ending in a limit error) the supervisor sets `state: quota` and stores the
    last page message. On the next agent poll the server restarts the agent on the account with most
    slack (`orq-agent spawn --mode resume --restart`; `claude-last --as` copies the conversation to

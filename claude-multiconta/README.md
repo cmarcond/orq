@@ -2,7 +2,9 @@
 
 A setup for using **several Claude Code accounts** (and Codex) on the same machine, each
 one isolated, with aliases to open and log in to each account and a `usage-all` that shows
-the usage of all of them with a pace marker. Made to be carried from machine to machine:
+the usage of all of them with a pace marker. The accounts are a pool of one person's own paid
+subscriptions (the author has four), and the tools load-balance work across them: plain `claude`
+opens the account with the most slack. Made to be carried from machine to machine:
 Mac (zsh) and Linux (bash).
 
 ## Commands at a glance

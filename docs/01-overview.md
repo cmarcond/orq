@@ -18,7 +18,7 @@ layers, each usable on its own:
 3. **orq-web**: a server and a page that show the quota, one tab per agent on any machine and a chat
    in the style of Remote Control. From the page you open projects, chat, answer permissions and
    questions, send and receive files, raise levels (teacher → executor), link agents to each other and
-   let the account switch happen by itself when the quota runs out.
+   let the load balancer move a conversation to another of your accounts when one reaches its limit.
 
 Nothing depends on an external service other than Claude Code itself: Python 3.8+ standard library on
 the machines, ES modules in the browser, ssh and tmux between the machines.
