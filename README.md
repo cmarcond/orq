@@ -2,14 +2,31 @@
 
 Several Claude Codes, several accounts, several machines, one page.
 
-This is tooling for someone who pays for several Claude accounts and runs many Claude Code agents in
-parallel across several machines. `claude-multiconta` keeps each account isolated
-(`CLAUDE_CONFIG_DIR`), with aliases and a usage view across accounts. `orq-web` is a supervisor
+This is tooling for running many Claude Code agents in parallel across several machines, with the
+work load-balanced across the author's four personal, paid Claude accounts. `claude-multiconta`
+keeps each account isolated (`CLAUDE_CONFIG_DIR`), with aliases and a usage view across accounts. `orq-web` is a supervisor
 (`orq-agent`, Claude Code in stream-json behind a Unix socket) plus a web page to watch and drive
 every agent on every machine: usage, per-host tabs, chat, permission prompts, attachments.
 `claude-highlevel` is an earlier experiment with tiered agent pipelines (teacher/executor). Python
 standard library, tests and CI per project. Host names, addresses and accounts in the docs and tests
 are placeholders.
+
+## Why several accounts: load balancing
+
+The author runs many agents at once and pays, personally, for four separate Claude subscriptions.
+All four are ordinary paid accounts of the same person; none is shared with anyone else. `orq`
+treats them as a small pool and balances the load:
+
+- **Placement.** A new session opens on the account with the most slack, using first the quota that
+  is closest to its weekly reset (`usage-all --melhor`, `server/assign.py`).
+- **Visibility.** One view shows the usage and the pace of every account, so the load can be read
+  at a glance.
+- **Failover.** When an account reaches its limit in the middle of a conversation, the agent is
+  reopened on another account of the pool and the conversation continues there
+  (`"auto_switch": false` turns this off).
+
+Each account stays within its own plan's limits; the tool decides which of the author's accounts
+does a given piece of work, the way a load balancer picks a back end.
 
 > **Project history.** Development started on 9 October 2026. The commit
 > history here is the original one, with host names, addresses and account

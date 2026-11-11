@@ -119,7 +119,10 @@ replaceable by `lider.prompt`). Without `lider`, independent agents. The page re
 photographs what is open into a new set. The server opens it in a thread (`handlers.open_set_job`) and the
 progress goes in `conjuntos_abrindo` of `/api/state`. Format and details: `docs/04-orq-web-page.md`, 4.13.
 
-## Quota ran out: account switch on its own
+## Load balancing across accounts: failover when one reaches its limit
+
+The accounts in `accounts.json` are a pool of the user's own paid accounts. New agents open on the
+account with the most slack; this section covers what happens when an account runs out mid-conversation.
 
 When claude warns that the account is exhausted (`rate_limit_event` with `status: rejected`, or a turn that
 ends in a limit error), the supervisor marks `state: quota` and keeps the page's last message in

@@ -36,7 +36,7 @@ tmux sees the whole history; `fullscreen` keeps the conversation in its own buff
 account: `claude-<account>`, `claude-<account>-login`, `claude-usage-<account>`. Plain `claude` opens
 **the best account right now** (below); if the quota cannot be read, the `default_account`.
 
-**The best account (`usage-all --melhor`)**: plain `claude` and `claude-resume` pick the account by
+**Load balancing: the best account (`usage-all --melhor`)**: plain `claude` and `claude-resume` pick the account by
 themselves, without printing anything. The rule is "use first what is about to expire": the quota left
 on an account close to its weekly reset is gone in hours, while that of an account that only resets
 days from now stays valid; so the ordering is what is left of the week divided by the hours until the
