@@ -117,7 +117,7 @@ primeiro agente e os demais são vinculados a ele como executores (receita `prof
 substituível por `lider.prompt`). Sem `lider`, agentes independentes. A página recusa abrir se algum
 `maquina:pasta` já tiver agente vivo. **📄 enviar JSON** recebe um pronto; **📷 salvar abas abertas**
 fotografa o que está aberto num conjunto novo. O servidor abre numa thread (`handlers.open_set_job`) e o
-andamento vai em `conjuntos_abrindo` do `/api/state`. Formato e detalhes: `docs/04-pagina-orq-web.md`, 4.13.
+andamento vai em `conjuntos_abrindo` do `/api/state`. Formato e detalhes: `docs/04-orq-web-page.md`, 4.13.
 
 ## Cota acabou: troca de conta sozinha
 

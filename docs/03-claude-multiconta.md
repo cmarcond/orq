@@ -1,75 +1,78 @@
-# 3. claude-multiconta: contas, cota e o orquestrador de terminal
+# 3. claude-multiconta: accounts, quota and the terminal orchestrator
 
-O claude-multiconta é a base de tudo: é ele que sabe quais contas existem, onde cada uma guarda a
-credencial, quanto de cota resta e qual conversa retomar. Shell + Python 3.8, sem dependências. O
-`README.md` dele tem a tabela de comandos; este capítulo explica os mecanismos.
+claude-multiconta is the foundation for everything else: it is what knows which accounts exist, where
+each one keeps its credential, how much quota is left and which conversation to resume. Shell + Python
+3.8, no dependencies. Its `README.md` has the table of commands; this chapter explains the mechanisms.
 
-## 3.1 Uma conta por diretório
+## 3.1 One account per directory
 
-O Claude Code guarda login, histórico e configuração no diretório apontado por `CLAUDE_CONFIG_DIR`;
-sem a variável, em `~/.claude`. Cada conta ganha um diretório:
+Claude Code keeps login, history and configuration in the directory pointed to by `CLAUDE_CONFIG_DIR`;
+without the variable, in `~/.claude`. Each account gets a directory:
 
-| conta | diretório | como o alias abre |
+| account | directory | how the alias opens it |
 |---|---|---|
-| `work` (padrão) | `~/.claude` | `env -u CLAUDE_CONFIG_DIR claude` |
+| `work` (default) | `~/.claude` | `env -u CLAUDE_CONFIG_DIR claude` |
 | `gmail` | `~/.claude-gmail` | `env CLAUDE_CONFIG_DIR=~/.claude-gmail claude` |
-| `work2`, `work3` | `~/.claude-work2`, `~/.claude-work3` | idem |
+| `work2`, `work3` | `~/.claude-work2`, `~/.claude-work3` | same |
 
-Dois detalhes que custaram para descobrir:
+Two details that were hard to find out:
 
-- A conta padrão é aberta **removendo** a variável. Se ela apontar explicitamente para `~/.claude`, o
-  Claude Code procura a credencial com outro nome e aparece deslogado.
-- O `claude auth login` normal abre o navegador, e o navegador autoriza a conta que **já estiver logada**
-  no claude.ai, seja qual for o e-mail pré-preenchido. Foi assim que uma conta sobrescreveu outra uma
-  vez. Por isso o login passa `BROWSER=claude-login-url`, que só imprime a URL.
+- The default account is opened by **removing** the variable. If it points explicitly to `~/.claude`,
+  Claude Code looks for the credential under another name and appears logged out.
+- The normal `claude auth login` opens the browser, and the browser authorizes whichever account is
+  **already logged in** to claude.ai, whatever the pre-filled e-mail is. That is how one account
+  overwrote another once. That is why the login passes `BROWSER=claude-login-url`, which only prints
+  the URL.
 
-O `install.sh` ainda grava, por conta, `hasCompletedOnboarding: true` no `.claude.json` (sem isso o
-primeiro uso abre um assistente que termina num segundo login, com callback em localhost, que falha) e
-`"tui": "default"` no `settings.json` (o renderizador que escreve no scrollback nativo, para o tmux
-enxergar o histórico inteiro; o `fullscreen` guarda a conversa num buffer próprio e ela some).
+`install.sh` also writes, per account, `hasCompletedOnboarding: true` in `.claude.json` (without it
+the first use opens a wizard that ends in a second login, with a callback on localhost, which fails)
+and `"tui": "default"` in `settings.json` (the renderer that writes to the native scrollback, so that
+tmux sees the whole history; `fullscreen` keeps the conversation in its own buffer and it disappears).
 
-## 3.2 Aliases gerados e sessões tmux
+## 3.2 Generated aliases and tmux sessions
 
-`install.sh` lê o `accounts.json` e escreve `~/.config/claude-multiconta/aliases.sh`; no `.zshrc` ou
-`.bashrc` entra uma única linha de `source`, marcada com `# >>> claude-multiconta >>>`. Para cada conta:
-`claude-<conta>`, `claude-<conta>-login`, `claude-usage-<conta>`. `claude` puro abre **a melhor conta agora**
-(abaixo); se a cota não puder ser lida, a `default_account`.
+`install.sh` reads `accounts.json` and writes `~/.config/claude-multiconta/aliases.sh`; a single
+`source` line goes into `.zshrc` or `.bashrc`, marked with `# >>> claude-multiconta >>>`. For each
+account: `claude-<account>`, `claude-<account>-login`, `claude-usage-<account>`. Plain `claude` opens
+**the best account right now** (below); if the quota cannot be read, the `default_account`.
 
-**A melhor conta (`usage-all --melhor`)**: `claude` puro e `claude-resume` escolhem a conta sozinhos, sem imprimir
-nada. A regra é "use primeiro o que vai vencer": a cota que sobra numa conta perto do reset semanal some em horas,
-a de uma conta que só zera daqui a dias continua valendo; então a ordem é o que sobra da semana dividido pelas horas
-até o reset (pontos que vencem por hora). Ficam de fora contas com menos de 5 pontos sobrando na semana ou com a
-janela de 5 h acima de 85%; se nenhuma serve, vai a que tem mais sobra (com um aviso). `usage-all --melhor -v`
-mostra a ordem e o motivo; a cota vem do banco do `usage-hist` (ou da API, se o banco estiver velho).
-`CLAUDE_CONTA=gmail claude` força uma conta; `claude-<conta>` continua abrindo aquela conta.
+**The best account (`usage-all --melhor`)**: plain `claude` and `claude-resume` pick the account by
+themselves, without printing anything. The rule is "use first what is about to expire": the quota left
+on an account close to its weekly reset is gone in hours, while that of an account that only resets
+days from now stays valid; so the ordering is what is left of the week divided by the hours until the
+reset (points that expire per hour). Accounts with fewer than 5 points left in the week or with the
+5-hour window above 85% are left out; if none qualifies, the one with the most left is used (with a
+warning). `usage-all --melhor -v` shows the ordering and the reason; the quota comes from the
+`usage-hist` database (or from the API, if the database is stale). `CLAUDE_CONTA=gmail claude` forces
+an account; `claude-<account>` still opens that account.
 
-Sessão interativa abre num tmux **novo** chamado `<prefixo>-<pasta>` (`claude-foo` para a padrão,
-`claude-gmail-foo` para as outras; `-2`, `-3` se repetir), nascido com `cd ~` antes do `new-session`
-para o servidor tmux não herdar uma pasta que possa ser apagada depois. O attach é manual (`tmux ls`,
-`tmux attach -t claude-foo`). Roda direto, sem tmux, quando já está dentro de um tmux, quando não há
-tmux, ou para subcomandos rápidos (`auth`, `mcp`, `config`, `doctor`, `update`, `-p`, `--version`…).
-`"tmux": false` no `accounts.json` desliga.
+An interactive session opens in a **new** tmux called `<prefix>-<folder>` (`claude-foo` for the
+default one, `claude-gmail-foo` for the others; `-2`, `-3` if it repeats), born with `cd ~` before
+`new-session` so that the tmux server does not inherit a folder that may be deleted later. Attaching
+is manual (`tmux ls`, `tmux attach -t claude-foo`). It runs directly, without tmux, when it is already
+inside a tmux, when there is no tmux, or for quick subcommands (`auth`, `mcp`, `config`, `doctor`,
+`update`, `-p`, `--version`…). `"tmux": false` in `accounts.json` turns it off.
 
-`claude-whoami` roda `claude auth status` em cada diretório e mostra e-mail, plano e qual é o `claude`
-puro.
+`claude-whoami` runs `claude auth status` in each directory and shows the e-mail, the plan and which
+one is plain `claude`.
 
-## 3.3 Onde está a credencial
+## 3.3 Where the credential is
 
-- **macOS**: Keychain. Para `~/.claude` o item é `Claude Code-credentials`; para outro diretório,
-  `Claude Code-credentials-` + os 8 primeiros caracteres do SHA-256 do caminho absoluto. O `usage-all`
-  calcula o sufixo. Sessões ssh não enxergam o Keychain, daí o LaunchAgent do capítulo 2.
+- **macOS**: Keychain. For `~/.claude` the item is `Claude Code-credentials`; for another directory,
+  `Claude Code-credentials-` + the first 8 characters of the SHA-256 of the absolute path. `usage-all`
+  computes the suffix. ssh sessions cannot see the Keychain, hence the LaunchAgent of chapter 2.
 - **Linux**: `<config_dir>/.credentials.json`.
 - **Codex**: `~/.codex/auth.json`.
 
-O token de acesso vence a cada ~8 h. Quando o `usage-all` encontra um vencido, pede ao próprio Claude
-Code para renovar com um pedido mínimo (`claude -p "ok" --model haiku`) naquela conta. "Token expirado"
-nunca é "plano vencido". Tokens nunca são impressos.
+The access token expires every ~8 h. When `usage-all` finds an expired one, it asks Claude Code itself
+to renew it with a minimal request (`claude -p "ok" --model haiku`) on that account. "Token expired"
+never means "plan expired". Tokens are never printed.
 
-## 3.4 `usage-all`: cota com marcador de ritmo
+## 3.4 `usage-all`: quota with a pace marker
 
-Consulta `https://api.anthropic.com/api/oauth/usage` com a credencial de cada conta (uma chamada por
-conta, ~1 s). A API devolve, por janela, a porcentagem usada e o horário do reset; o script **não
-estima** uso, só desenha.
+It queries `https://api.anthropic.com/api/oauth/usage` with each account's credential (one call per
+account, ~1 s). The API returns, per window, the percentage used and the reset time; the script **does
+not estimate** usage, it only draws.
 
 ```
                    sessão 5h              semana 7d              Fable 7d
@@ -80,51 +83,61 @@ estima** uso, só desenha.
 TOTAL  32% ███░░░┃░░░  queima 0,5×  zera ∞  reset Gmail 06h21
 ```
 
-Sem legenda (ela está no `--help`): `█` é o usado, `┃` o ritmo, à direita o tempo até o reset. A seta
-marca a melhor conta para abrir agora, a mesma do `usage-all --melhor` (o que o `claude` puro abre). A
-origem dos dados só aparece quando a coleta do banco tem 15 min ou mais.
+There is no legend (it is in `--help`): `█` is what was used, `┃` the pace, and on the right the time
+until the reset. The column headers are the 5-hour session (`sessão 5h`), the 7-day week
+(`semana 7d`) and the 7-day window of one model. The arrow marks the best account to open right now,
+the same one as `usage-all --melhor` (what plain `claude` opens). The source of the data only appears
+when the database collection is 15 min old or more.
 
-- **Janelas**: `session` (5 h), `weekly_all` (7 dias, todos os modelos) e `weekly_scoped` (7 dias de um
-  modelo). O tamanho é fixo; o ritmo é `1 - (reset - agora) / tamanho`. Janela cujo reset já passou
-  não tem ritmo; janela cujo reset está além do tamanho ainda não começou (o relógio dispara no
-  primeiro uso) e aparece com o `┃` na primeira célula.
-- **Cores**: diferença uso − ritmo menor que 3 pontos ou negativa é verde; até 15, amarela; além, vermelha.
-- **Ordem**: contas da mais folgada para a mais apertada no `semana 7d` (uso − ritmo); erro vai para o fim.
-- **TOTAL** (última linha): a semana da frota. Uso médio e ritmo médio na mesma mini-barra; a **queima**,
-  velocidade de consumo: o consumo dividido pela fração da semana decorrida, somados sobre as contas;
-  `1,0×` é exatamente no ritmo, menos é folga, mais é aperto (verde abaixo de 0,9, amarelo até 1,15,
-  vermelho além); **quando zera**: uma simulação que gasta o que sobra de todas as contas no ritmo atual e
-  recarrega cada conta no reset dela (`∞` quando os resets chegam antes); e o próximo reset semanal, de
-  que conta. A ideia vem dos *error budgets* de SLO: queima e tempo até esgotar.
-- Modos: `usage-all` (resumido), `-v` (por conta, barras de 20 células, desvio do ritmo e horário do
-  reset; no fim o TOTAL, a melhor conta e a idade dos dados), `usage-all gmail`
-  (só as citadas), `--json` (para o `orq` e a página: por conta `5h`, `5h_pace`, `5h_left`, `7d`,
-  `7d_pace`, `7d_left` ou `{"err": …}`, mais `_total` com `7d`, `7d_pace`, `7d_free`, `7d_burn`,
-  `7d_runs_out`, `7d_next_reset`, `accounts`).
-- A API devolve 429 se consultada com frequência; o `orq` e a página consultam a cada 150 s.
+- **Windows**: `session` (5 h), `weekly_all` (7 days, all models) and `weekly_scoped` (7 days of one
+  model). The size is fixed; the pace is `1 - (reset - now) / size`. A window whose reset has already
+  passed has no pace; a window whose reset is further away than its size has not started yet (the
+  clock starts on first use) and appears with the `┃` in the first cell.
+- **Colours**: a usage − pace difference smaller than 3 points or negative is green; up to 15, yellow;
+  beyond that, red.
+- **Order**: accounts from the one with the most slack to the tightest in `semana 7d` (usage − pace);
+  errors go to the end.
+- **TOTAL** (last line): the fleet's week. Average usage and average pace in the same mini-bar; the
+  **burn** (`queima`), the consumption speed: consumption divided by the fraction of the week elapsed,
+  summed over the accounts; `1,0×` is exactly on pace, less is slack, more is tight (green below 0.9,
+  yellow up to 1.15, red beyond); **when it runs out** (`zera`): a simulation that spends what is left
+  of all accounts at the current pace and refills each account at its reset (`∞` when the resets come
+  first); and the next weekly reset, and of which account. The idea comes from SLO *error budgets*:
+  burn and time to exhaustion.
+- Modes: `usage-all` (summary), `-v` (per account, 20-cell bars, deviation from pace and reset time;
+  at the end the TOTAL, the best account and the age of the data), `usage-all gmail` (only the ones
+  named), `--json` (for `orq` and the page: per account `5h`, `5h_pace`, `5h_left`, `7d`, `7d_pace`,
+  `7d_left` or `{"err": …}`, plus `_total` with `7d`, `7d_pace`, `7d_free`, `7d_burn`, `7d_runs_out`,
+  `7d_next_reset`, `accounts`).
+- The API returns 429 if queried often; `orq` and the page query every 150 s.
 
-O Codex tem comando próprio, `codex-usage` (`bin/codex-usage-fast`), com os mesmos modos; não entra
-no `usage-all`.
+Codex has its own command, `codex-usage` (`bin/codex-usage-fast`), with the same modes; it is not part
+of `usage-all`.
 
-### `usage-sessoes`: quem está gastando cada conta
+### `usage-sessoes`: who is spending each account
 
-O `usage-all` diz quanto cada conta gastou; a API de cota não diz quem gastou (só porcentagens por conta e
-janela). O `usage-sessoes` responde a isso olhando as máquinas: em cada uma (o laptop e as `orq_hosts`, em
-paralelo, uma conexão ssh por máquina, com o próprio script indo pelo stdin) ele lê
+`usage-all` says how much each account has spent; the quota API does not say who spent it (only
+percentages per account and window). `usage-sessoes` answers that by looking at the machines: on each
+one (the laptop and the `orq_hosts`, in parallel, one ssh connection per machine, with the script
+itself going through stdin) it reads
 
-- os **processos do claude vivos**: a conta (pelo `CLAUDE_CONFIG_DIR` do processo), a pasta, o tipo
-  (`interativo`, `orq` para os agentes da página, `script` para um `claude -p` lançado por um programa,
-  `daemon` para o `claude daemon` e as reservas dele), a sessão tmux, quem lançou e há quanto tempo vive;
-- o **consumo de cada sessão** nas últimas 5 horas (`--horas N`), das conversas que o Claude Code grava em
-  `~/.claude*/projects/`: respostas, tokens de saída, cache novo e lido, modelos e, para sessões sem
-  terminal, o começo da primeira mensagem (é o que identifica um script). Subagentes somam na sessão-mãe.
+- the **live claude processes**: the account (from the process's `CLAUDE_CONFIG_DIR`), the folder, the
+  type (`interativo` for interactive, `orq` for the page's agents, `script` for a `claude -p` launched
+  by a program, `daemon` for `claude daemon` and its reserves), the tmux session, who launched it and
+  how long it has been alive;
+- the **consumption of each session** in the last 5 hours (`--horas N`), from the conversations Claude
+  Code writes to `~/.claude*/projects/`: responses, output tokens, new and read cache, models and, for
+  sessions without a terminal, the start of the first message (that is what identifies a script).
+  Subagents are added to the parent session.
 
-O padrão é o **resumido**: uma tabela com um bloco por conta. A primeira linha do bloco traz a cota do
-`usage-all` (5h · 7d); cada linha é uma máquina e pasta, com o horário, a parte no consumo da conta e os
-≈pts (pontos da semana estimados pelos tokens). `●` antes da pasta: respondeu nos últimos 10 min. O tipo só
-aparece quando não é interativo (`· script 2×`, `· orq`), com as execuções de um mesmo script juntas.
-Processos vivos sem uso há mais de 1 hora (os esquecidos) entram como `parado`. Daemon e auxiliares não
-aparecem. Sem rodapé: a legenda está no `--help`, e a idade dos dados só aparece quando passa de 15 min.
+The default is the **summary**: a table with one block per account. The first line of the block
+carries the quota from `usage-all` (5h · 7d); each line is a machine and folder, with the time span,
+the share of the account's consumption and the ≈pts (points of the week estimated from the tokens).
+`●` before the folder: it responded in the last 10 min. The type only appears when it is not
+interactive (`· script 2×`, `· orq`), with the runs of the same script grouped. Live processes with no
+use for more than 1 hour (the forgotten ones) are listed as `parado` ("idle"). The daemon and helpers
+do not appear. There is no footer: the legend is in `--help`, and the age of the data only appears
+when it is over 15 min.
 
 ```
 últimas 5 h · sem resposta: node1, node2
@@ -141,74 +154,89 @@ aparecem. Sem rodapé: a legenda está no `--help`, e a idade dos dados só apar
 └───────────┴─────────────┴─────────┴────────────────────────┴─────────────┴───────────────┴──────┘
 ```
 
-O **completo** (`-v`) mostra cada sessão: id, respostas, tokens de saída, estado (`● trabalhando`, `○ aberta`,
-`encerrada`), o processo ligado a ela (pelo `--resume` ou pela pasta da conversa) com tmux e quem lançou, o
-começo do prompt das sessões sem terminal, e todos os processos vivos sem consumo.
+The columns are account (`conta`), quota, machine (`máquina`), folder (`pasta`), time span
+(`horário`), share (`parte`) and ≈pts; `sem resposta` lists the machines that did not answer.
+
+The **full** mode (`-v`) shows each session: id, responses, output tokens, state (`● trabalhando`
+working, `○ aberta` open, `encerrada` ended), the process attached to it (by `--resume` or by the
+conversation's folder) with tmux and who launched it, the start of the prompt for sessions without a
+terminal, and all live processes with no consumption.
 
 ```
-usage-sessoes                     # resumido, todas as máquinas, últimas 5 h
-usage-sessoes -v --conta work3 # cada sessão e processo dessa conta
-usage-sessoes --horas 24 --json   # um dia inteiro, para scripts
+usage-sessoes                     # summary, all machines, last 5 h
+usage-sessoes -v --conta work3 # each session and process of that account
+usage-sessoes --horas 24 --json   # a whole day, for scripts
 ```
 
-A coluna `parte` é a fatia de cada sessão no **peso** da conta: tokens ponderados pela proporção de preço
-da Anthropic (entrada 1, cache novo 1,25, cache lido 0,1, saída 5). É uma estimativa relativa, não a
-porcentagem exata da cota, que a Anthropic não detalha. Uso pelo claude.ai (navegador, celular) não grava
-nada nas máquinas e não aparece; máquina fora do ar aparece em "sem resposta".
+The `parte` column is each session's slice of the account's **weight**: tokens weighted by the ratio
+of Anthropic's prices (input 1, new cache 1.25, read cache 0.1, output 5). It is a relative estimate,
+not the exact percentage of the quota, which Anthropic does not break down. Usage through claude.ai
+(browser, phone) writes nothing on the machines and does not appear; a machine that is down appears
+under "sem resposta".
 
-Caso real que motivou o script (2026-10-21): a Work 3 subiu 20% em minutos sem nenhuma sessão aberta
-nela. O `usage-sessoes` mostrou nove sessões `sdk/-p` no laptop, todas de um projeto que chamava o
-`claude -p` com `CLAUDE_CONTA` fixa na Work 3, lançadas por uma sessão interativa em outra conta.
+The real case that motivated the script (2026-10-21): Work 3 went up 20% in minutes with no session
+open on it. `usage-sessoes` showed nine `sdk/-p` sessions on the laptop, all from a project that
+called `claude -p` with `CLAUDE_CONTA` fixed to Work 3, launched by an interactive session on another
+account.
 
-### `usage-hist`: histórico, ritmo, previsão e alertas
+### `usage-hist`: history, pace, forecast and alerts
 
-A API de cota só diz a porcentagem de agora. O `usage-hist` guarda amostras num banco SQLite
-(`~/.local/share/claude-multiconta/usage.db` no node4, `USAGE_DB`) e calcula sobre elas. Um timer do systemd
-de usuário (`usage-coletor.timer`, instalado com `usage-hist instalar`) roda `usage-hist coletar` a cada 5 min:
+The quota API only gives the percentage right now. `usage-hist` stores samples in a SQLite database
+(`~/.local/share/claude-multiconta/usage.db` on node4, `USAGE_DB`) and computes on top of them. A
+systemd user timer (`usage-coletor.timer`, installed with `usage-hist instalar`) runs
+`usage-hist coletar` every 5 min:
 
-- a **cota** de cada conta e janela, pela mesma API do `usage-all` (com 429, espera 10 min e dobra até 30);
-- cada **resposta do claude** em todas as máquinas, pelo agente do `usage-sessoes` por ssh, só o que é novo
-  desde a última coleta daquela máquina (a primeira volta 7 dias; uma máquina que ficou fora recupera o
-  buraco na volta, porque as conversas ficam gravadas nela; a cota perdida não se recupera);
-- o retrato dos **processos** vivos (guardado por 14 dias).
+- the **quota** of each account and window, through the same API as `usage-all` (on a 429, it waits
+  10 min and doubles up to 30);
+- each **claude response** on all machines, through the `usage-sessoes` agent over ssh, only what is
+  new since the last collection from that machine (the first one goes back 7 days; a machine that was
+  down recovers the gap when it returns, because the conversations are stored on it; lost quota
+  samples cannot be recovered);
+- the snapshot of the live **processes** (kept for 14 days).
 
 ```
-usage-hist                 # painel: por conta, 5h e 7d agora, hoje, ritmo, previsão, barras das últimas 24 h; frota; alertas
-usage-hist conta NOME       # uma conta: agora, hoje, ritmo, previsão, 24 h, 7 dias e o que mais gastou
-usage-hist uso [--horas N]  # a tabela do usage-sessoes a partir do banco (a aba 📊 uso da página)
-usage-hist dia [AAAA-MM-DD] # pontos do dia por conta, por hora, e os projetos que mais gastaram (≈pts)
-usage-hist semana          # 7 dias × contas e o perfil por hora do dia
-usage-hist calibrar        # tokens por ponto de cada conta
-usage-hist alertas         # só os alertas
-usage-hist estado          # timer, última coleta, máquinas, tamanho do banco
+usage-hist                 # dashboard: per account, 5h and 7d now, today, pace, forecast, bars for the last 24 h; fleet; alerts
+usage-hist conta NOME       # one account: now, today, pace, forecast, 24 h, 7 days and what spent the most
+usage-hist uso [--horas N]  # the usage-sessoes table built from the database (the 📊 uso tab of the page)
+usage-hist dia [AAAA-MM-DD] # the day's points per account, per hour, and the projects that spent the most (≈pts)
+usage-hist semana          # 7 days × accounts and the profile by hour of the day
+usage-hist calibrar        # tokens per point for each account
+usage-hist alertas         # only the alerts
+usage-hist estado          # timer, last collection, machines, database size
 usage-hist instalar | remover | coletar
 ```
 
-**Pontos**: 1 ponto = 1% da cota semanal de uma conta. "Hoje" soma as subidas da janela de 7 dias desde a
-meia-noite (um reset conta a % nova a partir de zero). O ritmo é em pontos por hora nas últimas 6 h; a
-previsão diz quando a conta chega a 100% nesse ritmo e avisa se isso vem antes do reset. Até haver 6 h (ou o
-dia inteiro) de amostras, os valores saem com `*`, calculados desde o início da coleta.
+**Points**: 1 point = 1% of an account's weekly quota. "Today" adds up the rises of the 7-day window
+since midnight (after a reset the new % counts from zero). The pace is in points per hour over the
+last 6 h; the forecast says when the account reaches 100% at that pace and warns if that comes before
+the reset. Until there are 6 h (or the whole day) of samples, the values are shown with `*`, computed
+since the start of the collection.
 
-**Calibração**: o peso dos tokens (entrada 1, cache novo 1,25, cache lido 0,1, saída 5) dividido pelos pontos
-de 7d da conta nos últimos 7 dias dá os tokens por ponto. Com isso o `dia` e o `usage-sessoes` mostram
-**≈pts** por projeto e por sessão. Só vale a partir de 3 pontos vistos (confiança baixa até 10).
+**Calibration**: the weight of the tokens (input 1, new cache 1.25, read cache 0.1, output 5) divided
+by the account's 7d points over the last 7 days gives the tokens per point. With that, `dia` and
+`usage-sessoes` show **≈pts** per project and per session. It only applies from 3 points seen onward
+(low confidence up to 10).
 
-**Alertas**: subida de 5h por script (5+ pontos em 30 min, 80%+ de sessões `sdk/-p`); subida da semana sem
-tokens nas máquinas que a expliquem (claude.ai, celular ou máquina sem resposta); cota que acaba antes do
-reset; processo do claude parado há mais de 1 dia; coletor parado; máquina sem resposta há mais de 1 h.
+**Alerts**: a 5h rise caused by a script (5+ points in 30 min, 80%+ from `sdk/-p` sessions); a weekly
+rise with no tokens on the machines to explain it (claude.ai, phone or a machine not answering); quota
+that runs out before the reset; a claude process idle for more than 1 day; the collector stopped; a
+machine not answering for more than 1 h.
 
-**Os outros comandos leem o banco**: o `usage-all` e o `usage-sessoes` usam a última coleta quando ela tem
-menos de 10 min (instantâneos e sem 429; o `-v` diz "do banco · coleta há N min", o resumido só avisa coleta de 15 min ou mais); `--ao-vivo` volta à API e à
-varredura. A página do orq recebe a cota do `usage-all --json`, então também passa a vir do banco. Numa
-máquina sem banco (o laptop), os três comandos rodam por ssh na máquina de `usage_db_host` do accounts.json.
+**The other commands read the database**: `usage-all` and `usage-sessoes` use the last collection when
+it is less than 10 min old (instant and with no 429; `-v` says "do banco · coleta há N min" ("from the
+database · collected N min ago"), the summary only warns about a collection 15 min old or more);
+`--ao-vivo` goes back to the API and the scan. The orq page gets the quota from `usage-all --json`, so
+it also comes from the database now. On a machine without a database (the laptop), the three commands
+run over ssh on the machine named in `usage_db_host` in accounts.json.
 
-## 3.5 `claude-last` e `claude-resume`: a conversa certa
+## 3.5 `claude-last` and `claude-resume`: the right conversation
 
-No `claude-resume` sem `--as`, a conversa fica na conta dela se a conta estiver boa (janela de 5 h abaixo de 70%
-e 15+ pontos sobrando na semana); senão vai para a melhor conta agora, copiada como no `--as`.
+With `claude-resume` without `--as`, the conversation stays on its own account if the account is in
+good shape (5-hour window below 70% and 15+ points left in the week); otherwise it goes to the best
+account right now, copied as with `--as`.
 
-Cada conta guarda as conversas em `<config_dir>/projects/<pasta codificada>/<id>.jsonl`. O `--resume`
-de uma conta não vê as das outras. O `claude-last` olha todas:
+Each account keeps its conversations in `<config_dir>/projects/<encoded folder>/<id>.jsonl`. One
+account's `--resume` does not see those of the others. `claude-last` looks at all of them:
 
 ```
 $ claude-last
@@ -218,50 +246,54 @@ $ claude-last
     = claude-work --resume 00000000-…
 ```
 
-- padrão: a conversa mais recente de cada conta; `-a`: as 15 mais recentes de qualquer conta;
-- conversas vazias, de renovação de token e de `claude -p` (scripts, cron) ficam de fora da lista de
-  projetos; o `orq-web` tem exceção para as suas próprias, identificadas pelo `state.json`;
-- `--pick [N]` imprime `conta id` (usado pela função `claude-resume`);
-- `--as CONTA`: copia a conversa para a outra conta (arquivo, anexos e memória do projeto que a conta
-  destino ainda não tem) e imprime `CONTA id`. A original fica; se continuar nas duas, viram ramos. Uma
-  cópia anterior diferente é guardada como `.bak-<data>`. A primeira mensagem na conta nova é mais cara
-  (relê a conversa sem cache);
-- `--projects`: JSON com a conversa mais recente de cada pasta desta máquina, em qualquer conta. É o que
-  o `orq` e a página usam para listar projetos.
+- default: the most recent conversation of each account; `-a`: the 15 most recent of any account;
+- empty conversations, token-renewal ones and `claude -p` ones (scripts, cron) are left out of the
+  project list; `orq-web` has an exception for its own, identified by `state.json`;
+- `--pick [N]` prints `account id` (used by the `claude-resume` function);
+- `--as CONTA`: copies the conversation to the other account (file, attachments and the project
+  memory that the destination account does not have yet) and prints `CONTA id`. The original stays;
+  if it continues on both, they become branches. A different earlier copy is kept as `.bak-<date>`.
+  The first message on the new account is more expensive (it re-reads the conversation without cache);
+- `--projects`: JSON with the most recent conversation of each folder on this machine, on any
+  account. It is what `orq` and the page use to list projects.
 
-`claude-resume` abre a linha 1 na conta dela; `claude-resume 2`, a linha 2; `claude-resume --as gmail`
-retoma usando outra conta.
+`claude-resume` opens line 1 on its account; `claude-resume 2`, line 2; `claude-resume --as gmail`
+resumes using another account.
 
-## 3.6 `orq`: quatro projetos numa grade tmux
+## 3.6 `orq`: four projects in a tmux grid
 
 ```
-orq            # escolhe os projetos e abre a grade (se já existe, só volta para ela)
-orq --new      # fecha a grade e escolhe de novo (os agentes remotos continuam)
-orq --list     # só a lista
-orq --status-json   # agentes do orq nesta máquina (usado pela página)
-orq web        # atalho para o orq-web
+orq            # pick the projects and open the grid (if it already exists, just go back to it)
+orq --new      # close the grid and pick again (the remote agents keep running)
+orq --list     # just the list
+orq --status-json   # orq agents on this machine (used by the page)
+orq web        # shortcut for orq-web
 ```
 
-O `orq` pergunta a todas as máquinas de `orq_hosts` e ao laptop (`claude-last --projects` por ssh) e
-mostra uma lista única; você digita até 4 números ou `maquina:/caminho`. **Conta**: os projetos são
-espalhados pelas contas com mais folga no 7d; cada agente já rodando numa conta pesa 20 pontos contra
-ela; ficar na conta da conversa vale 10; conta com 5 h ou 7 d em 95% nunca é escolhida (as mesmas
-regras do `assign.py` da página). **Grade**: uma janela num servidor tmux próprio (`tmux -L orq`) com
-até 4 painéis, borda com projeto, máquina, conta e assunto. **Agentes que sobrevivem**: nas máquinas,
-cada projeto roda numa sessão tmux `orq-<pasta>` de lá (prefixo `Ctrl-a`).
+`orq` asks every machine in `orq_hosts` and the laptop (`claude-last --projects` over ssh) and shows a
+single list; you type up to 4 numbers or `maquina:/caminho` (`machine:/path`). **Account**: the
+projects are spread over the accounts with the most slack in the 7d window; each agent already running
+on an account weighs 20 points against it; staying on the conversation's account is worth 10; an
+account with 5 h or 7 d at 95% is never chosen (the same rules as the page's `assign.py`). **Grid**: a
+window in its own tmux server (`tmux -L orq`) with up to 4 panes, with a border showing project,
+machine, account and subject. **Agents that survive**: on the machines, each project runs in a tmux
+session `orq-<folder>` there (prefix `Ctrl-a`).
 
-`orq-run` roda em cada painel: abre o claude na conta certa (copiando a conversa se preciso) e, quando
-você sai (`/exit`), confere a conta: se esgotou, retoma na conta com mais folga em 5 s; senão oferece
-`[Enter] retomar [c] outra conta [n] conversa nova [q] fechar`. `orq-hook` é o hook do Claude Code que
-os agentes do orq recebem via `claude --settings` (sem mexer no `settings.json` das contas): grava o
-estado em `~/.cache/orq/<rótulo>/state.json` e manda uma notificação do iTerm2 (OSC 9 atravessando os
-tmux) quando o agente termina ou pede algo. Rode o `orq` direto no iTerm2, não dentro de outro tmux.
+`orq-run` runs in each pane: it opens claude on the right account (copying the conversation if needed)
+and, when you leave (`/exit`), checks the account: if it is exhausted, it resumes on the account with
+the most slack in 5 s; otherwise it offers
+`[Enter] retomar [c] outra conta [n] conversa nova [q] fechar` (resume, another account, new
+conversation, close). `orq-hook` is the Claude Code hook that orq's agents receive via
+`claude --settings` (without touching the accounts' `settings.json`): it writes the state to
+`~/.cache/orq/<label>/state.json` and sends an iTerm2 notification (OSC 9 passing through the tmux
+layers) when the agent finishes or asks for something. Run `orq` directly in iTerm2, not inside
+another tmux.
 
-A grade e a página convivem: o `orq --status-json` lista os agentes dos dois tipos (`kind: "sdk"` para
-os da página, com `tmux` para os de terminal), e a página mostra um claude de terminal como aba
-tracejada com **⇄ converter**.
+The grid and the page coexist: `orq --status-json` lists the agents of both kinds (`kind: "sdk"` for
+the page's, with `tmux` for the terminal ones), and the page shows a terminal claude as a dashed tab
+with **⇄ converter** ("convert").
 
-## 3.7 `accounts.json`: referência
+## 3.7 `accounts.json`: reference
 
 ```json
 {
@@ -281,20 +313,20 @@ tracejada com **⇄ converter**.
 }
 ```
 
-| campo | quem usa | significado |
+| field | used by | meaning |
 |---|---|---|
-| `accounts[].name` | tudo | sufixo dos aliases e chave em todo lugar (`[a-z0-9_-]`) |
-| `accounts[].config_dir` | tudo | `CLAUDE_CONFIG_DIR` da conta; `~/.claude` é a padrão |
-| `accounts[].label` | `usage-all`, página | nome exibido; o que vem antes de ` (` é o nome curto |
-| `accounts[].color` | página | cor da conta; sem ela, uma paleta por posição |
-| `default_account` | aliases | a conta do `claude` puro |
-| `tmux`, `tui`, `tip_on_login` | `install.sh` | sessões tmux, renderizador, dica na abertura do terminal |
-| `codex` | `install.sh` | instalar o Codex e criar `codex-login`/`codex-usage` |
-| `timezone` | `usage-all`, `codex-usage` | fuso dos horários de reset |
-| `orq_hosts` | `orq`, página, `deploy.sh` | máquinas remotas; o laptop entra sempre |
-| `usage_db_host` | `usage-hist`, `usage-all`, `usage-sessoes` | máquina do banco de uso (node4); numa máquina sem banco, os comandos rodam lá por ssh |
-| `permission_mode` | página | modo dos agentes: `auto`, `manual`, `acceptEdits`, `plan` |
-| `auto_switch` | página | trocar de conta sozinho quando a cota acaba (padrão `true`) |
+| `accounts[].name` | everything | suffix of the aliases and the key everywhere (`[a-z0-9_-]`) |
+| `accounts[].config_dir` | everything | the account's `CLAUDE_CONFIG_DIR`; `~/.claude` is the default one |
+| `accounts[].label` | `usage-all`, page | displayed name; what comes before ` (` is the short name |
+| `accounts[].color` | page | the account's colour; without it, a palette by position |
+| `default_account` | aliases | the account of plain `claude` |
+| `tmux`, `tui`, `tip_on_login` | `install.sh` | tmux sessions, renderer, tip when the terminal opens |
+| `codex` | `install.sh` | install Codex and create `codex-login`/`codex-usage` |
+| `timezone` | `usage-all`, `codex-usage` | time zone of the reset times |
+| `orq_hosts` | `orq`, page, `deploy.sh` | remote machines; the laptop is always included |
+| `usage_db_host` | `usage-hist`, `usage-all`, `usage-sessoes` | machine with the usage database (node4); on a machine without a database, the commands run there over ssh |
+| `permission_mode` | page | the agents' mode: `auto`, `manual`, `acceptEdits`, `plan` |
+| `auto_switch` | page | switch accounts automatically when the quota runs out (default `true`) |
 
-O arquivo do repositório é copiado para `~/.config/claude-multiconta/accounts.json` pelo `install.sh`;
-o `orq-web` (e o container, por volume) lê de lá, ou de `CLAUDE_MULTICONTA_CONF`.
+The file in the repository is copied to `~/.config/claude-multiconta/accounts.json` by `install.sh`;
+`orq-web` (and the container, through a volume) reads it from there, or from `CLAUDE_MULTICONTA_CONF`.
