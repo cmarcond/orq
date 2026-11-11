@@ -91,6 +91,6 @@ Pequenas, anotadas durante o desenvolvimento:
 - migração de conta de um agente com vínculo não refaz o vínculo;
 - `Range` para vídeo grande vindo por ssh funciona, mas é lido inteiro a cada pedido.
 
-Maiores (fase 4 do `orq-web/docs/PLANO.md`): histórico de rodadas de níveis e linha do tempo de marcos
+Maiores (fase 4 do `orq-web/docs/PLAN.md`): histórico de rodadas de níveis e linha do tempo de marcos
 por projeto; modelo e esforço por nível na receita; receitas editáveis pela página; busca na lista de
 projetos; painel de níveis melhor no celular; níveis na grade do `orq` de terminal.

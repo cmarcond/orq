@@ -90,7 +90,7 @@ máquinas, módulos ES no navegador, ssh e tmux entre as máquinas.
 ## Histórico, em uma linha por etapa
 
 claude-multiconta (contas e `usage-all`) → `orq` de terminal (grade tmux) → `orq web` (página local)
-→ `orq-web` como projeto próprio, com supervisor e testes → fases 1 a 4 (`orq-web/docs/PLANO.md`:
+→ `orq-web` como projeto próprio, com supervisor e testes → fases 1 a 4 (`orq-web/docs/PLAN.md`:
 rede e container, monorepo e CI, níveis vindos do claude-highlevel, troca de conta automática) →
 QA com Playwright → arquivos compartilhados (`_outbox/`) → vínculos entre agentes e entre máquinas →
 professor com vários executores → revisão adversarial dos vínculos.
