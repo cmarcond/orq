@@ -1,9 +1,9 @@
-"""Ponto de entrada do `python -m hl`.
+"""Entry point for `python -m hl`.
 
-O `hl` precisa de 3.11+ (o `tomllib` é da biblioteca padrão só a partir dessa
-versão). Como o `python3` de muitas máquinas ainda é antigo, em vez de morrer com
-um traceback este módulo procura um interpretador novo o bastante e se re-executa
-nele — `python3 -m hl serve` simplesmente funciona.
+`hl` needs 3.11+ (`tomllib` is in the standard library only from that version
+on). Since the `python3` on many machines is still old, instead of dying with a
+traceback this module looks for an interpreter that is new enough and re-executes
+itself in it — `python3 -m hl serve` simply works.
 """
 import os
 import shutil
@@ -16,7 +16,7 @@ _FLAG = "HL_REEXECUTADO"
 
 
 def _serve(executavel):
-    """O interpretador existe e é 3.11+?"""
+    """Does the interpreter exist and is it 3.11+?"""
     try:
         saida = subprocess.run(
             [executavel, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
@@ -36,7 +36,7 @@ def _serve(executavel):
 
 
 def _candidatos(raiz):
-    """Interpretadores a tentar, do mais específico do projeto ao mais genérico."""
+    """Interpreters to try, from the most project-specific to the most generic."""
     yield raiz / ".venv" / "bin" / "python"
     for menor in range(20, MINIMO[1] - 1, -1):
         achado = shutil.which(f"python3.{menor}")
@@ -49,8 +49,8 @@ def _candidatos(raiz):
 
 
 def _reexecutar():
-    """Procura um Python 3.11+ e entrega o processo a ele. Só volta se falhar."""
-    if os.environ.get(_FLAG):  # já tentamos uma vez; não entra em laço
+    """Looks for a Python 3.11+ and hands the process over to it. Returns only on failure."""
+    if os.environ.get(_FLAG):  # we already tried once; do not loop
         return
     raiz = Path(__file__).resolve().parent.parent
     atual = os.path.realpath(sys.executable)
@@ -67,12 +67,12 @@ def _reexecutar():
 
 
 if sys.version_info < MINIMO:
-    _reexecutar()  # se voltou daqui, não há 3.11+ nesta máquina
+    _reexecutar()  # if it returned, there is no 3.11+ on this machine
     sys.exit(
-        f"hl exige Python 3.11+ (o `tomllib` é da biblioteca padrão desde o 3.11); "
-        f"este é o {sys.version.split()[0]} em {sys.executable}, e não achei nenhum "
-        f"interpretador mais novo no PATH.\n"
-        f"Instale um 3.11+ ou crie o venv do projeto: python3.11 -m venv .venv"
+        f"hl requires Python 3.11+ (`tomllib` has been in the standard library since 3.11); "
+        f"this is {sys.version.split()[0]} at {sys.executable}, and I found no newer "
+        f"interpreter on the PATH.\n"
+        f"Install a 3.11+ or create the project venv: python3.11 -m venv .venv"
     )
 
 from .cli import main

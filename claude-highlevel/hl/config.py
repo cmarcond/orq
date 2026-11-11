@@ -1,15 +1,15 @@
-"""Caminhos, ambiente do processo filho e localização do transcript."""
+"""Paths, child process environment and transcript location."""
 from __future__ import annotations
 
 import os
 import re
 from pathlib import Path
 
-# Marcadores que o Claude Code injeta no ambiente das sessões que ele mesmo abre.
-# Se qualquer um deles vazar para o filho, ele se considera sessão-filha e
-# DESLIGA a gravação do transcript — o JSONL nunca aparece e o viewer fica cego.
-# Lista explícita de propósito: varrer todo CLAUDE_* levaria junto configuração
-# legítima do usuário, como CLAUDE_CONFIG_DIR.
+# Markers that Claude Code injects into the environment of the sessions it opens itself.
+# If any of them leaks into the child, it considers itself a child session and
+# TURNS OFF transcript recording — the JSONL never appears and the viewer goes blind.
+# An explicit list on purpose: sweeping every CLAUDE_* would also take legitimate
+# user configuration with it, such as CLAUDE_CONFIG_DIR.
 SESSION_MARKERS = frozenset({
     "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
@@ -27,13 +27,13 @@ PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 
 def _socket_dirs() -> tuple[Path, ...]:
-    """Onde o Claude Code deposita os sockets de peer, do mais confiável ao menos.
+    """Where Claude Code puts the peer sockets, from the most reliable to the least.
 
-    O diretório mudou de lugar entre versões: hoje é `$XDG_RUNTIME_DIR/cc-socks`,
-    antes era `/tmp/cc-socks`. Cravar um só faz `wait_ready` esperar para sempre num
-    diretório vazio, então procuramos em todos os candidatos. O mais autoritativo é o
-    da nossa própria sessão, quando estamos rodando dentro de um Claude Code: o filho
-    herda o mesmo `XDG_RUNTIME_DIR` e vai parar exatamente ali.
+    The directory moved between versions: today it is `$XDG_RUNTIME_DIR/cc-socks`,
+    before it was `/tmp/cc-socks`. Hard-coding just one makes `wait_ready` wait forever on
+    an empty directory, so we look in all the candidates. The most authoritative is the
+    one of our own session, when we are running inside a Claude Code: the child
+    inherits the same `XDG_RUNTIME_DIR` and ends up exactly there.
     """
     candidatos = []
     proprio = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
@@ -54,18 +54,18 @@ def _socket_dirs() -> tuple[Path, ...]:
 
 
 SOCKET_DIRS = _socket_dirs()
-SOCKET_DIR = SOCKET_DIRS[0]      # o provável; `socket_for_pid` cobre os outros
+SOCKET_DIR = SOCKET_DIRS[0]      # the likely one; `socket_for_pid` covers the others
 
 
 def child_env(cols: int = 110, rows: int = 40) -> dict[str, str]:
-    """Ambiente limpo para uma sessão filha."""
+    """Clean environment for a child session."""
     env = {k: v for k, v in os.environ.items() if k not in SESSION_MARKERS}
     env.update({"TERM": "xterm-256color", "COLUMNS": str(cols), "LINES": str(rows)})
     return env
 
 
 def resolve_cwd(cwd: str | os.PathLike) -> Path:
-    """`/tmp/x` e `/private/tmp/x` são o mesmo diretório, mas só um vira chave de log."""
+    """`/tmp/x` and `/private/tmp/x` are the same directory, but only one becomes the log key."""
     return Path(cwd).expanduser().resolve()
 
 
@@ -78,10 +78,10 @@ def project_log_dir(cwd: str | os.PathLike) -> Path:
 
 
 def find_transcript(session_id: str, cwd: str | os.PathLike | None = None) -> Path | None:
-    """Caminho do JSONL da sessão, ou None se ainda não foi criado.
+    """Path of the session's JSONL, or None if it has not been created yet.
 
-    Atalho pela chave calculada; se falhar, procura pelo UUID em todos os projetos —
-    o id é único, então isso é imune a qualquer regra de nome que a gente não conheça.
+    Shortcut through the computed key; if that fails, looks for the UUID in every project —
+    the id is unique, so this is immune to any naming rule we do not know about.
     """
     if cwd is not None:
         direct = project_log_dir(cwd) / f"{session_id}.jsonl"
@@ -92,7 +92,7 @@ def find_transcript(session_id: str, cwd: str | os.PathLike | None = None) -> Pa
 
 
 def socket_for_pid(pid: int) -> Path:
-    """O socket desse pid, procurado em todos os diretórios candidatos."""
+    """The socket of this pid, looked up in all the candidate directories."""
     nome = f"{pid}.sock"
     for diretorio in SOCKET_DIRS:
         caminho = diretorio / nome

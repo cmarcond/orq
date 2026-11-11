@@ -1,199 +1,213 @@
-# Plano de implementação — 5 fases
+# Implementation plan — 5 phases
 
-O exercício de aceitação é sempre o mesmo, o do experimento original:
+> Translation note: this plan was written in Portuguese and the runs recorded here used
+> the original Portuguese prompts. In those runs the professor narrated in Portuguese,
+> the greeting was `Olá, <nome>!` and the milestone keywords were `PLANEJANDO`,
+> `IMPLEMENTANDO`, `PROBLEMA`, `VALIDANDO`, `CONCLUÍDO`. The pipelines now ship in
+> English, so the text below uses the English keywords.
 
-> **Tarefa T:** criar em `<cwd do run>` um `hello.py` que recebe um nome por argumento
-> e imprime `Olá, <nome>!`, com pelo menos 3 testes automatizados, e rodar os testes.
+The acceptance exercise is always the same, the one from the original experiment:
+
+> **Task T:** create in `<the run's cwd>` a `hello.py` that takes a name as an argument
+> and prints `Olá, <nome>!`, with at least 3 automated tests, and run the tests.
 >
-> O **professor** nunca escreve código: ele delega ao **executor** e narra em português
-> natural. O executor reporta só marcos (`PLANEJANDO`, `IMPLEMENTANDO`, `PROBLEMA`,
-> `VALIDANDO`, `CONCLUÍDO`).
+> The **professor** never writes code: it delegates to the **executor** and narrates in
+> natural language. The executor reports milestones only (`PLANNING`, `IMPLEMENTING`,
+> `PROBLEM`, `VALIDATING`, `DONE`).
 
-Cada fase repete a tarefa T e sobe um degrau de exigência. Nada é dado como pronto
-sem a T passando de ponta a ponta naquela fase.
-
----
-
-## Fase 1 — Núcleo: subir, tailer, normalizar  ✅ concluída
-
-**Entrega:** `hl/session.py`, `hl/gates.py`, `hl/tailer.py`, `hl/events.py`,
-`hl/config.py` e um `hl/cli.py` com `hl run --task "…"` que imprime eventos coloridos
-no terminal. Sem web ainda.
-
-Três problemas concretos, já mapeados no spike, precisam morrer aqui:
-
-1. **Env do processo filho.** Se o app for iniciado de dentro de uma sessão Claude
-   Code, o filho herda `CLAUDE_CODE_CHILD_SESSION` e **o transcript não é gravado** —
-   o JSONL nunca aparece e o viewer fica cego. O spawner limpa `CLAUDECODE`,
-   `AI_AGENT` e todo `CLAUDE_*` antes de subir.
-2. **Chave do diretório de log.** `/tmp/x` vira `-private-tmp-x`: resolver `realpath`
-   do cwd antes de montar `~/.claude/projects/<chave>`.
-3. **Portões de boot.** Diálogo de confiança do diretório e aviso do
-   `bypassPermissions` são respondidos por `gates.py`, com timeout que vira erro.
-
-**Teste:** `hl run --cwd /tmp/hl-t1 --task T`. Passa quando:
-- os dois JSONL aparecem em `~/.claude/projects/-private-tmp-hl-t1/` com os UUIDs que
-  **nós** escolhemos;
-- o terminal mostra, em cores diferentes, `wire_out` (professor→executor),
-  `wire_in` (executor→professor) e `narration`;
-- `hello.py` existe e os testes rodam;
-- `hl run` mata os dois processos ao sair, sem deixar órfão (`pgrep -f claude`).
-
-**Resultado (28/08):** passou. `python3 -m hl run --cwd /private/tmp/hl-t1 --task "…"
---permission-mode auto` entregou `hello.py` + `test_hello.py` com 12 testes verdes,
-os dois transcripts nasceram com os UUIDs escolhidos, o PTY de cada nível ficou em
-`runs/<id>/`, e o encerramento não deixou processo nem socket para trás.
-
-Três defeitos encontrados e corrigidos no caminho: prontidão medida pelo transcript
-(deadlock), classes de permissão diferentes entre níveis (mensagem retida) e registros
-de custo reiniciando o cronômetro de silêncio (o run nunca encerrava sozinho).
+Each phase repeats task T and raises the bar one step. Nothing counts as done without T
+passing end to end in that phase.
 
 ---
 
-## Fase 2 — Orquestrador e servidor  ✅ concluída
+## Phase 1 — Core: start, tail, normalize  ✅ done
 
-**Entrega:** `hl/orchestrator.py` (ciclo de vida do run, ordem de subida de baixo para
-cima, injeção da tarefa, parada), `hl/bus.py` (fan-out + buffer com `seq`),
-`hl/server.py` (FastAPI: `POST /api/runs`, `GET /api/runs/{id}`,
-`POST /api/runs/{id}/message`, `POST /api/runs/{id}/stop`, `WS /ws/runs/{id}`).
-Persistência em `runs/<id>/events.ndjson`.
+**Deliverable:** `hl/session.py`, `hl/gates.py`, `hl/tailer.py`, `hl/events.py`,
+`hl/config.py` and an `hl/cli.py` with `hl run --task "…"` that prints colored events in
+the terminal. No web yet.
 
-**Teste:** sem navegador, com `curl` + um cliente WS de linha de comando:
-- `POST /api/runs` com a tarefa T devolve `run_id` e os dois níveis sobem;
-- o WS entrega a mesma sequência de eventos que a fase 1 imprimia;
-- reconectar com `?since=<seq>` **não perde nem duplica** evento;
-- `POST /stop` derruba tudo; `runs/<id>/events.ndjson` reproduz o run inteiro.
+Three concrete problems, already mapped in the spike, have to die here:
 
-**Resultado (28/08):** passou. 32 eventos lidos em duas conexões (corte proposital no
-`seq` 12, reconexão pedindo `since=12`, retomada no 13): **zero duplicado, zero furo**.
-Histórico contíguo `1..40`, persistido em `events.ndjson`, e a mensagem enviada por
-`POST /message` chegou ao professor como evento `prompt`.
+1. **The child process's env.** If the app is started from inside a Claude Code session,
+   the child inherits `CLAUDE_CODE_CHILD_SESSION` and **the transcript is not written** —
+   the JSONL never appears and the viewer is blind. The spawner clears `CLAUDECODE`,
+   `AI_AGENT` and every `CLAUDE_*` before starting.
+2. **The log directory key.** `/tmp/x` becomes `-private-tmp-x`: resolve the `realpath`
+   of the cwd before building `~/.claude/projects/<key>`.
+3. **Boot gates.** The directory trust dialog and the `bypassPermissions` warning are
+   answered by `gates.py`, with a timeout that becomes an error.
 
-**Desvio do plano:** WebSocket virou **SSE**. O fluxo é de mão única e o `Last-Event-ID`
-do SSE é o nosso `seq`, então a reconexão sem furo é nativa — e o servidor cabe na
-biblioteca padrão, sem FastAPI nem uvicorn.
+**Test:** `hl run --cwd /tmp/hl-t1 --task T`. It passes when:
+- both JSONL files appear in `~/.claude/projects/-private-tmp-hl-t1/` with the UUIDs
+  that **we** chose;
+- the terminal shows, in different colors, `wire_out` (professor→executor),
+  `wire_in` (executor→professor) and `narration`;
+- `hello.py` exists and the tests run;
+- `hl run` kills both processes on exit, leaving no orphan (`pgrep -f claude`).
 
----
+**Result (28/08):** passed. `python3 -m hl run --cwd /private/tmp/hl-t1 --task "…"
+--permission-mode auto` delivered `hello.py` + `test_hello.py` with 12 green tests, both
+transcripts were created with the chosen UUIDs, the PTY of each level was saved in
+`runs/<id>/`, and the shutdown left no process or socket behind.
 
-## Fase 3 — Interface: o palco limpo  ✅ concluída
-
-**Entrega:** `web/` (HTML/CSS/JS puro): rail de níveis com cor e estado, **palco**
-central só com a narração do professor (markdown, fonte grande), painel **fios** com
-as mensagens entre os níveis, toggles de `tool calls` e `thinking`, gaveta de terminal
-cru por sessão.
-
-**Teste:** rodar a tarefa T pelo navegador. Passa quando:
-- o palco **não** contém nenhum bloco `@ executor❯`, nenhuma tool call, nenhum
-  thinking — só a narração (é o critério que definiu o 9/10 do experimento);
-- os 5 marcos do executor aparecem no painel de fios, cada um com sua cor de origem;
-- o estado de cada nível muda visivelmente entre ocioso e trabalhando;
-- fechar e reabrir a aba no meio do run reconstrói a tela inteira sem buraco.
-
-**Resultado (28/08):** passou, no navegador de verdade. O palco ficou só com a narração
-do professor; os marcos do executor foram para os fios com a cor de origem; os chips de
-estado alternaram entre ocioso, trabalhando e morto; e recarregar a página no meio do
-trabalho reconstruiu palco e fios inteiros (`?since=0` no `EventSource`).
-
-Três defeitos encontrados olhando a tela, não o código: `display:grid` vencia o atributo
-`hidden` e a tela do run aparecia por baixo do formulário; a narração do **executor**
-invadia o palco (justo o critério da tela limpa); e o colapso do eco assumia que a saída
-chega antes da entrada — os dois transcripts são lidos em paralelo, então a ordem não é
-garantida.
-
-Um pedaço da fase 4 veio junto de brinde: mandei pelo chat *"peça pro executor adicionar
-um teste para nome com emoji"*, o professor repassou por `SendMessage` e o executor
-alterou o `test_hello.py` — o ciclo inteiro, do navegador até o disco.
+Three defects found and fixed along the way: readiness measured by the transcript
+(deadlock), different permission classes between levels (message held) and cost records
+restarting the silence timer (the run never ended by itself).
 
 ---
 
-## Fase 4 — Interação e controle  ✅ concluída
+## Phase 2 — Orchestrator and server  ✅ done
 
-**Entrega:** chat funcional (envio ao nível 1 por padrão, seletor para falar direto com
-qualquer nível, texto em **bracketed paste** para não submeter na quebra de linha nem
-abrir autocomplete no `/`), detecção de nível **bloqueado** com resposta pela UI
-(`POST /keys`), parada e limpeza, lista de runs anteriores com replay.
+**Deliverable:** `hl/orchestrator.py` (run life cycle, bottom-up start order, task
+injection, stop), `hl/bus.py` (fan-out + buffer with `seq`), `hl/server.py` (FastAPI:
+`POST /api/runs`, `GET /api/runs/{id}`, `POST /api/runs/{id}/message`,
+`POST /api/runs/{id}/stop`, `WS /ws/runs/{id}`). Persistence in
+`runs/<id>/events.ndjson`.
 
-O estado **bloqueado** não sai do JSONL: quando um nível para num prompt de permissão,
-o `tool_use` já foi gravado e o `tool_result` nunca chega — o transcript fica em silêncio.
-Quem sabe é o PTY. A regra é: `tool_use` pendente **e** diálogo reconhecido na tela.
+**Test:** no browser, with `curl` + a command-line WS client:
+- `POST /api/runs` with task T returns a `run_id` and both levels start;
+- the WS delivers the same sequence of events that phase 1 printed;
+- reconnecting with `?since=<seq>` **neither loses nor duplicates** an event;
+- `POST /stop` brings everything down; `runs/<id>/events.ndjson` reproduces the whole run.
 
-**Teste:** durante a tarefa T,
-- perguntar no chat "ele já rodou os testes?" e a resposta do professor aparecer no
-  palco sem quebrar o fluxo do executor;
-- mandar "peça pra ele adicionar um teste de nome vazio" e o pedido aparecer como
-  `wire_out` e depois virar trabalho real no executor;
-- rodar um nível em modo `manual` de propósito, pedir algo que exige aprovação
-  (uma chamada de rede, por exemplo), ver o nível ficar **bloqueado** com o pedido e as
-  opções na tela, e destravá-lo por um clique;
-- abrir um run encerrado e reproduzir a narração inteira.
+**Result (28/08):** passed. 32 events read over two connections (a deliberate cut at
+`seq` 12, a reconnection asking for `since=12`, resuming at 13): **zero duplicates, zero
+gaps**. Contiguous history `1..40`, persisted in `events.ndjson`, and the message sent
+through `POST /message` reached the professor as a `prompt` event.
 
-**Resultado (28/08):** passou, os quatro. O bloqueio foi provocado de propósito — nível
-em `manual` mandado a fazer uma chamada de rede — e apareceu no rail em vermelho com as
-quatro opções reais do diálogo (`1. Yes`, `2. Yes, and don't ask again for: curl *`, …).
-Clicar liberou; o executor bateu num **segundo** pedido, para outro comando, e o
-`POST /allow` liberou de novo até a tarefa concluir (`HTTP 200`).
-
-O replay foi testado do jeito honesto: o servidor foi **reiniciado** antes, então o run
-só existia em disco. Abriu pela lista, reconstruiu palco e fios, e o SSE fechou no evento
-`fim` em vez de ficar reconectando.
-
-Dois defeitos de legibilidade no terminal cru, os dois vindos da mesma raiz: a TUI
-escreve os espaços entre palavras como **movimento de cursor**, não como espaço. Apagar
-todo escape gruda tudo (`esctointerrupt`); trocar todo escape por espaço quebra palavra
-no meio. Movimento virou espaço, o resto some. E o regex de ANSI não cobria os modos
-privados (`\x1b[>4m`, `\x1b[<u`) nem salvar/restaurar cursor, que vazavam crus na tela.
+**Deviation from the plan:** WebSocket became **SSE**. The flow is one-way and SSE's
+`Last-Event-ID` is our `seq`, so gap-free reconnection is native — and the server fits in
+the standard library, with no FastAPI or uvicorn.
 
 ---
 
-## Fase 5 — Pipelines como dado, endurecimento, E2E  ✅ concluída
+## Phase 3 — Interface: the clean stage  ✅ done
 
-**Entrega:** `pipelines/*.yaml` (papéis, modelo, modo de permissão, cor por nível),
-suporte a **3 níveis** (professor → arquiteto → executor) só editando YAML, sufixo de
-run no nome do peer para runs simultâneos, `README.md`, e um teste E2E automatizado
-que roda a tarefa T e valida os eventos.
+**Deliverable:** `web/` (plain HTML/CSS/JS): a rail of levels with color and state, a
+central **stage** with only the professor's narration (markdown, large font), a **wires**
+panel with the messages between the levels, toggles for `tool calls` and `thinking`, a
+raw terminal drawer per session.
 
-**Teste:**
-- `pytest` sobe o pipeline de 2 níveis com a tarefa T, e afirma sobre o
-  `events.ndjson`: existe ≥1 `wire_out` do nível 1, ≥3 `wire_in` do nível 2,
-  ≥3 `narration` do nível 1, zero `narration` do nível 2 no palco, e `hello.py`
-  com testes verdes no cwd;
-- o mesmo teste com o pipeline de 3 níveis passa sem tocar em código Python;
-- dois runs simultâneos em diretórios diferentes não se confundem (nomes com sufixo);
-- checklist de higiene: nenhum `claude` órfão, nenhum socket vazado em `/tmp/cc-socks`.
+**Test:** run task T from the browser. It passes when:
+- the stage contains **no** `@ executor❯` block, no tool call, no thinking — only the
+  narration (this is the criterion that defined the 9/10 of the experiment);
+- the executor's 5 milestones appear in the wires panel, each with the color of its
+  origin;
+- the state of each level visibly changes between idle and working;
+- closing and reopening the tab in the middle of the run rebuilds the whole screen with
+  no hole.
 
-**Resultado (28/08):** o pipeline de **três níveis** passou sem uma linha de Python
-tocada — só um `.toml` a mais. O de dois níveis falhou na primeira rodada, e a falha era
-minha: eu exigia três marcos do executor, e naquela execução ele fez a tarefa inteira de
-uma vez e reportou **uma** vez só, com oito testes verdes. Quantos marcos o executor
-manda é juízo dele, não garantia do sistema.
+**Result (28/08):** passed, in a real browser. The stage held only the professor's
+narration; the executor's milestones went to the wires with the color of their origin;
+the state chips alternated between idle, working and dead; and reloading the page in the
+middle of the work rebuilt the whole stage and wires (`?since=0` on the `EventSource`).
 
-A asserção foi trocada por entrega em vez de quantidade — e aí o teste revelou algo que
-eu não sabia sobre o mecanismo. Exigir um `wire_in` para cada `wire_out` falhou no
-pipeline de três níveis, mas **nada tinha se perdido**: o executor mandou três marcos
-enquanto o arquiteto estava no meio de um turno, e o Claude Code **agrupou** as três
-numa entrega só. O arquiteto respondeu pelos três. Ou seja: mensagens de peer que chegam
-com o destinatário ocupado são coalescidas, e não existe correspondência 1 para 1.
+Three defects found by looking at the screen, not at the code: `display:grid` beat the
+`hidden` attribute and the run screen showed underneath the form; the **executor's**
+narration invaded the stage (the very criterion of the clean screen); and the echo
+collapse assumed that the outgoing message arrives before the incoming one — the two
+transcripts are read in parallel, so the order is not guaranteed.
 
-O que o teste afirma agora é mais fraco e mais verdadeiro: para toda mensagem enviada, ou
-o corpo aparece como `wire_in` no destino, ou **o destino produziu algum evento depois
-dela** — isto é, acordou. Isso pega furo de canal de verdade sem depender de um
-comportamento que o sistema nunca prometeu. Validado contra os 15 runs gravados até aqui.
-
-**Desvio do plano:** YAML virou **TOML**. `tomllib` é biblioteca padrão desde o 3.11, e
-YAML exigiria a primeira dependência externa do projeto.
-
-**Dois bugs encontrados pelo próprio teste.** O `stop()` parava os tailers **antes** de
-derrubar as sessões, então o fim do transcript se perdia — agora derruba as sessões
-primeiro e dá uma última drenada antes de fechar. E o segundo: o estado `trabalhando` nunca voltava para
-`ocioso`. Eu procurava o rodapé "esc to interrupt" na tela, mas ele fica preso no buffer
-depois que a sessão para — e o rodapé de ocioso não serve de contraprova, porque muda
-conforme o modo de permissão. O sinal honesto é o ritmo do terminal: a TUI repinta sem
-parar enquanto há turno em andamento e emudece quando acaba. Agora `trabalhando` exige o
-rodapé na tela **e** saída recente no PTY.
+A piece of phase 4 came along for free: I sent through the chat *"peça pro executor
+adicionar um teste para nome com emoji"* (ask the executor to add a test for a name with
+an emoji), the professor passed it on through `SendMessage` and the executor changed
+`test_hello.py` — the whole cycle, from the browser to the disk.
 
 ---
 
-## Ordem de risco
+## Phase 4 — Interaction and control  ✅ done
 
-O risco todo está na fase 1 — é lá que mora tudo que já quebrou no spike (env herdado,
-chave de path, diálogo de boot). Fases 2–5 são construção sobre terreno conhecido.
+**Deliverable:** a working chat (sends to level 1 by default, a selector to talk directly
+to any level, text as a **bracketed paste** so it is not submitted at a line break and
+does not open the autocomplete on `/`), detection of a **blocked** level with an answer
+from the UI (`POST /keys`), stop and cleanup, a list of previous runs with replay.
+
+The **blocked** state does not come from the JSONL: when a level stops on a permission
+prompt, the `tool_use` has already been written and the `tool_result` never arrives — the
+transcript goes silent. The one that knows is the PTY. The rule is: a pending `tool_use`
+**and** a recognized dialog on the screen.
+
+**Test:** during task T,
+- ask in the chat "has it run the tests yet?" and the professor's answer appears on the
+  stage without breaking the executor's flow;
+- send "ask it to add a test for an empty name" and the request appears as a `wire_out`
+  and then becomes real work in the executor;
+- run a level in `manual` mode on purpose, ask for something that needs approval (a
+  network call, for example), see the level become **blocked** with the request and the
+  options on the screen, and unblock it with one click;
+- open a finished run and replay the whole narration.
+
+**Result (28/08):** passed, all four. The block was caused on purpose — a level in
+`manual` told to make a network call — and it showed up in the rail in red with the four
+real options of the dialog (`1. Yes`, `2. Yes, and don't ask again for: curl *`, …).
+Clicking released it; the executor hit a **second** request, for another command, and
+`POST /allow` released it again until the task finished (`HTTP 200`).
+
+The replay was tested the honest way: the server was **restarted** first, so the run
+existed only on disk. It opened from the list, rebuilt stage and wires, and the SSE closed
+on the `fim` event instead of reconnecting forever.
+
+Two readability defects in the raw terminal, both from the same root: the TUI writes the
+spaces between words as **cursor movement**, not as spaces. Deleting every escape glues
+everything together (`esctointerrupt`); replacing every escape with a space breaks words
+in the middle. Movement became a space, the rest is dropped. And the ANSI regex did not
+cover the private modes (`\x1b[>4m`, `\x1b[<u`) or save/restore cursor, which leaked raw
+onto the screen.
+
+---
+
+## Phase 5 — Pipelines as data, hardening, E2E  ✅ done
+
+**Deliverable:** `pipelines/*.yaml` (roles, model, permission mode, color per level),
+support for **3 levels** (professor → arquiteto → executor) just by editing YAML, a run
+suffix in the peer name for simultaneous runs, `README.md`, and an automated E2E test
+that runs task T and validates the events.
+
+**Test:**
+- `pytest` starts the 2-level pipeline with task T, and asserts on `events.ndjson`: there
+  is ≥1 `wire_out` from level 1, ≥3 `wire_in` from level 2, ≥3 `narration` from level 1,
+  zero `narration` from level 2 on the stage, and `hello.py` with green tests in the cwd;
+- the same test with the 3-level pipeline passes without touching Python code;
+- two simultaneous runs in different directories do not get mixed up (names with a
+  suffix);
+- hygiene checklist: no orphan `claude`, no leaked socket in `/tmp/cc-socks`.
+
+**Result (28/08):** the **three-level** pipeline passed without a line of Python touched
+— just one more `.toml`. The two-level one failed on the first run, and the failure was
+mine: I required three milestones from the executor, and in that execution it did the
+whole task in one go and reported only **once**, with eight green tests. How many
+milestones the executor sends is its own judgment, not a guarantee of the system.
+
+The assertion was changed to check delivery instead of quantity — and then the test
+revealed something I did not know about the mechanism. Requiring one `wire_in` for each
+`wire_out` failed on the three-level pipeline, but **nothing had been lost**: the
+executor sent three milestones while the arquiteto was in the middle of a turn, and
+Claude Code **batched** the three into a single delivery. The arquiteto answered all
+three. In other words: peer messages that arrive while the recipient is busy are
+coalesced, and there is no 1-to-1 correspondence.
+
+What the test asserts now is weaker and truer: for every message sent, either the body
+appears as a `wire_in` at the destination, or **the destination produced some event
+after it** — that is, it woke up. This catches a real hole in the channel without
+depending on a behavior the system never promised. Validated against the 15 runs
+recorded so far.
+
+**Deviation from the plan:** YAML became **TOML**. `tomllib` has been in the standard
+library since 3.11, and YAML would require the project's first external dependency.
+
+**Two bugs found by the test itself.** `stop()` stopped the tailers **before** bringing
+the sessions down, so the end of the transcript was lost — now it brings the sessions
+down first and does one last drain before closing. And the second: the `trabalhando`
+(working) state never went back to `ocioso` (idle). I was looking for the "esc to
+interrupt" footer on the screen, but it stays stuck in the buffer after the session
+stops — and the idle footer is no good as a cross-check, because it changes with the
+permission mode. The honest signal is the rhythm of the terminal: the TUI repaints
+non-stop while a turn is in progress and goes quiet when it ends. Now `trabalhando`
+requires the footer on the screen **and** recent output on the PTY.
+
+---
+
+## Order of risk
+
+All the risk is in phase 1 — that is where everything that already broke in the spike
+lives (inherited env, path key, boot dialog). Phases 2–5 are building on known ground.
