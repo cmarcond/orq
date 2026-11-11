@@ -20,7 +20,7 @@ single-user tool: there are no user accounts, roles or tenants. Everything is Py
 |---|---|
 | `claude-multiconta/` | Shell and Python scripts, no dependencies. One Claude Code account per directory through `CLAUDE_CONFIG_DIR` (the default account uses `~/.claude` with the variable unset). `install.sh` generates aliases (`claude-<name>`, `claude-<name>-login`, `claude-usage-<name>`) from `accounts.json`. `usage-all` queries the Anthropic usage API per account and prints the 5-hour and 7-day windows with a pace marker and a fleet TOTAL; `usage-hist` keeps a SQLite history filled by a 5-minute collector; `usage-sessoes` shows which sessions consume each account; `claude-last` / `claude-resume` find and resume the latest conversation of a folder, copying it to another account when asked (`--as`); `orq` opens up to four projects in a tmux grid. `accounts.json` is also the configuration file that `orq-web` reads (`permission_mode`, `orq_hosts`, `auto_switch`). |
 | `orq-web/` | Python package `orqweb` with two commands. **`orq-agent`** (`orqweb/agent/`) is a supervisor that runs on every machine, one process per agent. **`orq-web`** (`orqweb/server/` plus `static/`) is an HTTP server and a web page with no build step. |
-| `claude-highlevel/` | An earlier experiment: a pipeline of Claude Code sessions in tiers (teacher → executor) driven through a PTY with its own screen. It is kept as a historical reference; the idea was reimplemented inside `orq-web` as "levels" (see `orq-web/docs/PLANO.md`, phase 3). Its CI runs only the fast tests. |
+| `claude-highlevel/` | An earlier experiment: a pipeline of Claude Code sessions in tiers (teacher → executor) driven through a PTY with its own screen. It is kept as a historical reference; the idea was reimplemented inside `orq-web` as "levels" (see `orq-web/docs/PLAN.md`, phase 3). Its CI runs only the fast tests. |
 
 Main modules of `orq-web`:
 
@@ -204,7 +204,7 @@ One workflow per sub-project, triggered only by changes in its directory.
 
 ## Limits and known gaps
 
-From `docs/06` (6.6), `docs/08` (8.3, 8.5), `orq-web/README.md` and `orq-web/docs/PLANO.md`:
+From `docs/06` (6.6), `docs/08` (8.3, 8.5), `orq-web/README.md` and `orq-web/docs/PLAN.md`:
 
 - Switching the account of a linked agent does not rebuild the link: the agent restarts with a new
   pid, the link drops and must be made again.

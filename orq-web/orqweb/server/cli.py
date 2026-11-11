@@ -1,8 +1,8 @@
-"""orq-web: página local com cota, abas e chat com os agentes do orq.
+"""orq-web: local page with quota, tabs and chat with the orq agents.
 
-Uso: orq-web [--port N] [--no-open]   (padrão 8765; só 127.0.0.1, com token no link)
+Usage: orq-web [--port N] [--no-open]   (default 8765; 127.0.0.1 only, with token in the link)
 
-Reiniciar na mesma porta mantém o token: a aba já aberta continua valendo.
+Restarting on the same port keeps the token: the tab that is already open stays valid.
 """
 
 import argparse
@@ -17,7 +17,7 @@ def main(argv=None) -> int:
         prog="orq-web", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--no-open", action="store_true", help="não abre o navegador (= ORQ_NO_OPEN=1)")
+    ap.add_argument("--no-open", action="store_true", help="do not open the browser (= ORQ_NO_OPEN=1)")
     a = ap.parse_args(argv)
     if a.no_open:
         os.environ["ORQ_NO_OPEN"] = "1"

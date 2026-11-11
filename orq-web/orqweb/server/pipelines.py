@@ -1,12 +1,12 @@
-"""Receitas de níveis (`orqweb/pipelines/*.toml`): quem sobe acima de um agente da página e com que papel.
+"""Level recipes (`orqweb/pipelines/*.toml`): who is added above a page agent and with what role.
 
-Uma receita é dado, não código: cada `[[niveis]]` é um nível a mais, do topo para baixo. O agente da
-aba é sempre a base (o executor) e não ganha papel novo; os níveis sobem na mesma máquina, pasta e
-conta, e conversam pelo SendMessage/ListAgents nativo do Claude Code. `{acima}`/`{abaixo}`/`{eu}` no papel
-viram os nomes reais das sessões (os que o SendMessage aceita, sem `@`).
+A recipe is data, not code: each `[[niveis]]` is one more level, from the top down. The tab's agent
+is always the base (the executor) and gets no new role; the levels start on the same machine, folder and
+account, and talk through Claude Code's native SendMessage/ListAgents. `{acima}`/`{abaixo}`/`{eu}` in the role
+become the real names of the sessions (the ones SendMessage accepts, without `@`).
 
-O TOML é lido pelo `tomllib` (3.11+); em Python mais antigo um leitor mínimo cobre o subconjunto que
-as receitas usam (strings simples e de três aspas, `[[tabelas]]`, comentários).
+The TOML is read by `tomllib` (3.11+); on older Python a minimal reader covers the subset that
+the recipes use (plain and triple-quoted strings, `[[tables]]`, comments).
 """
 
 import json
@@ -18,7 +18,7 @@ from ..config import host_of, session_name
 
 PIPELINE_DIR = Path(__file__).resolve().parent.parent / "pipelines"
 DEFAULT = "professor-executor"
-SEP = "~"  # `kaggle~professor@server0`: nível `professor` sobre `kaggle@server0`
+SEP = "~"  # `kaggle~professor@server0`: level `professor` over `kaggle@server0`
 
 
 @dataclass(frozen=True)
@@ -26,12 +26,12 @@ class Pipeline:
     id: str
     titulo: str
     descricao: str
-    niveis: List[Dict[str, Any]]  # do topo para baixo: nome, papel, cor
+    niveis: List[Dict[str, Any]]  # from the top down: nome, papel, cor
 
     @property
     def multi(self) -> bool:
-        """Receita cujo nível de baixo coordena vários executores (usa `{executores}`): os agentes
-        vinculados (🔗) ao da aba entram como executores e ganham vínculo com esse nível."""
+        """Recipe whose bottom level coordinates several executors (uses `{executores}`): the agents
+        linked (🔗) to the tab's one go in as executors and get a link to that level."""
         return any("{executores}" in str(n.get("papel", "")) for n in self.niveis)
 
     def summary(self) -> Dict[str, Any]:
@@ -45,7 +45,7 @@ class Pipeline:
         }
 
 
-# ------------------------------------------------------------------ leitura
+# ------------------------------------------------------------------ reading
 def parse_toml(text: str) -> Dict[str, Any]:
     try:
         import tomllib  # Python 3.11+
@@ -55,7 +55,7 @@ def parse_toml(text: str) -> Dict[str, Any]:
 
 
 def _unquote(raw: str) -> str:
-    """String de uma linha, básica ou literal; o que vem depois do fecho (comentário) é ignorado."""
+    """One-line string, basic or literal; what comes after the closing quote (comment) is ignored."""
     raw = raw.strip()
     if raw.startswith('"'):
         i, esc = 1, False
@@ -66,19 +66,19 @@ def _unquote(raw: str) -> str:
             elif c == "\\":
                 esc = True
             elif c == '"':
-                return json.loads(raw[: i + 1])  # escapes do TOML básico coincidem com os do JSON
+                return json.loads(raw[: i + 1])  # basic TOML escapes coincide with JSON's
             i += 1
-        raise ValueError(f"string sem fecho: {raw!r}")
+        raise ValueError(f"unterminated string: {raw!r}")
     if raw.startswith("'"):
         end = raw.find("'", 1)
         if end < 0:
-            raise ValueError(f"string sem fecho: {raw!r}")
+            raise ValueError(f"unterminated string: {raw!r}")
         return raw[1:end]
-    raise ValueError(f"valor não suportado: {raw!r}")
+    raise ValueError(f"unsupported value: {raw!r}")
 
 
 def _parse_minimal(text: str) -> Dict[str, Any]:
-    """Subconjunto do TOML: `k = "v"`, `k = '''v'''`/`k = \"\"\"v\"\"\"`, `[[tabela]]`, comentários."""
+    """Subset of TOML: `k = "v"`, `k = '''v'''`/`k = \"\"\"v\"\"\"`, `[[table]]`, comments."""
     root: Dict[str, Any] = {}
     cur = root
     lines = text.splitlines()
@@ -93,7 +93,7 @@ def _parse_minimal(text: str) -> Dict[str, Any]:
             root.setdefault(line[2:-2].strip(), []).append(cur)
             continue
         if "=" not in line:
-            raise ValueError(f"linha inválida: {line!r}")
+            raise ValueError(f"invalid line: {line!r}")
         key, raw = (s.strip() for s in line.split("=", 1))
         if raw[:3] in ('"""', "'''"):
             q = raw[:3]
@@ -121,12 +121,12 @@ def _read(path: Path) -> Pipeline:
     data = parse_toml(path.read_text(encoding="utf-8"))
     niveis = data.get("niveis") or []
     if not niveis:
-        raise ValueError(f"{path.name}: nenhum nível definido")
+        raise ValueError(f"{path.name}: no level defined")
     for n in niveis:
         if "nome" not in n or "papel" not in n:
-            raise ValueError(f"{path.name}: todo nível precisa de `nome` e `papel`")
+            raise ValueError(f"{path.name}: every level needs `nome` and `papel`")
         if "@" in n["nome"] or SEP in n["nome"] or "/" in n["nome"]:
-            raise ValueError(f"{path.name}: nome de nível inválido: {n['nome']!r}")
+            raise ValueError(f"{path.name}: invalid level name: {n['nome']!r}")
     return Pipeline(
         id=path.stem,
         titulo=str(data.get("titulo") or path.stem),
@@ -136,7 +136,7 @@ def _read(path: Path) -> Pipeline:
 
 
 def catalog(directory: Optional[Path] = None) -> Dict[str, Pipeline]:
-    """Receitas disponíveis, por id (nome do arquivo). Arquivo quebrado é pulado, não derruba a página."""
+    """Available recipes, by id (file name). A broken file is skipped, it does not bring the page down."""
     out: Dict[str, Pipeline] = {}
     for p in sorted((directory or PIPELINE_DIR).glob("*.toml")):
         if p.name.startswith("."):
@@ -152,11 +152,11 @@ def get(pipeline_id: Optional[str], directory: Optional[Path] = None) -> Pipelin
     cat = catalog(directory)
     key = pipeline_id or DEFAULT
     if key not in cat:
-        raise KeyError(f"receita desconhecida: {key}")
+        raise KeyError(f"unknown recipe: {key}")
     return cat[key]
 
 
-# ------------------------------------------------------------------ montagem
+# ------------------------------------------------------------------ assembly
 def level_label(base_label: str, nome: str) -> str:
     """`kaggle@server0` + `professor` -> `kaggle~professor@server0`."""
     base = base_label.rsplit("@", 1)[0] if "@" in base_label else base_label
@@ -164,7 +164,7 @@ def level_label(base_label: str, nome: str) -> str:
 
 
 def base_of_label(label: str) -> Optional[str]:
-    """Rótulo do agente da aba a partir do rótulo de um nível; None se não é nível."""
+    """Label of the tab's agent from the label of a level; None if it is not a level."""
     if SEP not in label:
         return None
     base, _, rest = label.partition(SEP)
@@ -173,22 +173,22 @@ def base_of_label(label: str) -> Optional[str]:
 
 
 def executors_list(base: dict, others: List[dict]) -> str:
-    """`{executores}`: uma linha por executor (o da aba primeiro), com nome de sessão, máquina e pasta."""
+    """`{executores}`: one line per executor (the tab's one first), with session name, machine and folder."""
     lines = []
-    for a, tag in [(base, " (o da aba)")] + [(o, "") for o in others]:
+    for a, tag in [(base, " (the one in the tab)")] + [(o, "") for o in others]:
         name = a.get("name") or session_name(a.get("label", ""))
-        lines.append(f"- `{name}`{tag}: máquina {a.get('host') or '?'}, pasta {a.get('dir') or '?'}")
+        lines.append(f"- `{name}`{tag}: machine {a.get('host') or '?'}, folder {a.get('dir') or '?'}")
     return "\n".join(lines)
 
 
 def plan_levels(p: Pipeline, base_label: str, executors: str = "") -> List[Dict[str, Any]]:
-    """Os níveis a subir sobre `base_label`, de baixo para cima (o de cima do último é o topo).
+    """The levels to add over `base_label`, from the bottom up (the last one is the top).
 
-    Cada item: label, level (nome), parent (rótulo logo abaixo), role (papel com os vizinhos
-    resolvidos) e color. O `{abaixo}` do nível mais baixo é o próprio agente da aba; `{executores}`
-    (receitas `multi`) é a lista pronta de `executors_list`, só no nível mais baixo.
+    Each item: label, level (name), parent (label right below), role (role with the neighbours
+    resolved) and color. The `{abaixo}` of the lowest level is the tab's agent itself; `{executores}`
+    (`multi` recipes) is the ready-made list from `executors_list`, only in the lowest level.
     """
-    labels = [level_label(base_label, n["nome"]) for n in p.niveis]  # topo -> baixo
+    labels = [level_label(base_label, n["nome"]) for n in p.niveis]  # top -> bottom
     out = []
     for i, n in enumerate(p.niveis):
         acima = labels[i - 1] if i > 0 else ""
@@ -216,7 +216,7 @@ def plan_levels(p: Pipeline, base_label: str, executors: str = "") -> List[Dict[
 
 
 def levels_above(agents: List[dict], label: str) -> List[str]:
-    """Rótulos dos níveis vivos sobre `label`, de baixo para cima, seguindo `parent`."""
+    """Labels of the live levels over `label`, from the bottom up, following `parent`."""
     out: List[str] = []
     cur = label
     while True:

@@ -12,7 +12,7 @@ defaults:
 
 jobs:
   python:
-    # 24.04 fixo: a imagem ubuntu-latest (26.04) não tem Python 3.8 no setup-python
+    # pinned to 24.04: the ubuntu-latest image (26.04) has no Python 3.8 in setup-python
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t orq-web:ci .
-      - name: fumaça
+      - name: smoke test
         run: |
           mkdir -p /tmp/orq && echo '{"accounts":[],"orq_hosts":[]}' > /tmp/orq/accounts.json && echo senha > /tmp/orq/password
           docker run -d --name orq -p 8765:8765 -e ORQ_ALLOWED_HOSTS=localhost \

@@ -1,10 +1,10 @@
-"""Eventos do agente: log numerado com replay, carimbo de origem, estado derivado e histórico antigo.
+"""Agent events: numbered log with replay, origin stamp, derived state and old history.
 
-Tudo aqui é puro (sem processo, sem socket) para ser testável. As linhas são bytes JSON com `\\n`
-no fim, no mesmo formato do stream-json do `claude -p`, mais dois tipos próprios:
+Everything here is pure (no process, no socket) so it can be tested. The lines are JSON bytes ending
+in `\\n`, in the same format as the stream-json of `claude -p`, plus two types of our own:
 
-- `{"type": "orq", "level": ..., "text": ...}`: aviso do supervisor;
-- `{"type": "orq", "subtype": "permission_answered", ...}`: a página respondeu uma permissão.
+- `{"type": "orq", "level": ..., "text": ...}`: notice from the supervisor;
+- `{"type": "orq", "subtype": "permission_answered", ...}`: the page answered a permission.
 """
 
 import json
@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-REPLAY_MAX = 400  # entradas do histórico antigo reenviadas ao retomar
+REPLAY_MAX = 400  # entries of the old history resent on resume
 
 
 def encode(obj: Dict[str, Any]) -> bytes:
@@ -28,7 +28,7 @@ def orq_event(level: str, text: str, **extra: Any) -> bytes:
 
 
 def text_of(message: Optional[Dict[str, Any]]) -> str:
-    """Texto de uma mensagem user/assistant: string, ou os blocos `text` concatenados."""
+    """Text of a user/assistant message: a string, or the `text` blocks concatenated."""
     c = (message or {}).get("content")
     if isinstance(c, str):
         return c
@@ -38,7 +38,7 @@ def text_of(message: Optional[Dict[str, Any]]) -> str:
 
 
 class EventLog:
-    """Linhas persistidas em memória e, opcionalmente, em disco. O índice é o número de sequência."""
+    """Lines persisted in memory and, optionally, on disk. The index is the sequence number."""
 
     def __init__(self, path: Optional[Path] = None):
         self.path = path
@@ -49,7 +49,7 @@ class EventLog:
             path.write_bytes(b"")
 
     def append(self, line: bytes) -> int:
-        """Guarda e devolve a sequência (1-based) da linha."""
+        """Stores the line and returns its sequence (1-based)."""
         with self.lock:
             self.lines.append(line)
             if self.path is not None:
@@ -66,7 +66,7 @@ class EventLog:
 
 
 class SentTexts:
-    """Textos que a página mandou e ainda não voltaram no eco do claude (para o carimbo `page`)."""
+    """Texts the page sent that have not yet come back in claude's echo (for the `page` stamp)."""
 
     def __init__(self, keep: int = 50):
         self.keep = keep
@@ -80,7 +80,7 @@ class SentTexts:
             self._items = (self._items + [text])[-self.keep :]
 
     def take(self, text: str) -> bool:
-        """True se `text` era nosso; consome uma ocorrência."""
+        """True if `text` was ours; consumes one occurrence."""
         with self._lock:
             if text in self._items:
                 self._items.remove(text)
@@ -89,13 +89,13 @@ class SentTexts:
 
 
 def stamp_origin(event: Dict[str, Any], sent: SentTexts) -> Dict[str, Any]:
-    """Carimba `orq_origin` numa mensagem `user` vinda do claude.
+    """Stamps `orq_origin` on a `user` message coming from claude.
 
-    - `agent`: veio de outra sessão do Claude Code pelo SendMessage (origin.kind == "peer"; o texto
-      limpo está em origin.body e quem mandou em origin.name);
-    - `page`: eco de algo que a página mandou (o claude re-emite com --replay-user-messages);
-    - `injected`: sem marca de humano (origin.kind) nem de cliente (promptSource): cron, loop, sistema;
-    - sem carimbo: mensagem humana digitada no terminal, ou meta.
+    - `agent`: came from another Claude Code session through SendMessage (origin.kind == "peer"; the
+      clean text is in origin.body and the sender in origin.name);
+    - `page`: echo of something the page sent (claude re-emits it with --replay-user-messages);
+    - `injected`: no mark of a human (origin.kind) nor of a client (promptSource): cron, loop, system;
+    - no stamp: human message typed in the terminal, or meta.
     """
     if event.get("type") != "user" or event.get("isMeta"):
         return event
@@ -130,8 +130,8 @@ QUOTA_RE = re.compile(
 
 
 def quota_exhausted(event: Dict[str, Any]) -> bool:
-    """A conta deste agente ficou sem cota: o claude avisa num `rate_limit_event` com status
-    `rejected`, ou o turno termina em erro falando de limite."""
+    """This agent's account ran out of quota: claude signals it in a `rate_limit_event` with status
+    `rejected`, or the turn ends in an error that mentions a limit."""
     t = event.get("type")
     if t == "rate_limit_event":
         return (event.get("rate_limit_info") or {}).get("status") == "rejected"
@@ -141,15 +141,17 @@ def quota_exhausted(event: Dict[str, Any]) -> bool:
 
 
 def derive_state(event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Estado do agente implicado por um evento do claude: (estado, mensagem curta), ou None se não muda.
+    """Agent state implied by a claude event: (state, short message), or None if it does not change.
 
-    `quota` = a conta ficou sem cota; o servidor migra o agente para outra conta (`msg` diz o motivo).
+    `quota` = the account ran out of quota; the server migrates the agent to another account (`msg` gives
+    the reason).
     """
     t = event.get("type")
     if quota_exhausted(event):
         info = event.get("rate_limit_info") or {}
         why = (
-            str(event.get("result") or "").strip()[:120] or f"cota esgotada ({info.get('rateLimitType', '')})"
+            str(event.get("result") or "").strip()[:120]
+            or f"quota exhausted ({info.get('rateLimitType', '')})"
         )
         return "quota", why
     if t == "control_request" and (event.get("request") or {}).get("subtype") == "can_use_tool":
@@ -158,7 +160,7 @@ def derive_state(event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
         return "permission", "{} {}".format(r.get("tool_name", ""), short[:60]).strip()
     if t == "result":
         if event.get("is_error"):
-            return "error", str(event.get("result") or event.get("subtype") or "erro")[:120]
+            return "error", str(event.get("result") or event.get("subtype") or "error")[:120]
         return "waiting", ""
     if t == "assistant":
         return "working", ""
@@ -166,14 +168,14 @@ def derive_state(event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
 
 
 def derive_state_from_client(obj: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Estado implicado por algo que o cliente mandou: mensagem nova ou resposta de permissão."""
+    """State implied by something the client sent: a new message or a permission answer."""
     if obj.get("type") in ("user", "control_response"):
         return "working", ""
     return None
 
 
 def permission_answered(obj: Dict[str, Any]) -> Optional[bytes]:
-    """Evento próprio registrando a resposta da página a uma permissão (para o replay fechar o cartão)."""
+    """Our own event recording the page's answer to a permission (so the replay closes the card)."""
     if obj.get("type") != "control_response":
         return None
     resp = obj.get("response") or {}
@@ -187,14 +189,14 @@ def permission_answered(obj: Dict[str, Any]) -> Optional[bytes]:
 
 
 def project_dir(config_dir: Path, cwd: Path) -> Path:
-    """Pasta onde o Claude Code guarda as sessões de `cwd` nesta conta."""
+    """Folder where Claude Code keeps the sessions of `cwd` under this account."""
     return config_dir / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", str(cwd))
 
 
 def transcript_entries(path: Path, limit: int = REPLAY_MAX) -> List[Dict[str, Any]]:
-    """Mensagens user/assistant de uma sessão gravada, sem sidechains, marcadas `replay`.
+    """user/assistant messages of a recorded session, without sidechains, marked `replay`.
 
-    Devolve só as últimas `limit`.
+    Returns only the last `limit`.
     """
     keep: List[Dict[str, Any]] = []
     try:

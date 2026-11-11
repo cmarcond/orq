@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Demonstração gravável dos conjuntos (⊞) com trabalho de verdade: não é teste, é roteiro.
+"""Recordable demonstration of the sets (⊞) with real work: it is not a test, it is a script.
 
-Um conjunto com dois executores (PROGRAMADOR e DOCUMENTADOR, cada um na própria pasta e com o próprio
-prompt) e um professor líder que recebe a tarefa e coordena: o programador escreve uma biblioteca Python
-com testes pytest e roda os testes; o professor repassa a API ao documentador, que escreve o README; no fim
-o professor resume. O roteiro abre a página, mostra o JSON e a lista, abre o conjunto, alterna entre as abas
-enquanto eles trabalham (aprovando permissões na tela, se houver), mostra os arquivos entregues na prévia da
-página e a fotografia das abas abertas. Legendas explicam cada passo: com DEMO_CAP_DIR, o roteiro escreve
-o texto em <dir>/t.txt e <dir>/s.txt e o ffmpeg o desenha na barra do navegador (drawtext com reload,
-filtro em qa/demo_legenda.ffmpeg); sem ele, num quadro dentro da página.
+A set with two executors (PROGRAMMER and DOCUMENTER, each in its own folder and with its own
+prompt) and a lead teacher that receives the task and coordinates: the programmer writes a Python library
+with pytest tests and runs the tests; the teacher passes the API on to the documenter, which writes the
+README; at the end the teacher summarises. The script opens the page, shows the JSON and the list, opens the
+set, alternates between the tabs while they work (approving permissions on screen, if any), shows the
+delivered files in the page's preview and the snapshot of the open tabs. Captions explain each step: with
+DEMO_CAP_DIR, the script writes the text to <dir>/t.txt and <dir>/s.txt and ffmpeg draws it on the browser bar
+(drawtext with reload, filter in qa/demo_legenda.ffmpeg); without it, in a box inside the page.
 
-Uso (no server0, num display virtual, gravando com ffmpeg):
+Usage (on server0, on a virtual display, recording with ffmpeg):
   DISPLAY=:77 ORQ_QA_HEADED=1 ORQ_LOCAL_HOST=server0 ORQ_EXTRA_HOSTS=laptop \\
     DEMO_FFMPEG_PID=<pid> DEMO_CAP_DIR=<dir> .venv/bin/python qa/demo_conjuntos.py
-Com DEMO_FFMPEG_PID, a gravação é encerrada (SIGINT) antes da limpeza. Pastas da demo, descartáveis e
-apagadas antes e depois (com o estado e as conversas): server0:~/Projects/orq-demo-prog e orq-demo-docs.
+With DEMO_FFMPEG_PID, the recording is stopped (SIGINT) before the cleanup. Demo folders, throwaway and
+deleted before and after (with the state and the conversations): server0:~/Projects/orq-demo-prog and
+orq-demo-docs.
 """
 
 import json
@@ -40,40 +41,41 @@ FILES = [
     HOME / "Projects/orq-demo-docs/README.md",
 ]
 
-TAREFA = """Tarefa do time: uma biblioteca Python pequena chamada `conversor`, que converte temperaturas entre
-Celsius, Fahrenheit e Kelvin.
+TAREFA = """Team task: a small Python library called `conversor`, which converts temperatures between
+Celsius, Fahrenheit and Kelvin.
 
-1. O programador cria conversor.py com as funções c_para_f, f_para_c, c_para_k, k_para_c e
-   converter(valor, de, para), que aceita as escalas "C", "F" e "K" e levanta ValueError para escala
-   desconhecida e para temperatura abaixo do zero absoluto; e test_conversor.py com pelo menos 8 testes
-   pytest. Ele roda `python3 -m pytest -q`, grava a saída em testes.txt e copia conversor.py e testes.txt
-   para _outbox/.
-2. Quando os testes passarem, repasse ao documentador as assinaturas e o comportamento, inclusive os erros.
-   Ele escreve README.md na pasta dele, com uso e exemplos, e copia o README.md para _outbox/.
-3. No fim, me diga em poucas linhas o resultado dos testes e o que cada um entregou.
+1. The programmer creates conversor.py with the functions c_para_f, f_para_c, c_para_k, k_para_c and
+   converter(valor, de, para), which accepts the scales "C", "F" and "K" and raises ValueError for an
+   unknown scale and for a temperature below absolute zero; and test_conversor.py with at least 8 pytest
+   tests. It runs `python3 -m pytest -q`, writes the output to testes.txt and copies conversor.py and
+   testes.txt to _outbox/.
+2. When the tests pass, pass on to the documenter the signatures and the behaviour, including the errors.
+   It writes README.md in its folder, with usage and examples, and copies README.md to _outbox/.
+3. At the end, tell me in a few lines the result of the tests and what each one delivered.
 
-Não me pergunte nada: decida o que estiver em aberto."""
+Do not ask me anything: decide whatever is open."""
 
 CONJUNTO = {
     "nome": SID,
-    "descricao": "programador + documentador, com professor: biblioteca de temperaturas com testes e README",
+    "descricao": "programmer + documenter, with a teacher: temperature library with tests and README",
     "permissao": "auto",
     "agentes": [
         {
             "maquina": HOST,
             "pasta": PROG,
             "modo": "new",
-            "prompt": "Você é o PROGRAMADOR de um time pequeno. Escreve código Python claro, com testes "
-            "pytest, só na sua pasta, e roda os testes antes de dizer que terminou. Trabalha sozinho, sem "
-            "pedir confirmação, e reporta ao professor pelo SendMessage só os marcos.",
+            "prompt": "You are the PROGRAMMER of a small team. You write clear Python code, with pytest "
+            "tests, only in your folder, and run the tests before saying you are finished. You work on your "
+            "own, without asking for confirmation, and report to the teacher through SendMessage only the "
+            "milestones.",
         },
         {
             "maquina": HOST,
             "pasta": DOCS,
             "modo": "new",
-            "prompt": "Você é o DOCUMENTADOR de um time pequeno. Escreve documentação em Markdown, curta, "
-            "com exemplos corretos para a API que receber, só na sua pasta. Não escreve código de "
-            "produção. Trabalha sozinho e reporta ao professor pelo SendMessage só os marcos.",
+            "prompt": "You are the DOCUMENTER of a small team. You write documentation in Markdown, short, "
+            "with correct examples for the API you receive, only in your folder. You do not write production "
+            "code. You work on your own and report to the teacher through SendMessage only the milestones.",
         },
     ],
     "lider": {"receita": "professor-executores", "tarefa": TAREFA},
@@ -114,7 +116,7 @@ CAP_DIR = Path(os.environ["DEMO_CAP_DIR"]) if os.environ.get("DEMO_CAP_DIR") els
 
 
 def plain(text: str) -> str:
-    """Sem emoji: o drawtext do ffmpeg não desenha emoji colorido (vira quadrado)."""
+    """Without emoji: ffmpeg's drawtext does not draw colour emoji (it becomes a square)."""
     return "".join(ch for ch in text if ord(ch) < 0x2190 or ch in "·").strip()
 
 
@@ -124,8 +126,8 @@ class Demo:
         self.view = None
 
     def cap(self, t: str, sub: str = "") -> None:
-        """Legenda. Com DEMO_CAP_DIR, vai para os arquivos t.txt e s.txt que o ffmpeg desenha por cima do
-        vídeo (drawtext com reload), na barra do navegador; sem ele, num quadro dentro da página."""
+        """Caption. With DEMO_CAP_DIR, it goes to the files t.txt and s.txt that ffmpeg draws over the
+        video (drawtext with reload), on the browser bar; without it, in a box inside the page."""
         print(f"[{time.strftime('%H:%M:%S')}] {t}", flush=True)
         if not CAP_DIR:
             self.p.evaluate(CAPTION_JS, [t, sub])
@@ -133,7 +135,7 @@ class Demo:
         for name, text in (("t.txt", t), ("s.txt", sub)):
             tmp = CAP_DIR / f".{name}.tmp"
             tmp.write_text(plain(text), encoding="utf-8")
-            os.replace(str(tmp), str(CAP_DIR / name))  # atômico: o ffmpeg nunca lê o arquivo pela metade
+            os.replace(str(tmp), str(CAP_DIR / name))  # atomic: ffmpeg never reads a half-written file
 
     def pause(self, s: float) -> None:
         self.p.wait_for_timeout(int(s * 1000))
@@ -141,14 +143,14 @@ class Demo:
     def agents(self) -> dict:
         return {a["label"]: a for a in self.o.state().get("agents", []) if a.get("state") != "closed"}
 
-    # ---- o que mostrar
+    # ---- what to show
     def show_prof(self) -> None:
-        self.o.show(L_PROG)  # a aba do primeiro agente fala com o professor (topo da cadeia)
+        self.o.show(L_PROG)  # the first agent's tab talks to the teacher (top of the chain)
         self.view = "prof"
 
     def show_prog(self) -> None:
         self.o.show(L_PROG)
-        self.p.click(f'#levels .lcard[data-l="{L_PROG}"]')  # o executor de baixo, pelo cartão do nível
+        self.p.click(f'#levels .lcard[data-l="{L_PROG}"]')  # the executor below, through the level's card
         self.view = "prog"
 
     def show_docs(self) -> None:
@@ -156,23 +158,23 @@ class Demo:
         self.view = "docs"
 
     def approve_pending(self) -> bool:
-        """Se algum agente da demo pede permissão, abre o chat dele e clica Permitir (na tela)."""
+        """If some agent of the demo asks permission, opens its chat and clicks Allow (on screen)."""
         ag = self.agents()
         for lab, show, who in (
-            (L_PROF, self.show_prof, "professor"),
-            (L_PROG, self.show_prog, "PROGRAMADOR"),
-            (L_DOCS, self.show_docs, "DOCUMENTADOR"),
+            (L_PROF, self.show_prof, "teacher"),
+            (L_PROG, self.show_prog, "PROGRAMMER"),
+            (L_DOCS, self.show_docs, "DOCUMENTER"),
         ):
             if ag.get(lab, {}).get("state") != "permission":
                 continue
             show()
-            self.cap(f"O {who} pediu permissão: aprovando na própria página", ag[lab].get("msg", "")[:70])
+            self.cap(f"The {who} asked permission: approving on the page itself", ag[lab].get("msg", "")[:70])
             try:
                 self.p.wait_for_selector(".chat.on .perm:not(.done) .btns button[data-ok='1']", timeout=15000)
                 self.pause(1.5)
                 self.o.permission(True)
-            except Exception as e:  # noqa: BLE001 - pode ter sido resolvida sozinha
-                print("  permissão não achada no chat:", str(e)[:100])
+            except Exception as e:  # noqa: BLE001 - it may have been resolved by itself
+                print("  permission not found in the chat:", str(e)[:100])
             self.pause(2)
             return True
         return False
@@ -191,21 +193,22 @@ def main() -> int:
         with sync_playwright() as pw:
             o = Orq.launch(pw, headed=True, video=False)
             d = Demo(o)
-            cleanup(o)  # começa do zero: sem agentes, pastas nem conversas de uma demo anterior
+            cleanup(o)  # starts from scratch: no agents, folders or conversations from a previous demo
             try:
                 run(d, o)
             finally:
                 if ff:
                     try:
-                        os.kill(ff, signal.SIGINT)  # fecha o vídeo antes da limpeza
+                        os.kill(ff, signal.SIGINT)  # closes the video before the cleanup
                     except OSError:
                         pass
                     time.sleep(3)
                 cleanup(o)
                 o.close()
     finally:
-        # o orq-web do QA sai sempre que foi a demo que o subiu, mesmo se ela falhar: senão ele fica de pé
-        # com pontes `attach` presas a agentes já encerrados, e a próxima demo o reaproveita sem desligar
+        # the QA's orq-web always exits when it was the demo that started it, even if the demo fails:
+        # otherwise it stays up with `attach` bridges stuck to agents already closed, and the next demo
+        # reuses it without shutting it down
         if started:
             server_down()
     return 0
@@ -216,71 +219,71 @@ def run(d: Demo, o: Orq) -> None:
     assert o.save_set(CONJUNTO) == SID
     d.pause(1)
     d.cap(
-        "orq · conjuntos",
-        "vários agentes de uma vez, cada um com o próprio prompt, com um professor líder",
+        "orq · sets",
+        "several agents at once, each with its own prompt, with a lead teacher",
     )
     d.pause(4)
 
     d.cap(
-        "1. O conjunto é um JSON",
-        "dois executores em pastas próprias, com prompts próprios, e um líder com a tarefa",
+        "1. The set is a JSON",
+        "two executors in their own folders, with their own prompts, and a lead with the task",
     )
     d.p.evaluate(JSON_JS, json.dumps(CONJUNTO, ensure_ascii=False, indent=2))
     d.pause(12)
     d.p.evaluate(JSON_JS, "")
 
     d.cap(
-        "2. O botão conjuntos: a lista dos salvos",
-        "clique abre; também baixa o JSON, apaga, recebe um pronto e fotografa as abas",
+        "2. The sets button: the list of the saved ones",
+        "a click opens; it also downloads the JSON, deletes, takes a ready-made one and snapshots the tabs",
     )
     o.open_sets()
     d.pause(6)
 
     d.cap(
-        "3. Abrindo o conjunto",
-        "os dois executores sobem, são vinculados, o professor sobe e recebe a tarefa",
+        "3. Opening the set",
+        "the two executors start, are linked, the teacher starts and receives the task",
     )
     t0 = time.time()
     job = o.open_set(SID, timeout=300)
     print(
-        "  aberto em",
+        "  opened in",
         round(time.time() - t0),
         "s:",
         job["feitos"],
-        "professor:",
+        "teacher:",
         job["top"],
-        "erros:",
+        "errors:",
         job["erros"],
     )
     d.show_prof()
     d.cap(
-        "4. O professor recebe a tarefa e distribui o trabalho",
-        "ele nunca escreve código: delega pelo SendMessage",
+        "4. The teacher receives the task and distributes the work",
+        "it never writes code: it delegates through SendMessage",
     )
     d.pause(15)
 
-    # trabalho: alterna entre os três, aprovando permissões se houver, até os arquivos existirem e todos
-    # pararem
+    # work: alternates between the three, approving permissions if any, until the files exist and all of
+    # them stop
     views = [
         (
             d.show_prog,
-            "O PROGRAMADOR escreve conversor.py e os testes, e roda o pytest",
-            "pasta ~/Projects/orq-demo-prog",
+            "The PROGRAMMER writes conversor.py and the tests, and runs pytest",
+            "folder ~/Projects/orq-demo-prog",
         ),
         (
             d.show_prof,
-            "O professor acompanha os marcos e repassa a API",
-            "os fios à direita são as mensagens entre eles",
+            "The teacher follows the milestones and passes the API on",
+            "the wires on the right are the messages between them",
         ),
         (
             d.show_docs,
-            "O DOCUMENTADOR escreve o README com a API que recebeu",
-            "pasta ~/Projects/orq-demo-docs, outra aba",
+            "The DOCUMENTER writes the README with the API it received",
+            "folder ~/Projects/orq-demo-docs, another tab",
         ),
         (
             d.show_prof,
-            "O professor acompanha os marcos e repassa a API",
-            "os fios à direita são as mensagens entre eles",
+            "The teacher follows the milestones and passes the API on",
+            "the wires on the right are the messages between them",
         ),
     ]
     end = time.time() + 20 * 60
@@ -289,7 +292,7 @@ def run(d: Demo, o: Orq) -> None:
         show, t, sub = views[i % len(views)]
         show()
         d.cap(t, sub)
-        for _ in range(10):  # ~20 s nesta vista
+        for _ in range(10):  # ~20 s on this view
             if d.approve_pending():
                 show()
                 d.cap(t, sub)
@@ -298,16 +301,17 @@ def run(d: Demo, o: Orq) -> None:
         if d.done():
             break
     else:
-        raise SystemExit("o time não terminou em 20 min")
-    print("  trabalho terminado em", round(time.time() - t0), "s")
+        raise SystemExit("the team did not finish in 20 min")
+    print("  work finished in", round(time.time() - t0), "s")
 
     d.show_prof()
-    d.cap("5. O professor resume o que cada um entregou")
+    d.cap("5. The teacher summarises what each one delivered")
     d.pause(10)
 
     d.show_prog()
     d.cap(
-        "6. O que o PROGRAMADOR entregou, na pasta _outbox/", "a página lista os arquivos e mostra a prévia"
+        "6. What the PROGRAMMER delivered, in the _outbox/ folder",
+        "the page lists the files and shows the preview",
     )
     o.open_files()
     d.pause(3)
@@ -317,7 +321,7 @@ def run(d: Demo, o: Orq) -> None:
             d.pause(7)
             o.close_preview()
     d.show_docs()
-    d.cap("7. O README que o DOCUMENTADOR escreveu", "Markdown renderizado na prévia da página")
+    d.cap("7. The README the DOCUMENTER wrote", "Markdown rendered in the page's preview")
     o.open_files()
     d.pause(2)
     if "README.md" in o.files():
@@ -326,29 +330,29 @@ def run(d: Demo, o: Orq) -> None:
         o.close_preview()
 
     d.cap(
-        "8. As abas abertas viram um conjunto novo",
-        "a fotografia gera o mesmo JSON, pronto para reabrir tudo outro dia",
+        "8. The open tabs become a new set",
+        "the snapshot generates the same JSON, ready to reopen everything another day",
     )
     o.open_sets()
     d.p.click("#setsnap")
     d.p.wait_for_selector("#picker:not([hidden]) #snapjson", timeout=20000)
     d.pause(10)
     d.p.click("#pclose")
-    d.cap("Fim", "conjuntos: abrir vários agentes de uma vez, com ou sem professor")
+    d.cap("End", "sets: open several agents at once, with or without a teacher")
     d.pause(4)
     d.cap("")
 
 
 def cleanup(o: Orq) -> None:
-    """Desfaz o professor, encerra os agentes, apaga as pastas da demo com o estado e as conversas delas
-    (Orq.purge) e apaga o conjunto."""
-    print("limpando: agentes, pastas e conjunto da demo")
+    """Undoes the teacher, closes the agents, deletes the demo folders with their state and conversations
+    (Orq.purge) and deletes the set."""
+    print("cleaning: agents, folders and set of the demo")
     for spec in (f"{HOST}:{PROG}", f"{HOST}:{DOCS}"):
         try:
             gone = o.purge(spec)
-            print(f"  {spec}: limpa" + (f" (encerrei {', '.join(gone)})" if gone else ""))
-        except Exception as e:  # noqa: BLE001 - limpa o que der; o resto aparece no log
-            print("  não consegui limpar", spec, e)
+            print(f"  {spec}: clean" + (f" (closed {', '.join(gone)})" if gone else ""))
+        except Exception as e:  # noqa: BLE001 - cleans what it can; the rest shows up in the log
+            print("  could not clean", spec, e)
     o.api(f"/api/conjuntos/{SID}/delete", {})
 
 

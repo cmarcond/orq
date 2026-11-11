@@ -32,7 +32,7 @@ claude-orq/
 │   ├── deploy/          the server0 container, the Mac LaunchAgent
 │   ├── qa/              QA with Playwright against the real application
 │   ├── tests/           pytest + node --test
-│   └── docs/PLANO.md    plan by phases (history of the decisions)
+│   └── docs/PLAN.md    plan by phases (history of the decisions)
 ├── claude-highlevel/    historical reference: the teacher/executor levels with a PTY; reimplemented in orq-web
 └── .github/workflows/   one workflow per sub-project; the orq-web one publishes the image to GHCR
 ```

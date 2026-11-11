@@ -1,20 +1,21 @@
-"""Imitação do `claude -p --input-format stream-json --output-format stream-json` para os testes.
+"""Imitation of `claude -p --input-format stream-json --output-format stream-json` for the tests.
 
-Fala o subconjunto do protocolo que o supervisor usa. O comportamento depende do texto da mensagem:
-  "ferramenta"  -> tool_use Bash + pedido de permissão; allow => tool_result + "feito"; deny => "negado"
-  "pergunte"    -> pedido de permissão AskUserQuestion; a resposta vem em updatedInput.answers
-  "demore"      -> fica ocupado até receber um control_request interrupt (ou 5 s)
-  "injete"      -> emite uma mensagem `user` sem marca de origem (como um cron faria)
-  "esgote"      -> rate_limit_event rejected + result de erro de limite (a conta ficou sem cota)
-  "delegue: X para NOME" -> tool_use SendMessage para NOME com a mensagem X (vai pela caixa de correio)
-  qualquer outro -> stream_event palavra a palavra + texto "eco: ..." + result
-Sempre ecoa a mensagem do usuário (--replay-user-messages) e responde interrupts com control_response.
+Speaks the subset of the protocol the supervisor uses. The behaviour depends on the text of the message:
+  "ferramenta"  -> tool_use Bash + permission request; allow => tool_result + "feito"; deny => "negado"
+  "pergunte"    -> AskUserQuestion permission request; the answer comes in updatedInput.answers
+  "demore"      -> stays busy until it receives a control_request interrupt (or 5 s)
+  "injete"      -> emits a `user` message without an origin mark (as a cron would)
+  "esgote"      -> rate_limit_event rejected + limit error result (the account ran out of quota)
+  "delegue: X para NOME" -> tool_use SendMessage to NOME with the message X (goes through the mailbox)
+  anything else -> stream_event word by word + text "eco: ..." + result
+Always echoes the user's message (--replay-user-messages) and answers interrupts with control_response.
 
-Sessões entre si (como o SendMessage real): com `-n NOME` e FAKE_PEER_DIR no ambiente, cada processo
-lê FAKE_PEER_DIR/<NOME>.inbox; uma linha lá vira um turno `user` com origin.kind == "peer" (o mesmo
-formato do claude). Mensagem recebida que começa com "responda " é respondida a quem mandou via
-SendMessage com o resto do texto; qualquer outra vira o texto "o peer disse: ...". `--append-system-prompt`
-é só guardado e informado no init (fake_role), para os testes conferirem que o papel chegou.
+Sessions with each other (like the real SendMessage): with `-n NAME` and FAKE_PEER_DIR in the
+environment, each process reads FAKE_PEER_DIR/<NAME>.inbox; a line there becomes a `user` turn with
+origin.kind == "peer" (the same format as claude). A received message that starts with "responda " is
+answered to the sender via SendMessage with the rest of the text; any other becomes the text
+"o peer disse: ...". `--append-system-prompt` is only stored and reported in the init (fake_role), so
+the tests can check that the role arrived.
 """
 
 import json
@@ -26,7 +27,7 @@ import uuid
 
 SID = "fake-sid-0001"
 out_lock = threading.Lock()
-pending = {}  # request_id -> Event com a resposta
+pending = {}  # request_id -> Event with the answer
 interrupted = threading.Event()
 NAME = None  # -n
 ROLE = None  # --append-system-prompt
@@ -72,7 +73,8 @@ def ask(tool, inp, request_id):
 
 
 def send_peer(to, message, summary="mensagem"):
-    """tool_use SendMessage + entrega na caixa do destinatário + tool_result com o msg_id (como o real)."""
+    """tool_use SendMessage + delivery to the recipient's mailbox + tool_result with the msg_id (like the
+    real one)."""
     tid = "tu-sm-" + uuid.uuid4().hex[:6]
     msg_id = uuid.uuid4().hex
     assistant(
@@ -114,7 +116,7 @@ def send_peer(to, message, summary="mensagem"):
 
 
 def handle_peer(m):
-    """Chegou mensagem de outra sessão: o mesmo evento `user` que o claude emite (origin.kind peer)."""
+    """A message arrived from another session: the same `user` event claude emits (origin.kind peer)."""
     body = m.get("body", "")
     emit({"type": "system", "subtype": "init", "session_id": SID, "model": "fake"})
     emit(
@@ -325,7 +327,7 @@ def main():
                     "response": {"subtype": "success", "request_id": o.get("request_id"), "response": {}},
                 }
             )
-    time.sleep(0.1)  # deixa um turno em andamento terminar de escrever
+    time.sleep(0.1)  # lets a turn in progress finish writing
 
 
 if __name__ == "__main__":

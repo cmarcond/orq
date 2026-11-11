@@ -92,7 +92,7 @@ the machines, ES modules in the browser, ssh and tmux between the machines.
 ## History, one line per stage
 
 claude-multiconta (accounts and `usage-all`) → terminal `orq` (tmux grid) → `orq web` (local page)
-→ `orq-web` as its own project, with a supervisor and tests → phases 1 to 4 (`orq-web/docs/PLANO.md`:
+→ `orq-web` as its own project, with a supervisor and tests → phases 1 to 4 (`orq-web/docs/PLAN.md`:
 network and container, monorepo and CI, levels coming from claude-highlevel, automatic account
 switch) → QA with Playwright → shared files (`_outbox/`) → links between agents and between machines →
 teacher with several executors → adversarial review of the links.

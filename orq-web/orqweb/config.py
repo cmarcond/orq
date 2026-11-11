@@ -1,7 +1,7 @@
-"""Configuração compartilhada: as contas do `claude-multiconta` (accounts.json) e caminhos.
+"""Shared configuration: the `claude-multiconta` accounts (accounts.json) and paths.
 
-O arquivo vem de $CLAUDE_MULTICONTA_CONF ou de ~/.config/claude-multiconta/accounts.json.
-Este módulo não tem efeitos colaterais na importação; quem precisa chama `load()`.
+The file comes from $CLAUDE_MULTICONTA_CONF or from ~/.config/claude-multiconta/accounts.json.
+This module has no side effects on import; whoever needs it calls `load()`.
 """
 
 import json
@@ -21,7 +21,7 @@ def conf_path() -> Path:
 
 
 def bin_dir() -> Path:
-    """Onde estão os utilitários do claude-multiconta (claude-last, usage-all, orq)."""
+    """Where the claude-multiconta utilities live (claude-last, usage-all, orq)."""
     return Path(os.environ.get("ORQ_BIN", str(HOME / ".local/bin")))
 
 
@@ -30,7 +30,7 @@ def state_root() -> Path:
 
 
 def safe_label(label: str) -> str:
-    """Nome de pasta/sessão a partir do rótulo do agente: `acervo@node0` -> `acervo-node0`."""
+    """Folder/session name derived from the agent's label: `acervo@node0` -> `acervo-node0`."""
     return re.sub(r"[^a-zA-Z0-9_-]", "-", label)
 
 
@@ -39,21 +39,21 @@ def state_dir(label: str) -> Path:
 
 
 def session_name(label: str) -> str:
-    """Nome que o `claude -n` recebe e pelo qual o SendMessage endereça a sessão.
+    """Name that `claude -n` receives and by which SendMessage addresses the session.
 
-    O `@` do rótulo é recusado pelo SendMessage ("to must be a bare teammate name"), por isso o nome é
-    o rótulo saneado: `kaggle@server0` -> `kaggle-server0`; `kaggle~professor@server0` ->
+    SendMessage rejects the `@` of the label ("to must be a bare teammate name"), so the name is
+    the sanitized label: `kaggle@server0` -> `kaggle-server0`; `kaggle~professor@server0` ->
     `kaggle-professor-server0`.
     """
     return safe_label(label)
 
 
 def host_of(label: str) -> str:
-    """`pasta@maquina` -> `maquina`; sem `@` é o laptop."""
+    """`folder@machine` -> `machine`; without `@` it is the laptop."""
     return label.rsplit("@", 1)[1] if "@" in label else "laptop"
 
 
-# Paleta padrão por posição no accounts.json; "color" na conta sobrescreve. Legível em claro e escuro.
+# Default palette by position in accounts.json; "color" in the account overrides. Readable in light and dark.
 PALETTE = ["#2b6cb0", "#c05621", "#2f855a", "#805ad5", "#b7791f", "#c53030", "#0987a0", "#97266d"]
 
 
@@ -70,7 +70,7 @@ class Account:
         return self.config_dir.resolve() == DEFAULT_CLAUDE_DIR.resolve()
 
     def env(self, base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        """Ambiente para rodar o `claude` nesta conta: CLAUDE_CONFIG_DIR, ou nada para a conta padrão."""
+        """Environment to run `claude` on this account: CLAUDE_CONFIG_DIR, or nothing for the default one."""
         env = dict(os.environ if base is None else base)
         if self.is_default:
             env.pop("CLAUDE_CONFIG_DIR", None)
@@ -85,7 +85,7 @@ class Config:
     permission_mode: str = "manual"
     hosts: List[str] = field(default_factory=list)
     timezone: str = "America/Sao_Paulo"
-    auto_switch: bool = True  # trocar de conta sozinho quando a cota do agente acaba
+    auto_switch: bool = True  # switch accounts on its own when the agent's quota runs out
 
     @property
     def labels(self) -> Dict[str, str]:
@@ -100,7 +100,7 @@ class Config:
             return self.accounts[name]
         except KeyError:
             raise KeyError(
-                "conta desconhecida: {}. Disponíveis: {}".format(name, ", ".join(self.accounts))
+                "unknown account: {}. Available: {}".format(name, ", ".join(self.accounts))
             ) from None
 
 
@@ -130,5 +130,5 @@ def load(path: Optional[Path] = None) -> Config:
         return parse(json.loads(p.read_text()))
     except FileNotFoundError:
         raise SystemExit(
-            f"Não consegui ler {p}. Rode o install.sh do claude-multiconta ou defina CLAUDE_MULTICONTA_CONF."
+            f"Could not read {p}. Run the claude-multiconta install.sh or set CLAUDE_MULTICONTA_CONF."
         ) from None

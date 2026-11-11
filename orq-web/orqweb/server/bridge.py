@@ -1,4 +1,4 @@
-"""Ponte entre o servidor e um agente: um `orq-agent attach` (local ou por ssh) por aba aberta."""
+"""Bridge between the server and an agent: one `orq-agent attach` (local or over ssh) per open tab."""
 
 import json
 import shlex
@@ -10,7 +10,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from .. import config
 from .external import LAPTOP, ssh_cmd
 
-FAR_FUTURE = 10**9  # since "no futuro": a ponte não recebe replay, só serve para entregar algo
+FAR_FUTURE = 10**9  # since "in the future": the bridge gets no replay, it only serves to deliver something
 
 
 def attach_command(
@@ -66,7 +66,7 @@ class Bridge:
         return self.p.poll() is None
 
     def end_input(self) -> None:
-        """Fecha só o stdin (EOF): o attach entrega o que já recebeu e termina sozinho."""
+        """Closes only stdin (EOF): the attach delivers what it has already received and ends by itself."""
         try:
             if self.p.stdin:
                 self.p.stdin.close()
@@ -82,7 +82,7 @@ class Bridge:
 
 
 class BridgeRegistry:
-    """Uma ponte por rótulo (a da aba aberta). `deliver` usa a da aba ou abre uma passageira."""
+    """One bridge per label (the open tab's). `deliver` uses the tab's one or opens a temporary one."""
 
     def __init__(
         self,
@@ -99,7 +99,7 @@ class BridgeRegistry:
         self._lock = threading.Lock()
 
     def open(self, label: str, since: int) -> Tuple[Bridge, Optional[Bridge]]:
-        """Abre a ponte da aba; devolve (nova, antiga a fechar)."""
+        """Opens the tab's bridge; returns (new, old one to close)."""
         b = self.factory(label, since, self.bin_dir)
         with self._lock:
             old = self._b.get(label)
@@ -113,13 +113,14 @@ class BridgeRegistry:
         b.close()
 
     def deliver(self, label: str, obj: dict, linger: float = 30.0, fresh: bool = False) -> Optional[str]:
-        """Entrega `obj` ao agente. Erro em texto, ou None.
+        """Delivers `obj` to the agent. Error as text, or None.
 
-        `fresh` ignora a ponte da aba e abre uma passageira: depois de o agente ser reaberto (outra conta,
-        outro pid), a ponte da aba pode ainda estar presa ao supervisor anterior. A passageira recebe a
-        mensagem e o EOF e termina por si quando o attach entregou; `linger` é só o seguro que a mata se
-        ela não terminar. Matá-la cedo (1,5 s, como era) perdia a mensagem por ssh: o handshake com a outra
-        máquina ainda não tinha acabado quando o ssh morria, e o conjunto não acusava erro."""
+        `fresh` ignores the tab's bridge and opens a temporary one: after the agent is reopened (another
+        account, another pid), the tab's bridge may still be stuck to the previous supervisor. The temporary
+        one receives the message and the EOF and ends by itself once the attach has delivered; `linger` is
+        only the safeguard that kills it if it does not end. Killing it early (1.5 s, as it used to be) lost
+        the message over ssh: the handshake with the other machine had not finished yet when the ssh died,
+        and the set reported no error."""
         with self._lock:
             b = None if fresh else self._b.get(label)
         temp = b is None or not b.alive()
@@ -128,7 +129,7 @@ class BridgeRegistry:
         try:
             b.send(obj)
         except (OSError, ValueError) as e:
-            return f"não consegui falar com o agente ({e})"
+            return f"could not talk to the agent ({e})"
         if temp:
             b.end_input()
             threading.Timer(linger, b.close).start()

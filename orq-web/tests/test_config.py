@@ -29,9 +29,7 @@ def test_parse_accounts_and_options():
     assert c.permission_mode == "auto" and c.hosts == ["server0"]
     assert c.auto_switch is True and config.parse({"accounts": [], "auto_switch": False}).auto_switch is False
     assert c.labels == {"work": "Work", "gmail": "Gmail"}
-    assert c.colors == {"work": config.PALETTE[0], "gmail": "#123456"}, (
-        "paleta por posição; color sobrescreve"
-    )
+    assert c.colors == {"work": config.PALETTE[0], "gmail": "#123456"}, "palette by position; color overrides"
 
 
 def test_defaults():
@@ -49,7 +47,7 @@ def test_account_env_default_vs_other():
 
 def test_unknown_account_message():
     c = config.parse(RAW)
-    with pytest.raises(KeyError, match="conta desconhecida: x. Disponíveis: work, gmail"):
+    with pytest.raises(KeyError, match="unknown account: x. Available: work, gmail"):
         c.account("x")
 
 
@@ -61,7 +59,7 @@ def test_load_from_env_path(tmp_path, monkeypatch):
 
 
 def test_load_missing_is_a_clean_exit(tmp_path):
-    with pytest.raises(SystemExit, match="Não consegui ler"):
+    with pytest.raises(SystemExit, match="Could not read"):
         config.load(tmp_path / "nada.json")
 
 

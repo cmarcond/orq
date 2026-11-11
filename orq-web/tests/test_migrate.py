@@ -1,4 +1,4 @@
-"""Troca automática de conta quando a cota acaba (Migrator), com spawn e entrega falsos."""
+"""Automatic account switch when the quota runs out (Migrator), with fake spawn and delivery."""
 
 import threading
 
@@ -16,9 +16,9 @@ class Ext:
 
     def usage(self, host=None):
         return {
-            "gmail": {"5h": 99, "7d": 50, "7d_pace": 50},  # a conta do agente: sem cota
-            "work": {"5h": 10, "7d": 30, "7d_pace": 50},  # folga
-            "work2": {"5h": 96, "7d": 10, "7d_pace": 50},  # também sem cota
+            "gmail": {"5h": 99, "7d": 50, "7d_pace": 50},  # the agent's account: out of quota
+            "work": {"5h": 10, "7d": 30, "7d_pace": 50},  # slack
+            "work2": {"5h": 96, "7d": 10, "7d_pace": 50},  # also out of quota
         }
 
 
@@ -33,7 +33,7 @@ def make(agents, enabled=True):
 
     def spawn(host, label, cwd, account, mode, **kw):
         calls.append((host, label, cwd, account, mode, kw))
-        return "deu ruim" if cwd == "/falha" else None
+        return "went wrong" if cwd == "/falha" else None
 
     def deliver(label, obj):
         sent.append((label, obj))
@@ -59,14 +59,14 @@ QUOTA = {
 
 def test_migrates_to_account_with_slack_and_resends_last_message():
     state, m, calls, sent, done = make([QUOTA])
-    state.refresh_agents()  # o gancho dispara a migração numa thread
+    state.refresh_agents()  # the hook triggers the migration in a thread
     assert done.wait(5)
     assert calls == [("server0", "p@server0", "/p", "work", "resume", {"restart": True})]
     assert sent == [("p@server0", {"type": "user", "message": {"role": "user", "content": "continue daqui"}})]
     a = next(x for x in state.snapshot()["agents"] if x["label"] == "p@server0")
     assert a["account"] == "work" and a["state"] == "starting" and a["migrated_from"] == "gmail"
     assert m.history[-1]["from"] == "gmail" and m.history[-1]["to"] == "work"
-    # a mesma consulta de novo não migra duas vezes
+    # the same query again does not migrate twice
     assert m.check([QUOTA]) == []
 
 
@@ -83,21 +83,21 @@ def test_spawn_failure_keeps_agent_and_reports():
     state, m, calls, sent, done = make([dict(QUOTA, dir="/falha")])
     assert m.migrate(dict(QUOTA, dir="/falha")) is None
     assert sent == [] and m.history == []
-    # a entrada provisória não fica: a próxima consulta às máquinas diz o que sobrou
+    # the provisional entry does not stay: the next query to the machines says what is left
     assert "p@server0" not in state.provisional
     assert all(a["label"] != "p@server0" for a in state.snapshot()["agents"])
 
 
 def test_tab_survives_while_reopening_the_agent():
-    """O reabrir leva segundos; nesse meio-tempo a página precisa continuar vendo o agente (na conta
-    nova, 'abrindo…'), senão a aba some e a página pula para outra."""
+    """Reopening takes seconds; in the meantime the page must keep seeing the agent (on the new
+    account, 'opening…'), otherwise the tab disappears and the page jumps to another one."""
     state, m, calls, sent, done = make([QUOTA])
     seen = {}
 
     def spawn(host, label, cwd, account, mode, **kw):
         a = next(x for x in state.snapshot()["agents"] if x["label"] == label)
         seen.update(account=a["account"], state=a["state"], migrated_from=a.get("migrated_from"))
-        # uma consulta às máquinas durante o reabrir devolve o agente antigo como encerrado
+        # a query to the machines during the reopen returns the old agent as closed
         state.ext._agents = [dict(QUOTA, state="closed")]
         state.refresh_agents()
         return None

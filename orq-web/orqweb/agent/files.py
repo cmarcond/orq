@@ -1,9 +1,10 @@
-"""Arquivos que o agente compartilha com a página: a pasta `_outbox/` do projeto.
+"""Files the agent shares with the page: the project's `_outbox/` folder.
 
-O agente copia para lá o que quer entregar (PDF, imagem, vídeo…); a página lista e serve. Como a
-pasta fica na máquina do agente, o servidor chega nela por `orq-agent ls` e `orq-agent cat` (por
-ssh quando remota), que são as duas funções daqui: listar a pasta e mandar os bytes de um arquivo
-precedidos de uma linha JSON com o tamanho (é o que permite Content-Length e faixas na resposta HTTP).
+The agent copies there whatever it wants to deliver (PDF, image, video…); the page lists and serves it.
+Since the folder lives on the agent's machine, the server reaches it through `orq-agent ls` and
+`orq-agent cat` (over ssh when remote), which are the two functions here: list the folder and send the
+bytes of a file preceded by a JSON line with the size (that is what allows Content-Length and ranges in
+the HTTP response).
 """
 
 import json
@@ -16,9 +17,9 @@ CHUNK = 256 * 1024
 
 
 def list_dir(folder: Path) -> List[Dict[str, object]]:
-    """Arquivos comuns da pasta (sem os ocultos e sem subpastas), do mais novo para o mais antigo.
+    """Regular files of the folder (no hidden ones and no subfolders), newest to oldest.
 
-    Pasta inexistente = lista vazia: o agente ainda não compartilhou nada."""
+    Missing folder = empty list: the agent has not shared anything yet."""
     try:
         entries = list(os.scandir(folder))
     except OSError:
@@ -37,23 +38,23 @@ def list_dir(folder: Path) -> List[Dict[str, object]]:
 
 
 def open_range(path: Path, start: int = 0, end: Optional[int] = None) -> Tuple[int, int, BinaryIO]:
-    """Abre `path` posicionado em `start`; devolve (tamanho total, bytes a ler, arquivo).
+    """Opens `path` positioned at `start`; returns (total size, bytes to read, file).
 
-    `end` é inclusivo, como no cabeçalho Range; None = até o fim. Faixa fora do arquivo -> ValueError."""
+    `end` is inclusive, as in the Range header; None = to the end. Range outside the file -> ValueError."""
     size = path.stat().st_size
     if end is None or end >= size:
         end = size - 1
     if start < 0 or start > end + 1 or (size > 0 and start >= size):
-        raise ValueError(f"faixa {start}-{end} fora do arquivo de {size} bytes")
+        raise ValueError(f"range {start}-{end} outside the file of {size} bytes")
     f = path.open("rb")
     f.seek(start)
     return size, max(0, end - start + 1), f
 
 
 def send(path: Path, out: BinaryIO, start: int = 0, end: Optional[int] = None) -> int:
-    """Escreve em `out` uma linha JSON {size, start, length} e em seguida os bytes da faixa.
+    """Writes to `out` a JSON line {size, start, length} followed by the bytes of the range.
 
-    Erro: só a linha JSON, com `err`. Devolve 0 ou 1 (código de saída)."""
+    Error: only the JSON line, with `err`. Returns 0 or 1 (exit code)."""
     try:
         size, length, f = open_range(path, start, end)
     except (OSError, ValueError) as e:
@@ -74,18 +75,18 @@ def send(path: Path, out: BinaryIO, start: int = 0, end: Optional[int] = None) -
 
 
 def read_header(stream: BinaryIO) -> dict:
-    """A linha JSON que `send` põe antes dos bytes (o lado que recebe, local ou por ssh)."""
+    """The JSON line that `send` puts before the bytes (the receiving side, local or over ssh)."""
     line = stream.readline()
     if not line:
-        return {"err": "sem resposta da máquina"}
+        return {"err": "no response from the machine"}
     try:
         return json.loads(line)
     except ValueError:
-        return {"err": (line.decode(errors="ignore").strip() or "resposta inválida")[:200]}
+        return {"err": (line.decode(errors="ignore").strip() or "invalid response")[:200]}
 
 
 def parse_range(spec: Optional[str]) -> Tuple[int, Optional[int]]:
-    """'5-9' -> (5, 9); '5-' -> (5, None); vazio -> (0, None)."""
+    """'5-9' -> (5, 9); '5-' -> (5, None); empty -> (0, None)."""
     if not spec:
         return 0, None
     a, _, b = spec.partition("-")

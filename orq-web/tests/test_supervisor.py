@@ -1,4 +1,4 @@
-"""Integração do supervisor com um claude falso (tests/fake_claude.py): protocolo real, sem Claude."""
+"""Integration of the supervisor with a fake claude (tests/fake_claude.py): real protocol, no Claude."""
 
 import json
 import os
@@ -21,7 +21,7 @@ FAKE = Path(__file__).with_name("fake_claude.py")
 
 
 class Conn:
-    """Cliente de teste: lê eventos do socket com timeout; conta a sequência como a página faz."""
+    """Test client: reads events from the socket with a timeout; counts the sequence as the page does."""
 
     def __init__(self, sock_path, since=0):
         self.c = client.connect(sock_path, since, timeout=10)
@@ -53,27 +53,27 @@ class Conn:
                 "response": {
                     "subtype": "success",
                     "request_id": request_id,
-                    "response": {"behavior": "deny", "message": "não"},
+                    "response": {"behavior": "deny", "message": "no"},
                 },
             }
         )
 
     def until(self, pred, timeout=10):
-        """Lê até pred(evento) ser verdadeiro; devolve a lista de eventos lidos (o último satisfaz pred)."""
+        """Reads until pred(event) is true; returns the list of events read (the last one satisfies pred)."""
         got = []
         deadline = time.time() + timeout
         self.c.settimeout(timeout)
         while time.time() < deadline:
             line = self.f.readline()
             if not line:
-                raise AssertionError(f"conexão fechou antes de: {got}")
+                raise AssertionError(f"connection closed before: {got}")
             e = json.loads(line)
             if e.get("type") != "stream_event":
                 self.seq += 1
             got.append(e)
             if pred(e):
                 return got
-        raise AssertionError(f"timeout esperando evento; vi {[g.get('type') for g in got]}")
+        raise AssertionError(f"timeout waiting for an event; saw {[g.get('type') for g in got]}")
 
     def close(self):
         self.c.close()
@@ -89,7 +89,7 @@ def is_perm(e):
 
 @pytest.fixture
 def short_tmp():
-    """Pasta curta: o caminho de um socket Unix tem limite de ~100 bytes; o tmp_path do pytest passa disso."""
+    """Short folder: the path of a Unix socket is limited to ~100 bytes; pytest's tmp_path goes past that."""
     d = Path(tempfile.mkdtemp(prefix="orqt", dir="/tmp"))
     yield d
     shutil.rmtree(d, ignore_errors=True)
@@ -122,7 +122,9 @@ def state_of(s):
 def test_replay_from_start_has_banner_and_init(sup):
     c = Conn(sup.sock_path)
     got = c.until(lambda e: e.get("type") == "system" and e.get("subtype") == "init")
-    assert got[0]["type"] == "orq" and "proj@laptop" in got[0]["text"] and "conversa nova" in got[0]["text"]
+    assert (
+        got[0]["type"] == "orq" and "proj@laptop" in got[0]["text"] and "new conversation" in got[0]["text"]
+    )
     assert state_of(sup)["state"] == "waiting"
     assert state_of(sup)["kind"] == "sdk" and state_of(sup)["sid"] == "fake-sid-0001"
     c.close()
@@ -131,16 +133,16 @@ def test_replay_from_start_has_banner_and_init(sup):
 def test_message_echo_is_stamped_page_and_streams(sup):
     c = Conn(sup.sock_path)
     c.until(lambda e: e.get("subtype") == "init")
-    c.user("olá mundo")
+    c.user("hello world")
     got = c.until(is_result)
     types = [e["type"] for e in got]
-    assert "stream_event" in types, "parciais devem passar ao vivo"
+    assert "stream_event" in types, "partials must pass through live"
     echo = next(e for e in got if e["type"] == "user")
-    assert echo["orq_origin"] == "page" and echo["message"]["content"] == "olá mundo"
+    assert echo["orq_origin"] == "page" and echo["message"]["content"] == "hello world"
     text = next(e for e in got if e["type"] == "assistant")["message"]["content"][0]["text"]
-    assert text == "eco: olá mundo"
+    assert text == "eco: hello world"
     assert state_of(sup)["state"] == "waiting"
-    # parciais não entram na sequência persistida
+    # partials do not enter the persisted sequence
     assert len(sup.events) == c.seq
     c.close()
 
@@ -218,14 +220,14 @@ def test_reconnect_with_since_gets_missed_events(sup):
     c = Conn(sup.sock_path)
     c.until(lambda e: e.get("subtype") == "init")
     seq = c.seq
-    c.user("mensagem perdida")
-    c.close()  # cai antes de receber a resposta
+    c.user("lost message")
+    c.close()  # drops before receiving the answer
     time.sleep(1.0)
     c2 = Conn(sup.sock_path, since=seq)
     got = c2.until(is_result)
     kinds = [e["type"] for e in got]
     assert kinds[0] == "user" and "assistant" in kinds and kinds[-1] == "result"
-    assert "stream_event" not in kinds, "replay não traz parciais"
+    assert "stream_event" not in kinds, "the replay brings no partials"
     assert c2.seq == len(sup.events)
     c2.close()
 
@@ -247,10 +249,10 @@ def test_transcript_replay_on_resume(short_tmp):
     tmp_path = short_tmp
     transcript = tmp_path / "old.jsonl"
     lines = [
-        {"type": "user", "message": {"role": "user", "content": "antiga"}, "origin": {"kind": "human"}},
+        {"type": "user", "message": {"role": "user", "content": "old"}, "origin": {"kind": "human"}},
         {
             "type": "assistant",
-            "message": {"role": "assistant", "content": [{"type": "text", "text": "resposta antiga"}]},
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "old answer"}]},
         },
     ]
     transcript.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
@@ -269,7 +271,7 @@ def test_transcript_replay_on_resume(short_tmp):
     try:
         c = Conn(s.sock_path)
         got = c.until(lambda e: e.get("subtype") == "init")
-        assert "retomando abcdef12" in got[0]["text"]
+        assert "resuming abcdef12" in got[0]["text"]
         replays = [e for e in got if e.get("replay")]
         assert [e["type"] for e in replays] == ["user", "assistant"]
         assert replays[0]["origin"] == {"kind": "human"}
@@ -283,7 +285,7 @@ def test_quit_closes_everything(sup):
     c = Conn(sup.sock_path)
     c.until(lambda e: e.get("subtype") == "init")
     c.send({"orq": "quit"})
-    got = c.until(lambda e: e.get("type") == "orq" and "encerrado" in e.get("text", ""))
+    got = c.until(lambda e: e.get("type") == "orq" and "closed" in e.get("text", ""))
     assert got[-1]["level"] == "info"
     assert sup.wait(10)
     assert state_of(sup)["state"] == "closed"
@@ -302,7 +304,7 @@ def test_second_supervisor_on_same_socket_is_refused(sup, short_tmp):
         state_dir=sup.dir,
         log=lambda *_: None,
     )
-    with pytest.raises(RuntimeError, match="já existe"):
+    with pytest.raises(RuntimeError, match="already running"):
         other.start()
 
 
@@ -359,7 +361,7 @@ def test_socket_alive_false_for_stale_file(short_tmp):
     p = tmp_path / "agent.sock"
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(str(p))
-    s.close()  # arquivo fica, ninguém atende
+    s.close()  # the file stays, nobody answers
     assert socket_alive(p) is False
 
 
@@ -367,7 +369,7 @@ def test_concurrent_clients_both_receive(sup):
     a, b = Conn(sup.sock_path), Conn(sup.sock_path)
     for c in (a, b):
         c.until(lambda e: e.get("subtype") == "init")
-    a.user("para os dois")
+    a.user("for both")
     ra = a.until(is_result)
     rb = b.until(is_result)
     assert [e["type"] for e in ra if e["type"] != "stream_event"] == [
@@ -378,7 +380,7 @@ def test_concurrent_clients_both_receive(sup):
 
 
 def test_handle_client_message_is_threadsafe_under_burst(sup):
-    """Várias mensagens em sequência: todas ecoadas na ordem, nenhuma perdida."""
+    """Several messages in a row: all echoed in order, none lost."""
     c = Conn(sup.sock_path)
     c.until(lambda e: e.get("subtype") == "init")
     n = 5
@@ -399,8 +401,8 @@ def test_handle_client_message_is_threadsafe_under_burst(sup):
 
 
 def test_named_levels_exchange_messages_through_peer_channel(short_tmp):
-    """Professor e executor falsos, ambos com -n, pelo supervisor real: o SendMessage de um chega
-    no outro como `user` carimbado `agent`, e a resposta volta pelo mesmo caminho."""
+    """Fake teacher and executor, both with -n, through the real supervisor: the SendMessage of one reaches
+    the other as a `user` stamped `agent`, and the answer comes back the same way."""
     peers = short_tmp / "peers"
     peers.mkdir()
     env = dict(os.environ, FAKE_PEER_DIR=str(peers))
@@ -412,7 +414,7 @@ def test_named_levels_exchange_messages_through_peer_channel(short_tmp):
         name = label.replace("@", "-").replace("~", "-")
         cmd = [sys.executable, str(FAKE), "-n", name]
         if extra:
-            cmd += ["--append-system-prompt", "Você é o professor de exe-laptop"]
+            cmd += ["--append-system-prompt", "You are the teacher of exe-laptop"]
         s = Supervisor(
             label=label,
             folder=short_tmp / "proj",
@@ -430,7 +432,7 @@ def test_named_levels_exchange_messages_through_peer_channel(short_tmp):
         exe, prof = Conn(sups["exe@laptop"].sock_path), Conn(sups["exe~professor@laptop"].sock_path)
         init = prof.until(lambda e: e.get("subtype") == "init")[-1]
         assert init["fake_name"] == "exe-professor-laptop" and init["fake_role"].startswith(
-            "Você é o professor"
+            "You are the teacher"
         )
         exe.until(lambda e: e.get("subtype") == "init")
         st = state_of(sups["exe~professor@laptop"])
@@ -452,13 +454,13 @@ def test_named_levels_exchange_messages_through_peer_channel(short_tmp):
         )
         assert out["message"]["content"][0]["name"] == "SendMessage"
         assert out["message"]["content"][0]["input"]["to"] == "exe-laptop"
-        # no executor: chega como user carimbado agent, com quem mandou e o texto limpo
+        # on the executor: it arrives as a user stamped agent, with the sender and the clean text
         got = exe.until(lambda e: e.get("orq_origin") == "agent")
         peer = got[-1]
         assert peer["origin"]["name"] == "exe-professor-laptop" and peer["origin"]["body"] == "responda PONG"
         assert "<cross-session-message" in peer["message"]["content"]
         exe.until(is_result)
-        # a resposta volta ao professor pelo mesmo canal
+        # the answer goes back to the teacher through the same channel
         got = prof.until(lambda e: e.get("orq_origin") == "agent")
         assert got[-1]["origin"]["name"] == "exe-laptop" and got[-1]["origin"]["body"] == "PONG"
         got = prof.until(is_result)
@@ -482,7 +484,7 @@ def test_tmux_shell_carries_pythonpath():
 def test_stop_and_wait_until_socket_is_gone(sup):
     assert client.stop_and_wait(sup.sock_path, timeout=20) is True
     assert not sup.sock_path.exists() and sup.wait(10)
-    assert client.stop_and_wait(sup.sock_path, timeout=1) is True  # já não roda: nada a esperar
+    assert client.stop_and_wait(sup.sock_path, timeout=1) is True  # no longer running: nothing to wait for
 
 
 def test_spawn_restart_flag_reaches_client(monkeypatch):
@@ -500,7 +502,7 @@ def test_quota_exhausted_marks_state_and_keeps_last_message_for_retry(sup):
     c = Conn(sup.sock_path)
     c.until(lambda e: e.get("subtype") == "init")
     c.user("esgote a cota, por favor")
-    got = c.until(lambda e: e.get("type") == "orq" and "sem cota" in e.get("text", ""))
+    got = c.until(lambda e: e.get("type") == "orq" and "out of quota" in e.get("text", ""))
     assert got[-1]["level"] == "error"
     c.until(is_result)
     st = state_of(sup)
@@ -508,8 +510,8 @@ def test_quota_exhausted_marks_state_and_keeps_last_message_for_retry(sup):
     c.close()
 
 
-# ---------------------------------------------------------------- conjuntos: prompt em agente base,
-# modo de permissão e origem gravados no state.json; o --restart reaproveita tudo
+# ---------------------------------------------------------------- sets: prompt on a base agent,
+# permission mode and origin recorded in state.json; --restart reuses everything
 def test_state_records_permission_role_and_set(short_tmp):
     s = Supervisor(
         label="proj@laptop",
@@ -520,7 +522,7 @@ def test_state_records_permission_role_and_set(short_tmp):
         state_dir=short_tmp / "state" / "proj-laptop",
         log=lambda *_: None,
         permission="acceptEdits",
-        role="Você cuida do modelo.",
+        role="You look after the model.",
         set_id="artigo",
         pipeline="professor-executor",
     )
@@ -530,10 +532,10 @@ def test_state_records_permission_role_and_set(short_tmp):
         assert st["pipeline"] == "professor-executor"
         assert (
             st["permission"] == "acceptEdits"
-            and st["role"] == "Você cuida do modelo."
+            and st["role"] == "You look after the model."
             and st["set"] == "artigo"
         )
-        assert "parent" not in st and "level" not in st  # prompt próprio não faz do agente um nível
+        assert "parent" not in st and "level" not in st  # an own prompt does not make the agent a level
     finally:
         s.quit()
         s.wait(10)
@@ -547,12 +549,12 @@ def test_spawn_cli_passes_permission_set_and_role_for_base_agent(monkeypatch, sh
     monkeypatch.setattr(cli.client, "spawn", lambda *a, **k: seen.update(k) or "ok")
     monkeypatch.setattr(cli.config, "load", lambda: type("C", (), {"account": lambda self, n: n})())
     monkeypatch.setattr(cli, "_refuse_if_terminal_live", lambda *a: None)
-    monkeypatch.setattr(sys, "stdin", type("I", (), {"read": lambda self: "papel do base"})())
+    monkeypatch.setattr(sys, "stdin", type("I", (), {"read": lambda self: "role of the base"})())
     args = ["spawn", "--dir", "/p", "--account", "g", "--label", "p@l", "--role-file", "-"]
     assert cli.main(args + ["--permission-mode", "auto", "--set", "artigo"]) == 0
     assert seen["permission"] == "auto" and seen["set_id"] == "artigo" and seen["parent"] is None
-    assert Path(seen["role_file"]).read_text() == "papel do base"
-    # --restart sem argumentos (troca de conta, reabrir com nome): papel, permissão e conjunto de antes
+    assert Path(seen["role_file"]).read_text() == "role of the base"
+    # --restart without arguments (account switch, reopening with a name): previous role, permission and set
     StateFile(short_tmp / "p-l" / "state.json").write(
         permission="auto", set="artigo", pipeline="professor-executor"
     )

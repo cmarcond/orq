@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "orqweb"
 version = "0.1.0"
-description = "Chat local com agentes do Claude Code em várias máquinas e contas: supervisor sem terminal (stream-json) e página web."
+description = "Local chat with Claude Code agents on several machines and accounts: terminal-less supervisor (stream-json) and web page."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -36,4 +36,4 @@ target-version = "py38"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["UP006", "UP007", "UP035"]   # anotações compatíveis com 3.8
+ignore = ["UP006", "UP007", "UP035"]   # annotations compatible with 3.8

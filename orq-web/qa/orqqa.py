@@ -1,37 +1,38 @@
 #!/usr/bin/env python3
-"""QA do orq-web com Playwright: dirige a aplicação de verdade (claude real) pelo navegador.
+"""QA of orq-web with Playwright: drives the real application (real claude) through the browser.
 
-É biblioteca (o conftest usa a classe `Orq`) e linha de comando, para injetar textos e comandos à mão
-e ver o resultado em captura de tela, console e estado:
+It is a library (the conftest uses the `Orq` class) and a command line, to inject texts and commands by hand
+and see the result as a screenshot, console and state:
 
-  python qa/orqqa.py up | down            sobe/derruba um orq-web só do QA (porta ORQ_QA_PORT, padrão 8790)
-  python qa/orqqa.py state                agentes, estados e cota (/api/state)
-  python qa/orqqa.py shot [nome]          captura de tela -> qa/out/<nome>.png
-  python qa/orqqa.py open laptop:~/Projects/orq-qa    abre um projeto (pasta nova = conversa nova)
-  python qa/orqqa.py show rótulo          troca para a aba desse agente
-  python qa/orqqa.py say "texto"          envia ao agente da aba atual e espera a resposta
-  python qa/orqqa.py esc                  interrompe o turno (Esc)
-  python qa/orqqa.py allow | deny         responde à permissão pendente
-  python qa/orqqa.py stop [rótulo]        encerra o agente (✕ duas vezes)
-  python qa/orqqa.py levels [receita]     ⇅ subir nível na aba atual (padrão professor-executor)
-  python qa/orqqa.py link rótulo          🔗 vincula a aba atual ao agente rótulo (qualquer máquina)
-  python qa/orqqa.py unlink rótulo        desfaz o vínculo
-  python qa/orqqa.py wires                fios entre os níveis e os níveis do painel
-  python qa/orqqa.py undo                 ↓ desfazer: encerra os níveis de cima
-  python qa/orqqa.py purge maquina:/pasta  limpa uma pasta de QA: desfaz níveis, encerra os agentes dela e
-                                          apaga a pasta, o estado em ~/.cache/orq e as conversas do claude
-  python qa/orqqa.py sets                 ⊞ conjuntos: lista os salvos (nome, agentes, já abertos)
-  python qa/orqqa.py set ID               abre o conjunto ID pelo seletor e espera o servidor terminar
-  python qa/orqqa.py quota ["texto"]       força "sem cota" na aba atual e espera a troca de conta
-  python qa/orqqa.py click "seletor" | text "seletor" | eval "js"
-  python qa/orqqa.py watch [segundos]     fica ouvindo console, erros e requisições que falham
+  python qa/orqqa.py up | down            starts/stops a QA-only orq-web (port ORQ_QA_PORT, default 8790)
+  python qa/orqqa.py state                agents, states and quota (/api/state)
+  python qa/orqqa.py shot [name]          screenshot -> qa/out/<name>.png
+  python qa/orqqa.py open laptop:~/Projects/orq-qa    opens a project (new folder = new conversation)
+  python qa/orqqa.py show label           switches to the tab of that agent
+  python qa/orqqa.py say "text"           sends to the agent of the current tab and waits for the reply
+  python qa/orqqa.py esc                  interrupts the turn (Esc)
+  python qa/orqqa.py allow | deny         answers the pending permission
+  python qa/orqqa.py stop [label]         closes the agent (✕ twice)
+  python qa/orqqa.py levels [recipe]      ⇅ add level on the current tab (default professor-executor)
+  python qa/orqqa.py link label           🔗 links the current tab to the agent label (any machine)
+  python qa/orqqa.py unlink label         removes the link
+  python qa/orqqa.py wires                wires between the levels and the levels of the panel
+  python qa/orqqa.py undo                 ↓ undo: closes the levels above
+  python qa/orqqa.py purge machine:/folder  cleans a QA folder: undoes levels, closes its agents and deletes
+                                          the folder, the state in ~/.cache/orq and claude's conversations
+  python qa/orqqa.py sets                 ⊞ sets: lists the saved ones (name, agents, already open)
+  python qa/orqqa.py set ID               opens the set ID via the picker and waits for the server to finish
+  python qa/orqqa.py quota ["text"]        forces "out of quota" on the current tab and waits for the
+                                          account switch
+  python qa/orqqa.py click "selector" | text "selector" | eval "js"
+  python qa/orqqa.py watch [seconds]      keeps listening to console, errors and failing requests
 
-Todo comando grava captura e console em qa/out/ (ORQ_QA_VIDEO=1 grava também um vídeo). Alvo: o orq-web
-do `up`, ou ORQ_QA_URL (ex.: http://10.0.0.10:8765/ com ORQ_QA_PASSWORD) para a página da rede;
-ORQ_QA_VIA=server0 chega a ela por um túnel ssh (e lê a senha lá), porque a privacidade de rede local do
-macOS só deixa binários da Apple alcançarem o endereço ZeroTier — o Chromium recebe "No route to host".
-ORQ_QA_HEADED=1 mostra o navegador; ORQ_QA_LABEL=rótulo escolhe a aba antes de `say`, `esc`, `allow`,
-`deny` e `stop`.
+Every command writes a screenshot and the console to qa/out/ (ORQ_QA_VIDEO=1 also records a video). Target:
+the orq-web of `up`, or ORQ_QA_URL (e.g. http://10.0.0.10:8765/ with ORQ_QA_PASSWORD) for the page on the
+network; ORQ_QA_VIA=server0 reaches it through an ssh tunnel (and reads the password there), because the local
+network privacy of macOS only lets Apple binaries reach the ZeroTier address — Chromium receives "No route to
+host". ORQ_QA_HEADED=1 shows the browser; ORQ_QA_LABEL=label picks the tab before `say`, `esc`, `allow`,
+`deny` and `stop`.
 """
 
 import atexit
@@ -62,13 +63,13 @@ def ts() -> str:
     return time.strftime("%H%M%S")
 
 
-# ---------------------------------------------------------------- orq-web só do QA
+# ---------------------------------------------------------------- orq-web just for the QA
 def pid_file(port: int = PORT) -> Path:
     return OUT / f"orq-web-{port}.pid"
 
 
 def local_url(port: int = PORT) -> Optional[str]:
-    """Link (com token) do orq-web nesta porta, se ele responde."""
+    """Link (with token) of the orq-web on this port, if it responds."""
     try:
         url = (STATE_ROOT / f"web-{port}.url").read_text().strip()
     except OSError:
@@ -81,7 +82,7 @@ def local_url(port: int = PORT) -> Optional[str]:
 
 
 def server_up(port: int = PORT, wait: float = 30) -> Tuple[str, bool]:
-    """Garante um orq-web real nesta porta. Devolve (link com token, se foi este chamado que o subiu)."""
+    """Ensures a real orq-web on this port. Returns (link with token, whether this call started it)."""
     url = local_url(port)
     if url:
         return url, False
@@ -94,7 +95,7 @@ def server_up(port: int = PORT, wait: float = 30) -> Tuple[str, bool]:
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},  # senão o log só sai no fim (e some no SIGTERM)
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},  # else the log only comes at the end (lost on SIGTERM)
     )
     pid_file(port).write_text(str(p.pid))
     deadline = time.time() + wait
@@ -103,39 +104,40 @@ def server_up(port: int = PORT, wait: float = 30) -> Tuple[str, bool]:
         if url:
             return url, True
         if p.poll() is not None:
-            raise RuntimeError(f"orq-web saiu com {p.returncode}; veja {OUT / f'orq-web-{port}.log'}")
+            raise RuntimeError(f"orq-web exited with {p.returncode}; see {OUT / f'orq-web-{port}.log'}")
         time.sleep(0.3)
-    raise RuntimeError(f"orq-web não respondeu em {wait:.0f} s na porta {port}")
+    raise RuntimeError(f"orq-web did not respond within {wait:.0f} s on port {port}")
 
 
-# ---------------------------------------------------------------- limpeza das pastas de QA
-# Só pastas com este nome são apagadas: uma ORQ_QA_PROJECT apontando para um projeto de verdade nunca o perde.
+# ---------------------------------------------------------------- cleanup of the QA folders
+# Only folders with this name are deleted: an ORQ_QA_PROJECT pointing at a real project never loses it.
 QA_NAME = re.compile(r"^orq-(qa|demo)[A-Za-z0-9_-]*$")
 
 
 def local_host_name() -> str:
-    """Nome desta máquina na página do QA (o orq-web do `server_up` herda o mesmo ORQ_LOCAL_HOST)."""
+    """Name of this machine on the QA page (the orq-web of `server_up` inherits the same ORQ_LOCAL_HOST)."""
     return os.environ.get("ORQ_LOCAL_HOST") or "laptop"
 
 
 def qa_name(path: str) -> str:
     name = path.rstrip("/").split("/")[-1]
     if not QA_NAME.match(name):
-        raise ValueError(f"{path!r} não é uma pasta de QA (orq-qa… ou orq-demo…): não apago")
+        raise ValueError(f"{path!r} is not a QA folder (orq-qa… or orq-demo…): not deleting it")
     return name
 
 
 def purge_command(path: str) -> str:
-    """Linha de shell que apaga, na máquina do agente, o que uma rodada deixa de uma pasta de QA:
-    a pasta, o estado dos supervisores dela (o agente, os níveis e os vínculos, em ~/.cache/orq/<nome>-*)
-    e as conversas que o claude grava por pasta em cada conta (~/.claude*/projects/<pasta saneada>)."""
+    """Shell line that deletes, on the agent's machine, what a round leaves of a QA folder:
+    the folder, the state of its supervisors (the agent, the levels and the links, in ~/.cache/orq/<name>-*)
+    and the conversations that claude writes per folder in each account
+    (~/.claude*/projects/<sanitised folder>)."""
     name = qa_name(path)
     p = path.rstrip("/")
     folder = '"$HOME"/' + shlex.quote(p[2:]) if p.startswith("~/") else shlex.quote(p)
     state = os.environ.get("ORQ_QA_STATE_DIR", "~/.cache/orq")
-    # um nível recém-encerrado (↓ desfazer) ainda pode estar saindo: o supervisor regrava o state.json e o
-    # claude
-    # a conversa ao morrer; espera os sockets sumirem (até 30 s) antes de apagar, senão o estado reaparece
+    # a level that was just closed (↓ undo) may still be exiting: the supervisor rewrites the state.json and
+    # claude the conversation as they die; waits for the sockets to vanish (up to 30 s) before deleting,
+    # otherwise the state reappears
     return (
         f"P={folder}; K=$(printf %s \"$P\" | sed 's|[^A-Za-z0-9]|-|g'); "
         f"for i in $(seq 1 30); do ls {state}/{name}-*/agent.sock >/dev/null 2>&1 || break; sleep 1; done; "
@@ -145,18 +147,19 @@ def purge_command(path: str) -> str:
 
 
 def run_on(host: str, command: str, timeout: float = 60) -> None:
-    """Roda `command` nesta máquina ou, por ssh, na outra (uma conexão só: ver ssh-sequencial-falha)."""
+    """Runs `command` on this machine or, over ssh, on the other one (a single connection: see
+    ssh-sequencial-falha)."""
     if host == local_host_name():
         cmd = ["sh", "-c", command]
     else:
         cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12", host, command]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode:
-        raise RuntimeError(f"limpeza em {host} falhou: {(r.stderr or r.stdout).strip()[-200:]}")
+        raise RuntimeError(f"cleanup on {host} failed: {(r.stderr or r.stdout).strip()[-200:]}")
 
 
 def server_down(port: int = PORT, wait: float = 10) -> bool:
-    """Encerra o orq-web do QA (os agentes continuam; encerre-os com `stop`)."""
+    """Stops the QA's orq-web (the agents keep running; close them with `stop`)."""
     try:
         pid = int(pid_file(port).read_text())
     except (OSError, ValueError):
@@ -177,17 +180,18 @@ def server_down(port: int = PORT, wait: float = 10) -> bool:
     return False
 
 
-# ---------------------------------------------------------------- túnel até a página da rede
+# ---------------------------------------------------------------- tunnel to the page on the network
 TUNNEL_PORT = int(os.environ.get("ORQ_QA_TUNNEL_PORT", "18765"))
-_tunnel: Optional[Tuple[str, Optional[str], subprocess.Popen]] = None  # (url local, senha, ssh)
+_tunnel: Optional[Tuple[str, Optional[str], subprocess.Popen]] = None  # (local url, password, ssh)
 
 
 def tunnel_up(url: str, via: str, port: int = TUNNEL_PORT, wait: float = 30) -> Tuple[str, Optional[str]]:
-    """Túnel ssh por `via` até a página em `url`. Devolve (url local, senha lida em `via`).
+    """Ssh tunnel through `via` to the page at `url`. Returns (local url, password read on `via`).
 
-    Daqui, só binários da Apple (curl, ssh) alcançam o endereço ZeroTier: a privacidade de rede local do
-    macOS nega o Chromium do Playwright e o python ("No route to host"). Uma única conexão ssh traz a
-    senha de ~/.config/orq-web/password (duas seguidas à mesma máquina caem) e segura o túnel até sair."""
+    From here, only Apple binaries (curl, ssh) reach the ZeroTier address: the local network privacy of
+    macOS denies Playwright's Chromium and python ("No route to host"). A single ssh connection brings the
+    password from ~/.config/orq-web/password (two in a row to the same machine fail) and holds the tunnel
+    until exit."""
     global _tunnel
     if _tunnel:
         return _tunnel[0], _tunnel[1]
@@ -214,7 +218,7 @@ def tunnel_up(url: str, via: str, port: int = TUNNEL_PORT, wait: float = 30) -> 
             break
         lines.append(line.strip())
     else:
-        raise RuntimeError(f"túnel ssh por {via} não abriu: {' / '.join(x for x in lines if x)}")
+        raise RuntimeError(f"ssh tunnel through {via} did not open: {' / '.join(x for x in lines if x)}")
     password = next((x for x in lines if x), None)
     local = f"http://127.0.0.1:{port}"
     deadline = time.time() + wait
@@ -226,7 +230,7 @@ def tunnel_up(url: str, via: str, port: int = TUNNEL_PORT, wait: float = 30) -> 
             time.sleep(0.3)
     else:
         tunnel_down(p)
-        raise RuntimeError(f"a página {url} não respondeu pelo túnel {local} (via {via})")
+        raise RuntimeError(f"the page {url} did not respond through the tunnel {local} (via {via})")
     _tunnel = (local, password, p)
     atexit.register(tunnel_down)
     return local, password
@@ -244,7 +248,8 @@ def tunnel_down(p: Optional[subprocess.Popen] = None) -> None:
 
 
 def target() -> Tuple[str, Optional[str], Optional[str]]:
-    """(url base, token, senha): ORQ_QA_URL (página da rede, por túnel com ORQ_QA_VIA) ou o orq-web do QA."""
+    """(base url, token, password): ORQ_QA_URL (page on the network, through a tunnel with ORQ_QA_VIA) or
+    the QA's orq-web."""
     url = os.environ.get("ORQ_QA_URL")
     if url:
         password = os.environ.get("ORQ_QA_PASSWORD")
@@ -254,16 +259,14 @@ def target() -> Tuple[str, Optional[str], Optional[str]]:
         return url.rstrip("/"), None, password
     url = local_url()
     if not url:
-        raise SystemExit(
-            f"nenhum orq-web na porta {PORT}: rode `python qa/orqqa.py up` (ou defina ORQ_QA_URL)"
-        )
+        raise SystemExit(f"no orq-web on port {PORT}: run `python qa/orqqa.py up` (or set ORQ_QA_URL)")
     u = urlparse(url)
     return f"{u.scheme}://{u.netloc}", parse_qs(u.query).get("t", [None])[0], None
 
 
-# ---------------------------------------------------------------- a página
+# ---------------------------------------------------------------- the page
 class Orq:
-    """Uma aba do orq-web aberta no Chromium, com console, erros e requisições falhas guardados."""
+    """An orq-web tab open in Chromium, with console, errors and failed requests kept."""
 
     def __init__(self, page: Page, base: str, token: Optional[str] = None, password: Optional[str] = None):
         self.page, self.base, self.token, self.password = page, base, token, password
@@ -278,7 +281,8 @@ class Orq:
 
     @classmethod
     def launch(cls, pw: Playwright, headed: bool = False, video: bool = True) -> "Orq":
-        """Abre a página. Com `video`, grava a sessão; `close(nome)` salva em qa/out/<nome>.mp4 (ou .webm)."""
+        """Opens the page. With `video`, records the session; `close(name)` saves to qa/out/<name>.mp4 (or
+        .webm)."""
         base, token, password = target()
         browser = pw.chromium.launch(headless=not headed)
         size = {"width": 1280, "height": 860}
@@ -290,11 +294,11 @@ class Orq:
         return o
 
     def close(self, video_name: Optional[str] = None) -> Optional[Path]:
-        """Fecha o navegador. Com `video_name`, guarda o vídeo da sessão em qa/out/<nome>.mp4 (ou .webm)."""
+        """Closes the browser. With `video_name`, keeps the session video in qa/out/<name>.mp4 (or .webm)."""
         if not self.browser:
             return None
         v = self.page.video
-        self.page.context.close()  # termina de gravar o vídeo
+        self.page.context.close()  # finishes recording the video
         self.browser.close()
         if not v:
             return None
@@ -304,7 +308,7 @@ class Orq:
             return None
         dst = OUT / f"{video_name}.webm"
         src.replace(dst)
-        if shutil.which("ffmpeg"):  # mp4 abre no QuickTime e no celular; o webm só em navegador
+        if shutil.which("ffmpeg"):  # mp4 opens in QuickTime and on the phone; webm only in a browser
             mp4 = dst.with_suffix(".mp4")
             r = subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error", "-i", str(dst), "-pix_fmt", "yuv420p", str(mp4)],
@@ -328,7 +332,7 @@ class Orq:
         self.page.wait_for_selector("#tabs .tab.plus", timeout=20000)
         self.page.wait_for_timeout(300)
 
-    # ---- API (mesmo token/cookie da aba)
+    # ---- API (same token/cookie as the tab)
     def api(self, path: str, body: Optional[dict] = None) -> dict:
         headers = {"X-Orq-Token": self.token} if self.token else {}
         if body is None:
@@ -350,7 +354,7 @@ class Orq:
     def agents(self) -> List[dict]:
         return [a for a in self.state().get("agents", []) if a.get("state") != "closed"]
 
-    # ---- o que a página mostra
+    # ---- what the page shows
     def current(self) -> Optional[str]:
         return self.page.evaluate("document.querySelector('.tab.on')?.dataset.l || null")
 
@@ -364,7 +368,7 @@ class Orq:
         return self.page.evaluate("[...document.querySelectorAll('.chat.on .ai')].pop()?.innerText || ''")
 
     def messages(self) -> List[dict]:
-        """Cada bloco do chat atual: {cls, text} (me = você, ai = claude, chip = ferramenta, sys = aviso)."""
+        """Each block of the current chat: {cls, text} (me = you, ai = claude, chip = tool, sys = notice)."""
         return self.page.evaluate(
             "[...document.querySelectorAll('.chat.on .inner > *')]"
             ".map(e => ({cls: e.className, text: e.innerText.slice(0, 400)}))"
@@ -373,16 +377,17 @@ class Orq:
     def toast(self) -> str:
         return self.page.evaluate("document.getElementById('toast').textContent")
 
-    # ---- ações
+    # ---- actions
     def show(self, label: str) -> None:
         self.page.click(f'.tab[data-l="{label}"] .meta')
         self.wait_fn(f"() => document.querySelector('.tab.on')?.dataset.l === {json.dumps(label)}")
 
     def open_project(self, spec: str, timeout: float = 90) -> str:
-        """`maquina:/caminho` pelo +, conversa nova. Espera o agente sair de 'abrindo…'. Devolve o rótulo."""
+        """`machine:/path` through +, new conversation. Waits for the agent to leave 'opening…'. Returns the
+        label."""
         host, _, path = spec.partition(":")
         if not path:
-            raise ValueError("use maquina:/caminho")
+            raise ValueError("use machine:/path")
         self.page.click(f'.tab.plus[data-host="{host}"]')
         self.page.wait_for_selector("#picker:not([hidden])")
         self.page.fill("#pnew", spec)
@@ -395,19 +400,19 @@ class Orq:
             timeout=timeout * 1000,
         )
         label = self.current()
-        # 'abrindo…' é o chute provisório da página; a máquina confirma o agente pronto em até ~15 s.
-        # A aba tem de continuar lá: se ela sumir, o estado fica vazio e isso não é "pronto".
+        # 'opening…' is the page's provisional guess; the machine confirms the agent ready within ~15 s.
+        # The tab has to still be there: if it vanishes, the state becomes empty and that is not "ready".
         self.wait_fn(
             "(l) => document.querySelector('.tab.on')?.dataset.l === l"
-            " && /esperando|trabalhando|permiss/.test(document.getElementById('cstate').textContent)",
+            " && /waiting|working|permission/.test(document.getElementById('cstate').textContent)",
             arg=label,
             timeout=45000,
         )
         return label
 
-    # Turno terminado: depois da última mensagem sua há um texto do claude pronto (sem .live), uma
-    # permissão ou um aviso, e o estado não é mais 'trabalhando…'. (Só o estado não basta: no primeiro
-    # turno o `init` do claude passa por 'esperando você' antes de a resposta vir.)
+    # Turn finished: after your last message there is a finished claude text (without .live), a
+    # permission or a notice, and the state is no longer 'working…'. (The state alone is not enough: on the
+    # first turn claude's `init` goes through 'waiting for you' before the reply comes.)
     TURN_DONE = """() => {
       const inner = document.querySelector('.chat.on .inner');
       if (!inner) return false;
@@ -416,34 +421,36 @@ class Orq:
       const done = kids.slice(lastMe + 1).some((e) =>
         (e.classList.contains('ai') && !e.classList.contains('live'))
         || e.classList.contains('perm') || e.classList.contains('sys'));
-      return done && !document.getElementById('cstate').textContent.includes('trabalhando');
+      return done && !document.getElementById('cstate').textContent.includes('working');
     }"""
 
     def wait_fn(self, js: str, arg: Any = None, timeout: float = 30000) -> None:
-        """Como `page.wait_for_function(js, arg=…, timeout=ms)`, mas sondando pelo `evaluate` a cada 300 ms.
+        """Like `page.wait_for_function(js, arg=…, timeout=ms)`, but polling through `evaluate` every 300 ms.
 
-        O Playwright 1.48 (o mais novo com Chromium para o Ubuntu 20.04 do server0) avalia o predicado
-        uma vez pelo CDP e, se não for verdadeiro de cara, passa a sondar com `eval` dentro da página, que
-        a CSP (sem `unsafe-eval`) barra. O `evaluate` vai sempre pelo CDP."""
+        Playwright 1.48 (the newest with Chromium for the Ubuntu 20.04 of server0) evaluates the predicate
+        once through CDP and, if it is not true right away, starts polling with `eval` inside the page, which
+        the CSP (without `unsafe-eval`) blocks. `evaluate` always goes through CDP."""
         end = time.time() + timeout / 1000
         while True:
             try:
                 if self.page.evaluate(js, arg):
                     return
-            except Exception as e:  # noqa: BLE001 - a página pode estar entre dois estados
+            except Exception as e:  # noqa: BLE001 - the page may be between two states
                 if "unsafe-eval" not in str(e) and "Execution context" not in str(e):
                     raise
             if time.time() >= end:
-                raise AssertionError(f"esperei {timeout / 1000:.0f} s por: {js.strip()[:120]}…")
+                raise AssertionError(f"waited {timeout / 1000:.0f} s for: {js.strip()[:120]}…")
             self.page.wait_for_timeout(300)
 
     def wait_idle(self, timeout: float = 180) -> str:
-        """Espera o turno terminar. Devolve o texto do estado ('esperando você', 'pede permissão', 'erro')."""
+        """Waits for the turn to finish. Returns the state text ('waiting for you', 'asks permission',
+        'error')."""
         self.wait_fn(self.TURN_DONE, timeout=timeout * 1000)
         return self.cstate()
 
     def say(self, text: str, wait: bool = True, timeout: float = 180) -> str:
-        """Digita no chat e envia (Enter). Com `wait`, espera o turno e devolve o último texto do claude."""
+        """Types in the chat and sends (Enter). With `wait`, waits for the turn and returns claude's last
+        text."""
         self.page.fill("#input", text)
         self.page.press("#input", "Enter")
         self.wait_fn("() => !document.querySelector('.chat.on .me.pending')", timeout=20000)
@@ -459,34 +466,35 @@ class Orq:
     def permission(self, allow: bool = True) -> None:
         self.page.click(f'.chat.on .perm:not(.done) .btns button[data-ok="{1 if allow else 0}"]')
 
-    # ---- níveis (professor → executor)
+    # ---- levels (teacher → executor)
     def upgrade(self, recipe: str = "professor-executor", timeout: float = 90) -> List[str]:
-        """⇅ subir nível na aba atual com a receita; espera o painel e o nível de cima pronto.
+        """⇅ add level on the current tab with the recipe; waits for the panel and the level above ready.
 
-        Devolve os níveis do painel, do topo para baixo (ex.: ['professor', 'executor'])."""
+        Returns the levels of the panel, from the top down (e.g. ['professor', 'executor'])."""
         self.page.click("#lvl")
         self.page.wait_for_selector(f'#picker:not([hidden]) .p.lvp[data-id="{recipe}"]', timeout=30000)
         self.page.click(f'.p.lvp[data-id="{recipe}"]')
         self.page.wait_for_selector("#levels:not([hidden]) .lcard", timeout=timeout * 1000)
-        # a aba passa a falar com o nível de cima; ele sai de 'abrindo…' quando a máquina confirma
+        # the tab starts talking to the level above; it leaves 'opening…' when the machine confirms
         self.wait_fn(
-            "() => /esperando|trabalhando|permiss/.test(document.getElementById('cstate').textContent)"
+            "() => /waiting|working|permission/.test(document.getElementById('cstate').textContent)"
             " && document.querySelectorAll('#levels .lcard').length >= 2",
             timeout=timeout * 1000,
         )
         return self.levels()
 
     def levels(self) -> List[str]:
-        """Níveis do painel, do topo para baixo; [] com o painel escondido (os cartões ficam no DOM)."""
+        """Levels of the panel, from the top down; [] with the panel hidden (the cards stay in the DOM)."""
         return self.page.evaluate(
             "document.getElementById('levels').hidden ? []"
             " : [...document.querySelectorAll('#levels .lcard b')].map((e) => e.textContent)"
         )
 
     def wires(self) -> List[dict]:
-        """Fios do painel: {frm: nível que mandou, head, delivered (✓✓), text}.
+        """Wires of the panel: {frm: level that sent it, head, delivered (✓✓), text}.
 
-        Todo SendMessage vira um fio de quem mandou ('professor' delegou, 'executor' reportou um marco)."""
+        Every SendMessage becomes a wire of whoever sent it ('professor' delegated, 'executor' reported a
+        milestone)."""
         return self.page.evaluate(
             "[...document.querySelectorAll('#side .wire')].map((e) => ({"
             "frm: e.querySelector('.wh b')?.textContent || '',"
@@ -496,8 +504,9 @@ class Orq:
         )
 
     def wait_wire(self, frm: str, contains: str = "", delivered: bool = False, timeout: float = 180) -> dict:
-        """Espera um fio do nível `frm` cujo texto tenha `contains` (se dado); com `delivered`, espera o
-        ✓✓ (o outro lado recebeu, o que chega um instante depois do fio). Devolve o último que casa."""
+        """Waits for a wire from the level `frm` whose text has `contains` (if given); with `delivered`, waits
+        for the ✓✓ (the other side received it, which arrives a moment after the wire). Returns the last one
+        that matches."""
         self.wait_fn(
             "([f, c, d]) => [...document.querySelectorAll('#side .wire')].some((e) =>"
             " e.querySelector('.wh b')?.textContent === f"
@@ -510,17 +519,17 @@ class Orq:
         return ([w for w in hits if w["delivered"]] if delivered else hits)[-1]
 
     def downgrade(self, timeout: float = 60) -> None:
-        """↓ desfazer (duas vezes): encerra os níveis de cima; a aba volta ao executor."""
+        """↓ undo (twice): closes the levels above; the tab goes back to the executor."""
         self.page.click("#levels #down")
         self.page.wait_for_timeout(400)
         self.page.click("#levels #down")
         self.page.wait_for_selector("#levels", state="hidden", timeout=timeout * 1000)
 
     def stop(self, label: Optional[str] = None, timeout: float = 45) -> None:
-        """✕ duas vezes na aba; espera a aba sumir (a máquina confirma o fechamento em até ~15 s)."""
+        """✕ twice on the tab; waits for the tab to vanish (the machine confirms the closing within ~15 s)."""
         label = label or self.current()
         if not label:
-            raise ValueError("nenhuma aba aberta")
+            raise ValueError("no tab open")
         x = f'.tab[data-l="{label}"] .x'
         self.page.click(x)
         self.page.wait_for_timeout(400)
@@ -528,13 +537,14 @@ class Orq:
         self.page.wait_for_selector(f'.tab[data-l="{label}"]', state="detached", timeout=timeout * 1000)
 
     def ensure_stopped(self, label: str, timeout: float = 60) -> None:
-        """Pela API: encerra o agente se estiver vivo (sobra de outra rodada) e espera ele sumir de vez.
+        """Through the API: closes the agent if it is alive (left over from another round) and waits for it
+        to vanish for good.
 
-        Espera também o socket do supervisor desaparecer (agente desta máquina): reabrir antes disso faz o
-        `orq-agent spawn` responder "já rodando" para um agente que está morrendo.
+        Also waits for the supervisor's socket to disappear (agent on this machine): reopening before that
+        makes `orq-agent spawn` answer "already running" for an agent that is dying.
         """
         sock = STATE_ROOT / re.sub(r"[^a-zA-Z0-9_-]", "-", label) / "agent.sock"  # = config.state_dir
-        # um servidor recém-aberto ainda não listou os agentes; o socket diz se há o que encerrar
+        # a server that just started has not listed the agents yet; the socket says if there is one to close
         if sock.exists() or any(a.get("label") == label for a in self.agents()):
             self.api(f"/api/agent/{quote(label, safe='')}/stop", {})
         deadline = time.time() + timeout
@@ -542,19 +552,19 @@ class Orq:
             if not sock.exists() and not any(a.get("label") == label for a in self.agents()):
                 return
             time.sleep(1)
-        raise RuntimeError(f"{label} não encerrou em {timeout:.0f} s")
+        raise RuntimeError(f"{label} did not close within {timeout:.0f} s")
 
     def purge(self, spec: str, timeout: float = 60) -> List[str]:
-        """Deixa uma pasta de QA (`maquina:/caminho`) como se nunca tivesse sido usada.
+        """Leaves a QA folder (`machine:/path`) as if it had never been used.
 
-        Desfaz os níveis e encerra todo agente vivo naquela pasta (o rótulo base, um `-2` de outra rodada e
-        os níveis de cima), espera cada um sumir e apaga a pasta, o estado e as conversas na máquina dele.
-        Serve antes de um teste (começar do zero) e depois (não deixar nada para trás). Devolve os rótulos
-        que encerrou."""
+        Undoes the levels and closes every live agent in that folder (the base label, a `-2` from another
+        round and the levels above), waits for each one to vanish and deletes the folder, the state and the
+        conversations on its machine. Used before a test (start from scratch) and after (leave nothing
+        behind). Returns the labels it closed."""
         host, _, path = spec.partition(":")
         name = qa_name(path)
 
-        # rótulos desta pasta: `orq-qa@h`, `orq-qa-2@h` (outra rodada) e os níveis `orq-qa~professor@h`
+        # labels of this folder: `orq-qa@h`, `orq-qa-2@h` (another round) and the levels `orq-qa~professor@h`
         own = re.compile(rf"^{re.escape(name)}(-\d+)?(~[^@]+)?@{re.escape(host)}$")
 
         def mine(a: dict) -> bool:
@@ -565,22 +575,24 @@ class Orq:
             if not a.get("parent"):
                 self.api(f"/api/agent/{quote(a['label'], safe='')}/downgrade", {})
         stopped = [a["label"] for a in live]
-        for lab in sorted(stopped, key=lambda x: "~" not in x):  # níveis primeiro (o downgrade já os fechou)
+        for lab in sorted(stopped, key=lambda x: "~" not in x):  # levels first (already closed by downgrade)
             self.ensure_stopped(lab, timeout)
-        self.ensure_stopped(f"{name}@{host}", timeout)  # sobra de um servidor que ainda não a listou
+        self.ensure_stopped(f"{name}@{host}", timeout)  # leftover of a server that has not listed it yet
         run_on(host, purge_command(path))
         return stopped
 
-    # ---- troca automática de conta
+    # ---- automatic account switch
     def account_of(self, label: str) -> Optional[str]:
         return next((a.get("account") for a in self.agents() if a.get("label") == label), None)
 
-    def force_quota(self, label: str, retry: str, msg: str = "You've hit your usage limit (forçado pelo QA)"):
-        """Força "sem cota" por baixo: grava `state: quota` no state.json do agente (desta máquina), com a
-        mensagem a reenviar em `retry`, exatamente como o supervisor faz ao ver o `rate_limit_event`.
+    def force_quota(self, label: str, retry: str, msg: str = "You've hit your usage limit (forced by QA)"):
+        """Forces "out of quota" from underneath: writes `state: quota` in the agent's state.json (on this
+        machine), with the message to resend in `retry`, exactly as the supervisor does on seeing the
+        `rate_limit_event`.
 
-        Na próxima consulta às máquinas (≤ 15 s) o servidor reabre o agente noutra conta, na mesma
-        conversa, e reenvia `retry`. Só a detecção é pulada; a troca em si é a de verdade."""
+        On the next query to the machines (≤ 15 s) the server reopens the agent on another account, in the
+        same conversation, and resends `retry`. Only the detection is skipped; the switch itself is the real
+        one."""
         p = STATE_ROOT / re.sub(r"[^a-zA-Z0-9_-]", "-", label) / "state.json"
         st = json.loads(p.read_text())
         st.update(state="quota", msg=msg, retry=retry, ts=time.time())
@@ -588,8 +600,8 @@ class Orq:
         return p
 
     def wait_account_change(self, label: str, old: Optional[str], timeout: float = 150) -> str:
-        """Espera o agente reaparecer noutra conta, confirmado pela máquina (não só a entrada provisória
-        'abrindo…'); devolve a conta nova."""
+        """Waits for the agent to reappear on another account, confirmed by the machine (not only the
+        provisional 'opening…' entry); returns the new account."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             a = next((x for x in self.agents() if x.get("label") == label), None)
@@ -597,15 +609,15 @@ class Orq:
                 return a["account"]
             self.page.wait_for_timeout(2000)
         raise RuntimeError(
-            f"{label} continuou na conta {old} por {timeout:.0f} s; migrações: {self.migrations()}"
+            f"{label} stayed on the account {old} for {timeout:.0f} s; migrations: {self.migrations()}"
         )
 
     def migrations(self) -> List[dict]:
         return self.state().get("migrations", [])
 
-    # ---- vínculos entre agentes (🔗)
+    # ---- links between agents (🔗)
     def link(self, to: str, timeout: float = 120) -> List[str]:
-        """🔗 vincular na aba atual: escolhe `to` no seletor; espera o vínculo aparecer no painel."""
+        """🔗 link on the current tab: picks `to` in the picker; waits for the link to appear in the panel."""
         base = self.current()
         self.page.click("#lnk")
         self.page.wait_for_selector("#picker:not([hidden]) #plist .p", timeout=20000)
@@ -620,7 +632,7 @@ class Orq:
         return self.links()
 
     def links(self) -> List[str]:
-        """Rótulos dos agentes vinculados ao da aba (painel de vínculos)."""
+        """Labels of the agents linked to the tab's one (links panel)."""
         return self.page.evaluate(
             "document.getElementById('links').hidden ? []"
             " : [...document.querySelectorAll('#links .lcard')].map((e) => e.dataset.l)"
@@ -636,9 +648,9 @@ class Orq:
             timeout=timeout * 1000,
         )
 
-    # ---- conjuntos (⊞ no topo)
+    # ---- sets (⊞ at the top)
     def open_sets(self) -> List[dict]:
-        """⊞ conjuntos: abre o seletor e devolve as linhas {id, text} (text = nome, resumo, já abertos)."""
+        """⊞ sets: opens the picker and returns the rows {id, text} (text = name, summary, already open)."""
         if self.page.is_hidden("#picker") or self.page.is_hidden("#setsnap"):
             self.page.click("#sets")
         self.page.wait_for_selector("#picker:not([hidden]) #setsnap", timeout=20000)
@@ -648,7 +660,7 @@ class Orq:
         )
 
     def save_set(self, data: dict) -> str:
-        """Salva um conjunto pela API (o mesmo POST do "enviar JSON"); devolve o id."""
+        """Saves a set through the API (the same POST as "upload JSON"); returns the id."""
         j = self.api("/api/conjuntos", data)
         assert "id" in j, j
         return j["id"]
@@ -657,27 +669,28 @@ class Orq:
         return next((j for j in self.state().get("conjuntos_abrindo", []) if j["id"] == sid), None)
 
     def open_set(self, sid: str, timeout: float = 300) -> dict:
-        """Clica no conjunto no seletor e espera o servidor terminar de abrir (agentes, vínculos,
-        professor, tarefas). Devolve o registro do andamento (feitos, erros, top)."""
+        """Clicks the set in the picker and waits for the server to finish opening it (agents, links,
+        teacher, tasks). Returns the progress record (feitos, erros, top)."""
         self.open_sets()
         self.page.click(f'#plist .setp[data-id="{sid}"]')
         self.wait_fn(
             "() => document.getElementById('picker').hidden"
-            " || /já aberto|sendo aberto|não vale/.test(document.getElementById('toast').textContent)",
+            " || /already open|being opened|no longer valid/"
+            ".test(document.getElementById('toast').textContent)",
             timeout=30000,
         )
         if not self.page.is_hidden("#picker"):
-            raise AssertionError(f"o conjunto {sid} não abriu: {self.toast()}")
+            raise AssertionError(f"the set {sid} did not open: {self.toast()}")
         deadline = time.time() + timeout
         while time.time() < deadline:
             j = self.set_job(sid)
             if j and j["etapa"] == "pronto":
                 return j
             self.page.wait_for_timeout(2000)
-        raise AssertionError(f"o conjunto {sid} não terminou de abrir: {self.set_job(sid)}")
+        raise AssertionError(f"the set {sid} did not finish opening: {self.set_job(sid)}")
 
     def snapshot_set(self, nome: str) -> dict:
-        """📷 salvar abas abertas: fotografa, dá o nome e salva. Devolve o JSON que foi salvo."""
+        """📷 save open tabs: takes the snapshot, names it and saves. Returns the JSON that was saved."""
         self.open_sets()
         self.page.click("#setsnap")
         self.page.wait_for_selector("#picker:not([hidden]) #snapjson", timeout=20000)
@@ -685,32 +698,33 @@ class Orq:
         data = json.loads(self.page.input_value("#snapjson"))
         data["nome"] = nome
         self.page.click("#snapsave")
-        self.wait_fn("() => /salvo/.test(document.getElementById('toast').textContent)", timeout=20000)
-        self.page.click("#pclose")  # a lista volta a aparecer depois de salvar; fecha para liberar a página
+        self.wait_fn("() => /saved/.test(document.getElementById('toast').textContent)", timeout=20000)
+        self.page.click("#pclose")  # the list shows up again after saving; closes it to free the page
         return data
 
     def delete_set(self, sid: str) -> None:
         self.open_sets()
-        for _ in range(2):  # ✕ duas vezes, como o encerrar de uma aba
+        for _ in range(2):  # ✕ twice, like closing a tab
             self.page.click(f'#plist .setp[data-id="{sid}"] [data-del]')
         self.wait_fn('(s) => !document.querySelector(`#plist .setp[data-id="${s}"]`)', arg=sid, timeout=20000)
         self.page.click("#pclose")
 
-    # ---- arquivos que o agente compartilhou (_outbox/)
+    # ---- files the agent shared (_outbox/)
     def open_files(self) -> None:
-        """📂 na barra do chat: abre a lista de arquivos no painel lateral."""
+        """📂 on the chat bar: opens the file list in the side panel."""
         if self.page.is_hidden("#outbox"):
             self.page.click("#out")
         self.page.wait_for_selector("#outbox:not([hidden]) .lhead")
 
     def files(self) -> List[str]:
-        """Nomes na lista (painel aberto), do mais novo ao mais antigo."""
+        """Names in the list (panel open), from newest to oldest."""
         return self.page.evaluate(
             "[...document.querySelectorAll('#outbox .frow b')].map((e) => e.textContent)"
         )
 
     def wait_file(self, name: str, timeout: float = 120) -> None:
-        """Espera `name` aparecer na lista (a página relê a _outbox/ ao fim de cada rodada e a cada 30 s)."""
+        """Waits for `name` to appear in the list (the page rereads the _outbox/ at the end of each round and
+        every 30 s)."""
         self.open_files()
         self.wait_fn(
             "(n) => [...document.querySelectorAll('#outbox .frow b')].some((e) => e.textContent === n)",
@@ -719,11 +733,11 @@ class Orq:
         )
 
     def preview(self, name: str) -> str:
-        """Clica no arquivo e devolve a tag do que a prévia mostra (IMG, IFRAME, VIDEO, PRE, DIV)."""
+        """Clicks the file and returns the tag of what the preview shows (IMG, IFRAME, VIDEO, PRE, DIV)."""
         self.page.click(f'#outbox .frow[data-n="{name}"] .fmeta')
         self.page.wait_for_selector("#view:not([hidden]) .vbody > *")
         self.wait_fn(
-            "() => !document.querySelector('#view .vbody').textContent.includes('carregando')", timeout=30000
+            "() => !document.querySelector('#view .vbody').textContent.includes('loading')", timeout=30000
         )
         return self.page.evaluate("document.querySelector('#view .vbody > *').tagName")
 
@@ -732,24 +746,24 @@ class Orq:
         self.page.wait_for_selector("#view", state="hidden")
 
     def download(self, name: str) -> bytes:
-        """Baixa pela API, como o ⬇ da lista faz (mesmo link)."""
+        """Downloads through the API, as the ⬇ of the list does (same link)."""
         label = self.current()
         headers = {"X-Orq-Token": self.token} if self.token else {}
         r = self.page.request.get(self.url(f"/api/agent/{label}/file?name={name}&dl=1"), headers=headers)
-        assert r.status == 200, f"download de {name}: http {r.status}"
+        assert r.status == 200, f"download of {name}: http {r.status}"
         return r.body()
 
     def answer_permissions(self, timeout: float = 240) -> str:
-        """Espera o turno acabar, permitindo tudo que o claude pedir no caminho. Devolve o estado final."""
+        """Waits for the turn to end, allowing everything claude asks on the way. Returns the final state."""
         end = time.time() + timeout
         while True:
             st = self.wait_idle(max(5.0, end - time.time()))
-            if "permiss" not in st:
+            if "permission" not in st:
                 return st
             self.permission(True)
             self.page.wait_for_timeout(500)
 
-    # ---- evidências
+    # ---- evidence
     def shot(self, name: str) -> Path:
         OUT.mkdir(exist_ok=True)
         p = OUT / f"{name}.png"
@@ -763,25 +777,25 @@ class Orq:
         return p
 
     def problems(self) -> List[str]:
-        """Erros de página, requisições falhas e respostas >= 400 vistas até agora."""
+        """Page errors, failed requests and responses >= 400 seen so far."""
         return [
             c
             for c in self.console
             if c.startswith(("[pageerror]", "[requestfailed]", "[http ", "[error]"))
-            and not ("/stream?" in c and "ERR_ABORTED" in c)  # stream fechado de propósito (aba recriada)
-            and not ("/file?" in c and "ERR_ABORTED" in c)  # prévia fechada antes de o arquivo chegar
-            and not c.startswith("[error] Failed to load resource")  # a linha [http N] diz qual foi
-            and not ("[http 404]" in c and c.endswith("/files"))  # recém-aberto: a página tenta de novo
+            and not ("/stream?" in c and "ERR_ABORTED" in c)  # stream closed on purpose (tab recreated)
+            and not ("/file?" in c and "ERR_ABORTED" in c)  # preview closed before the file arrived
+            and not c.startswith("[error] Failed to load resource")  # the [http N] line says which one
+            and not ("[http 404]" in c and c.endswith("/files"))  # just opened: the page tries again
         ]
 
 
-# ---------------------------------------------------------------- linha de comando
+# ---------------------------------------------------------------- command line
 def fmt_state(s: dict) -> str:
     lines = []
     for a in s.get("agents", []):
         if a.get("state") == "closed":
             continue
-        extra = (" nível " + a["level"] if a.get("level") else "") + (
+        extra = (" level " + a["level"] if a.get("level") else "") + (
             " · " + a["msg"] if a.get("msg") else ""
         )
         lines.append(
@@ -790,7 +804,7 @@ def fmt_state(s: dict) -> str:
         )
     us = s.get("usage", {})
     quota = ", ".join(f"{k} 5h {v.get('5h', '?')}% 7d {v.get('7d', '?')}%" for k, v in us.items())
-    return ("agentes:\n" + "\n".join(lines) if lines else "agentes: nenhum") + f"\ncota: {quota or '?'}"
+    return ("agents:\n" + "\n".join(lines) if lines else "agents: none") + f"\nquota: {quota or '?'}"
 
 
 def main(argv: List[str]) -> int:
@@ -800,10 +814,10 @@ def main(argv: List[str]) -> int:
     cmd, args = argv[0], argv[1:]
     if cmd == "up":
         url, started = server_up()
-        print(("subiu: " if started else "já estava no ar: ") + url)
+        print(("started: " if started else "already up: ") + url)
         return 0
     if cmd == "down":
-        print("encerrado" if server_down() else "não achei o orq-web do QA (ou não encerrou)")
+        print("stopped" if server_down() else "could not find the QA's orq-web (or it did not stop)")
         return 0
     video = bool(os.environ.get("ORQ_QA_VIDEO"))
     with sync_playwright() as pw:
@@ -814,15 +828,15 @@ def main(argv: List[str]) -> int:
         try:
             if cmd == "state":
                 print(fmt_state(o.state()))
-                print("aba atual:", o.current())
+                print("current tab:", o.current())
             elif cmd == "shot":
                 pass
             elif cmd == "open":
                 lab = o.open_project(args[0])
-                print(f"aberto: {lab} · {o.cstate()} · toast: {o.toast()}")
+                print(f"opened: {lab} · {o.cstate()} · toast: {o.toast()}")
             elif cmd == "show":
                 o.show(args[0])
-                print("aba atual:", o.current())
+                print("current tab:", o.current())
             elif cmd == "say":
                 reply = o.say(" ".join(args), wait="--no-wait" not in args)
                 print(f"[{o.current()}] {o.cstate()}\n{reply}")
@@ -837,15 +851,15 @@ def main(argv: List[str]) -> int:
             elif cmd == "stop":
                 lab = args[0] if args else o.current()
                 o.stop(lab)
-                print(f"encerrado: {lab}")
+                print(f"closed: {lab}")
             elif cmd == "link":
-                print("vínculos:", ", ".join(o.link(argv[2])) or "nenhum")
+                print("links:", ", ".join(o.link(argv[2])) or "none")
             elif cmd == "unlink":
                 o.unlink(argv[2])
-                print("vínculos:", ", ".join(o.links()) or "nenhum")
+                print("links:", ", ".join(o.links()) or "none")
             elif cmd == "levels":
                 print(
-                    "níveis:",
+                    "levels:",
                     " → ".join(o.upgrade(args[0] if args else "professor-executor")),
                     "·",
                     o.cstate(),
@@ -853,29 +867,29 @@ def main(argv: List[str]) -> int:
             elif cmd == "wires":
                 for w in o.wires():
                     print(f"[{'✓✓' if w['delivered'] else '…'}] {w['head']}\n    {w['text'][:200]}")
-                print("níveis:", " → ".join(o.levels()) or "nenhum")
+                print("levels:", " → ".join(o.levels()) or "none")
             elif cmd == "sets":
                 for r in o.open_sets():
                     print(f"  {r['id']:24} {r['text'].replace(chr(10), ' · ')[:120]}")
             elif cmd == "set":
                 j = o.open_set(args[0])
-                print(f"feitos: {', '.join(j['feitos']) or 'nenhum'}; professor: {j.get('top') or '-'}")
+                print(f"done: {', '.join(j['feitos']) or 'none'}; teacher: {j.get('top') or '-'}")
                 for k, v in j["erros"].items():
-                    print(f"  problema {k}: {v}")
+                    print(f"  problem {k}: {v}")
             elif cmd == "purge":
                 for spec in args:
                     gone = o.purge(spec)
-                    print(f"{spec}: limpa" + (f" (encerrei {', '.join(gone)})" if gone else ""))
+                    print(f"{spec}: clean" + (f" (closed {', '.join(gone)})" if gone else ""))
             elif cmd == "undo":
                 o.downgrade()
-                print("níveis encerrados ·", o.cstate())
+                print("levels closed ·", o.cstate())
             elif cmd == "quota":
                 lab = o.current()
                 old = o.account_of(lab)
-                o.force_quota(lab, " ".join(args) or "Continue de onde parou.")
-                print(f"{lab}: conta {old} marcada sem cota; esperando a troca…")
+                o.force_quota(lab, " ".join(args) or "Continue from where you stopped.")
+                print(f"{lab}: account {old} marked out of quota; waiting for the switch…")
                 new = o.wait_account_change(lab, old)
-                print(f"reaberto na conta {new} · {o.cstate()} · toast: {o.toast()}")
+                print(f"reopened on the account {new} · {o.cstate()} · toast: {o.toast()}")
             elif cmd == "click":
                 o.page.click(args[0])
                 o.page.wait_for_timeout(800)
@@ -885,20 +899,20 @@ def main(argv: List[str]) -> int:
                 print(json.dumps(o.page.evaluate(" ".join(args)), ensure_ascii=False, indent=1))
             elif cmd == "watch":
                 secs = float(args[0]) if args else 30
-                print(f"ouvindo {secs:.0f} s… (aba {o.current()})")
+                print(f"listening for {secs:.0f} s… (tab {o.current()})")
                 o.page.wait_for_timeout(secs * 1000)
             else:
-                print(f"comando desconhecido: {cmd}\n{__doc__}")
+                print(f"unknown command: {cmd}\n{__doc__}")
                 return 2
         finally:
             name = f"{cmd}-{ts()}" if cmd != "shot" or not args else args[0]
-            print(f"captura: {o.shot(name)}  console: {o.dump(name)}")
+            print(f"screenshot: {o.shot(name)}  console: {o.dump(name)}")
             probs = o.problems()
             if probs:
-                print("problemas no console:\n  " + "\n  ".join(probs[-10:]))
+                print("problems in the console:\n  " + "\n  ".join(probs[-10:]))
             v = o.close(name if video else None)
             if v:
-                print(f"vídeo: {v}")
+                print(f"video: {v}")
     return 0
 
 

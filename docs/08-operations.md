@@ -92,6 +92,6 @@ Small ones, noted during development:
 - account migration of an agent with a link does not rebuild the link;
 - `Range` for a large video coming over ssh works, but the file is read in full on each request.
 
-Larger ones (phase 4 of `orq-web/docs/PLANO.md`): history of level runs and a timeline of milestones
+Larger ones (phase 4 of `orq-web/docs/PLAN.md`): history of level runs and a timeline of milestones
 per project; model and effort per level in the recipe; recipes editable from the page; search in the
 project list; a better levels panel on the phone; levels in the grid of the terminal `orq`.

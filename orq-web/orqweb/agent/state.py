@@ -1,4 +1,4 @@
-"""state.json do agente: o que o `orq --status-json` e a página leem para listar agentes."""
+"""The agent's state.json: what `orq --status-json` and the page read to list agents."""
 
 import json
 import os
@@ -19,7 +19,7 @@ def pid_alive(pid: Optional[int]) -> bool:
 
 
 class StateFile:
-    """Escrita atômica (tmp + replace): o arquivo nunca fica pela metade para quem lê."""
+    """Atomic write (tmp + replace): the file is never half-written for whoever reads it."""
 
     def __init__(self, path: Path):
         self.path = path
@@ -44,7 +44,7 @@ class StateFile:
 
 
 def list_agents(root: Path) -> list:
-    """Agentes sem terminal desta máquina, com estado corrigido pelo pid (morto = closed)."""
+    """Terminal-less agents of this machine, with the state corrected by the pid (dead = closed)."""
     out = []
     for f in sorted(root.glob("*/state.json")):
         st = StateFile(f).read()

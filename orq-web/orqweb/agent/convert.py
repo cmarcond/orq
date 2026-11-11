@@ -1,8 +1,8 @@
-"""Converte um `claude` interativo rodando num tmux desta máquina num agente da página.
+"""Converts an interactive `claude` running in a tmux on this machine into a page agent.
 
-A conversa já está em disco (o Claude Code grava cada mensagem), então converter é: fechar o
-programa interativo sem violência, e subir o supervisor na mesma pasta e conta com `--mode resume`.
-A sequência de fechamento é escalonada: /exit, Ctrl-C duplo, SIGTERM. Nunca SIGKILL.
+The conversation is already on disk (Claude Code writes every message), so converting means: closing the
+interactive program without violence, and starting the supervisor in the same folder and account with
+`--mode resume`. The closing sequence escalates: /exit, double Ctrl-C, SIGTERM. Never SIGKILL.
 """
 
 import json
@@ -21,12 +21,12 @@ Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 def _run(cmd: List[str], **kw) -> "subprocess.CompletedProcess[str]":
     env = dict(os.environ)
-    env.pop("TMUX", None)  # fala com o servidor tmux padrão, mesmo de dentro de outro tmux
+    env.pop("TMUX", None)  # talks to the default tmux server, even from inside another tmux
     return subprocess.run(cmd, capture_output=True, text=True, env=env, **kw)
 
 
 class Tmux:
-    """O pouco de tmux que a conversão precisa, por um runner trocável nos testes."""
+    """The little bit of tmux the conversion needs, through a runner that tests can swap."""
 
     def __init__(self, run: Runner = _run, binary: str = "tmux"):
         self.run, self.bin = run, binary
@@ -56,14 +56,14 @@ VERSION_NAME = re.compile(r"^\d+(\.\d+)+$")
 
 
 def is_claude(name: str) -> bool:
-    """O processo do Claude Code se chama `claude` (Linux) ou pelo número da versão, nome do binário
-    real sob ~/.local/share/claude/versions (macOS)."""
+    """The Claude Code process is called `claude` (Linux) or by the version number, the name of the real
+    binary under ~/.local/share/claude/versions (macOS)."""
     base = os.path.basename(name or "")
     return base.startswith("claude") or bool(VERSION_NAME.match(base))
 
 
 def claude_pids_under(pane_pid: int, run: Runner = _run) -> List[int]:
-    """PIDs de processos `claude` descendentes do painel (o Claude Code pode estar sob um shell)."""
+    """PIDs of `claude` processes descending from the pane (Claude Code may be under a shell)."""
     r = run(["ps", "-eo", "pid=,ppid=,comm="])
     kids: Dict[int, List[int]] = {}
     names: Dict[int, str] = {}
@@ -84,7 +84,7 @@ def claude_pids_under(pane_pid: int, run: Runner = _run) -> List[int]:
 
 
 def claude_gone(tmux: Tmux, sess: str) -> bool:
-    """O claude interativo saiu: a sessão acabou, ou o painel voltou a um shell."""
+    """The interactive claude has exited: the session ended, or the pane went back to a shell."""
     return not tmux.has_session(sess) or not is_claude(tmux.pane_command(sess))
 
 
@@ -96,7 +96,7 @@ def close_claude(
     kill: Callable[[int, int], None] = os.kill,
     run: Runner = _run,
 ) -> str:
-    """Fecha o claude do tmux `sess` em escalada. Devolve como: 'exit', 'ctrl-c', 'sigterm' ou 'failed'."""
+    """Closes the claude in tmux `sess`, escalating. Returns how: 'exit', 'ctrl-c', 'sigterm' or 'failed'."""
     if claude_gone(tmux, sess):
         return "exit"
 
@@ -131,12 +131,12 @@ def close_claude(
 
 
 def terminal_sessions(status: List[dict]) -> List[dict]:
-    """Entradas do `orq --status-json` que são claude interativo em tmux (não agentes da página)."""
+    """Entries of `orq --status-json` that are an interactive claude in tmux (not page agents)."""
     return [a for a in status if a.get("kind") != "sdk" and a.get("tmux") and a.get("state") != "closed"]
 
 
 def others_in_folder(status: List[dict], entry: dict) -> List[dict]:
-    """Outros claude interativos vivos na mesma pasta: tornam ambígua a conversa a retomar."""
+    """Other live interactive claudes in the same folder: they make the conversation to resume ambiguous."""
     d = os.path.realpath(entry.get("dir") or "")
     return [
         a
@@ -146,13 +146,14 @@ def others_in_folder(status: List[dict], entry: dict) -> List[dict]:
 
 
 def live_terminal_in_folder(status: List[dict], folder: str) -> List[dict]:
-    """Claude interativo vivo nesta pasta (qualquer tmux): retomar por cima dele é perigoso."""
+    """Live interactive claude in this folder (any tmux): resuming on top of it is dangerous."""
     d = os.path.realpath(folder)
     return [a for a in terminal_sessions(status) if os.path.realpath(a.get("dir") or "") == d]
 
 
 def account_for(dir_: str, account: Optional[str], bin_dir: Path, run: Runner = _run) -> Optional[str]:
-    """Conta da sessão: a do processo, ou a da conversa mais recente da pasta (claude-last --projects)."""
+    """Account of the session: that of the process, or that of the most recent conversation of the folder
+    (claude-last --projects)."""
     if account and account != "?":
         return account
     try:
@@ -174,10 +175,11 @@ def convert(
     others: Optional[List[dict]] = None,
     **close_kw,
 ) -> dict:
-    """Converte uma entrada de terminal_sessions(). Devolve {ok, label, how, msg}.
+    """Converts an entry of terminal_sessions(). Returns {ok, label, how, msg}.
 
-    `others`: outros claude interativos vivos na mesma pasta. Com eles, a conversa mais recente da
-    pasta pode ser a de outro processo ainda aberto, então a conversão é recusada sem fechar nada.
+    `others`: other live interactive claudes in the same folder. With them, the most recent conversation
+    of the folder may belong to another process that is still open, so the conversion is refused without
+    closing anything.
     """
     tmux = tmux or Tmux()
     bin_dir = bin_dir or config.bin_dir()
@@ -190,8 +192,8 @@ def convert(
             "ok": False,
             "label": label,
             "how": "",
-            "msg": f"há outro claude aberto nesta pasta (tmux {names}); feche-o ou converta-o antes, "
-            "senão não dá para saber qual conversa é de qual",
+            "msg": f"there is another claude open in this folder (tmux {names}); close it or convert it "
+            "first, otherwise there is no way to tell which conversation belongs to which",
         }
     acc = account_for(dir_, entry.get("account"), bin_dir)
     if not acc:
@@ -199,7 +201,7 @@ def convert(
             "ok": False,
             "label": label,
             "how": "",
-            "msg": f"não descobri a conta da sessão {sess}; passe --account",
+            "msg": f"could not find out the account of session {sess}; pass --account",
         }
     how = close_claude(tmux, sess, **close_kw)
     if how == "failed":
@@ -207,12 +209,12 @@ def convert(
             "ok": False,
             "label": label,
             "how": how,
-            "msg": f"o claude em {sess} não fechou; nada foi aberto",
+            "msg": f"the claude in {sess} did not close; nothing was opened",
         }
     if tmux.has_session(sess):
-        tmux.kill_session(sess)  # sobrou o shell do alias; a sessão nova é orqs-<pasta>
+        tmux.kill_session(sess)  # the alias's shell was left over; the new session is orqs-<folder>
     try:
         msg = spawn(label, dir_, acc, "resume")
     except RuntimeError as e:
         return {"ok": False, "label": label, "how": how, "msg": str(e)}
-    return {"ok": True, "label": label, "how": how, "msg": f"{msg}; conta {acc}, pasta {dir_}"}
+    return {"ok": True, "label": label, "how": how, "msg": f"{msg}; account {acc}, folder {dir_}"}

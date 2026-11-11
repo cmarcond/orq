@@ -20,7 +20,7 @@ const data = {
   ],
 };
 
-test('usageTableHtml: um bloco por conta com a cota, linhas de consumo, resto e parados', () => {
+test('usageTableHtml: one block per account with the quota, usage rows, the rest and the idle ones', () => {
   const html = usageTableHtml(data, { color: () => '#c00' });
   assert.equal((html.match(/<tbody>/g) || []).length, 2);
   assert.match(html, /<i class="sw"[^>]*><\/i>Gmail<\/span><span class="q">5h 40% · 7d 52%<\/span>/);
@@ -28,25 +28,25 @@ test('usageTableHtml: um bloco por conta com a cota, linhas de consumo, resto e 
   assert.match(html, /<td>acervo<\/td>|>acervo<\/td>/);
   assert.match(html, />9×</);
   assert.match(html, /width:56%/);
-  assert.match(html, />≈6,1</);
-  assert.match(html, />\?</); // ≈pts sem calibração
+  assert.match(html, />≈6\.1</);
+  assert.match(html, />\?</); // ≈pts without calibration
   assert.match(html, />tmux claude-gmail-acervo</);
-  assert.match(html, /… mais 2/);
-  assert.match(html, />parado<\/td>/);
-  assert.match(html, />há 2 d 3 h</);
-  assert.match(html, /sem consumo na janela/);
+  assert.match(html, /… 2 more/);
+  assert.match(html, />idle<\/td>/);
+  assert.match(html, />2 d 3 h ago</);
+  assert.match(html, /no usage in the window/);
   assert.equal((html.match(/<td class="now">●<\/td>/g) || []).length, 1);
 });
 
-test('usageTableHtml: linhas de agentes abertos viram atalho para a aba', () => {
+test('usageTableHtml: rows of open agents become a shortcut to the tab', () => {
   const html = usageTableHtml(data, { agentFor: (host, cwd) => (host === 'node0' && cwd === '/home/c/acervo' ? 'acervo@node0' : null) });
   assert.equal((html.match(/class="go"/g) || []).length, 1);
-  assert.match(html, /data-l="acervo@node0" title="abrir a aba de acervo@node0"/);
+  assert.match(html, /data-l="acervo@node0" title="open the tab of acervo@node0"/);
 });
 
-test('usageTableHtml: sem contas, sem dados, e escapa texto', () => {
-  assert.match(usageTableHtml({ accounts: [] }), /nenhuma conta/);
-  assert.match(usageTableHtml(null), /nenhuma conta/);
+test('usageTableHtml: no accounts, no data, and escapes text', () => {
+  assert.match(usageTableHtml({ accounts: [] }), /no accounts/);
+  assert.match(usageTableHtml(null), /no accounts/);
   const evil = { accounts: [{ account: 'x', label: '<b>x</b>', quota: {}, groups: [], rest: null, stale: [] }] };
   assert.ok(!usageTableHtml(evil).includes('<b>x</b>'));
 });

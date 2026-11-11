@@ -1,1 +1,1 @@
-"""Supervisor de um agente (orq-agent)."""
+"""Supervisor of one agent (orq-agent)."""

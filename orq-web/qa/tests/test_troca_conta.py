@@ -1,10 +1,10 @@
-"""Troca automática de conta com o claude real, forçada por baixo.
+"""Automatic account switch with the real claude, forced from underneath.
 
-Não dá para esgotar a cota sob demanda, então o QA grava `state: quota` (com a mensagem a reenviar em
-`retry`) no state.json do agente, exatamente o que o supervisor faz ao ver o `rate_limit_event`. Daí em
-diante é tudo de verdade: o servidor escolhe a conta com mais folga, reabre o agente nela na mesma
-conversa (`claude-last --as` copia a conversa) e reenvia a mensagem; o claude novo tem de lembrar o que
-o antigo sabia. Leva uns 2 minutos e gasta um pouco de cota em duas contas."""
+It is not possible to exhaust the quota on demand, so the QA writes `state: quota` (with the message to resend
+in `retry`) in the agent's state.json, exactly what the supervisor does on seeing the `rate_limit_event`. From
+there on everything is real: the server picks the account with the most slack, reopens the agent on it in the
+same conversation (`claude-last --as` copies the conversation) and resends the message; the new claude has to
+remember what the old one knew. Takes about 2 minutes and spends a little quota on two accounts."""
 
 SECRET = "abacaxi-742"
 WATCH_TOASTS = """() => {
@@ -18,28 +18,29 @@ WATCH_TOASTS = """() => {
 def test_troca_de_conta_forcada_continua_a_conversa(orq, agent):
     old = orq.account_of(agent)
     assert old, orq.agents()
-    reply = orq.say(f"Guarde a palavra-chave {SECRET}. Responda apenas: guardado.")
-    assert "guardado" in reply.lower(), reply
+    reply = orq.say(f"Keep the keyword {SECRET}. Answer only: stored.")
+    assert "stored" in reply.lower(), reply
     orq.shot("troca-antes")
 
     orq.page.evaluate(WATCH_TOASTS)
-    orq.force_quota(agent, retry="Qual é a palavra-chave que pedi para guardar? Responda só com ela.")
+    orq.force_quota(agent, retry="What is the keyword I asked you to keep? Answer only with it.")
     new = orq.wait_account_change(agent, old)
     assert new != old
     assert any(
         m.get("label") == agent and m.get("from") == old and m.get("to") == new for m in orq.migrations()
     ), orq.migrations()
 
-    # a mensagem pendente foi reenviada na conta nova, e o claude novo lembra a conversa do antigo
+    # the pending message was resent on the new account, and the new claude remembers the old one's
+    # conversation
     orq.wait_fn(
         "(s) => [...document.querySelectorAll('.chat.on .ai')].some(e => e.innerText.includes(s))",
         arg=SECRET,
         timeout=240000,
     )
-    orq.wait_fn("() => document.getElementById('cstate').textContent.includes('esperando')", timeout=60000)
+    orq.wait_fn("() => document.getElementById('cstate').textContent.includes('waiting')", timeout=60000)
     orq.shot("troca-depois")
     assert SECRET in orq.last_ai(), orq.last_ai()
     toasts = orq.page.evaluate("window.__toasts")
-    assert any("sem cota" in t for t in toasts), toasts
+    assert any("out of quota" in t for t in toasts), toasts
     assert orq.account_of(agent) == new
     assert not orq.problems(), orq.problems()

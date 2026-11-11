@@ -12,32 +12,32 @@ def test_exhausted():
 
 
 def test_slack_sign():
-    assert A.slack(u(30, 50)) == -20  # abaixo do ritmo = folga
+    assert A.slack(u(30, 50)) == -20  # below the pace = slack
     assert A.slack(u(60, 50)) == 10
 
 
 def test_assign_prefers_account_with_more_slack():
     usage = {"a": u(50, 50), "b": u(10, 50)}
     (p,) = A.assign([{"cwd": "/x", "account": None}], usage, ["a", "b"])
-    assert p["acc"] == "b" and p["why"].startswith("mais folga")
+    assert p["acc"] == "b" and p["why"].startswith("most slack")
 
 
 def test_assign_stays_on_conversation_account_when_close():
-    usage = {"a": u(50, 50), "b": u(45, 50)}  # b tem 5 pontos a mais de folga, menos que STAY
+    usage = {"a": u(50, 50), "b": u(45, 50)}  # b has 5 more points of slack, less than STAY
     (p,) = A.assign([{"cwd": "/x", "account": "a"}], usage, ["a", "b"])
-    assert p["acc"] == "a" and p["why"] == "a da conversa"
+    assert p["acc"] == "a" and p["why"] == "the conversation's"
 
 
 def test_assign_moves_when_conversation_account_is_exhausted():
     usage = {"a": u(97, 50), "b": u(10, 50)}
     (p,) = A.assign([{"cwd": "/x", "account": "a"}], usage, ["a", "b"])
-    assert p["acc"] == "b" and p["why"] == "a sem cota"
+    assert p["acc"] == "b" and p["why"] == "a out of quota"
 
 
 def test_running_agents_weigh_against_account():
     usage = {"a": u(10, 50), "b": u(20, 50)}
     (p,) = A.assign([{"cwd": "/x", "account": "a"}], usage, ["a", "b"], running=["a", "a"])
-    assert p["acc"] == "b" and "já tem 2 agente(s)" in p["why"]
+    assert p["acc"] == "b" and "already has 2 agent(s)" in p["why"]
 
 
 def test_spreads_two_projects_over_two_accounts():
@@ -49,7 +49,7 @@ def test_spreads_two_projects_over_two_accounts():
 def test_no_healthy_account():
     usage = {"a": u(99, 50)}
     (p,) = A.assign([{"cwd": "/x", "account": "a"}], usage, ["a"])
-    assert p["acc"] == "a" and p["why"] == "nenhuma conta com folga"
+    assert p["acc"] == "a" and p["why"] == "no account with slack"
 
 
 def test_preassigned_is_kept_and_counts():

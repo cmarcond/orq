@@ -1,6 +1,6 @@
-# orq-web: só o servidor da página. Os agentes rodam nas máquinas, alcançadas por ssh; por isso a
-# imagem não tem claude nem tmux, só Python e o cliente ssh. O usuário dentro do container tem o mesmo
-# uid e home do usuário do host, para montar ~/.ssh e ~/.config com os mesmos caminhos.
+# orq-web: only the server of the page. The agents run on the machines, reached over ssh; that is why
+# the image has neither claude nor tmux, only Python and the ssh client. The user inside the container
+# has the same uid and home as the host user, so that ~/.ssh and ~/.config are mounted at the same paths.
 FROM python:3.12-slim
 ARG UID=1000
 ARG GID=1000

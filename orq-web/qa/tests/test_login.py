@@ -1,8 +1,9 @@
-"""Login por senha, como na página da rede: um segundo orq-web só deste teste sobe na porta ORQ_QA_LOGIN_PORT
-(8791) com ORQ_PASSWORD_FILE apontando para uma senha descartável, e o navegador do QA entra nele. Sem cota:
-sem senha não se entra (página e API); senha errada avisa; cinco erros seguidos bloqueiam por um minuto; a
-senha certa dá o cookie e volta para a página pedida (a do celular, /m, quando foi por ela); sair invalida o
-cookie. Cada teste ganha um servidor novo (sessões e bloqueios ficam em memória)."""
+"""Password login, as on the page on the network: a second orq-web just for this test starts on port
+ORQ_QA_LOGIN_PORT (8791) with ORQ_PASSWORD_FILE pointing at a throwaway password, and the QA browser signs in
+to it. No quota: without the password there is no getting in (page and API); a wrong password warns; five
+errors in a row block for one minute; the right password gives the cookie and returns to the requested page
+(the phone one, /m, when it came through it); logging out invalidates the cookie. Each test gets a new server
+(sessions and blocks are kept in memory)."""
 
 import os
 import signal
@@ -45,11 +46,11 @@ def servidor_com_senha(tmp_path):
             pass
         if p.poll() is not None:
             raise RuntimeError(
-                f"orq-web com senha saiu com {p.returncode}; veja {OUT / f'orq-web-{PORT}.log'}"
+                f"orq-web with password exited with {p.returncode}; see {OUT / f'orq-web-{PORT}.log'}"
             )
         time.sleep(0.3)
     else:
-        raise RuntimeError(f"orq-web com senha não respondeu na porta {PORT}")
+        raise RuntimeError(f"orq-web with password did not respond on port {PORT}")
     try:
         yield BASE
     finally:
@@ -60,7 +61,7 @@ def servidor_com_senha(tmp_path):
 
 
 def api_status(orq, path: str) -> int:
-    """Status da API pelo navegador do QA (mesmos cookies da aba), sem o token."""
+    """Status of the API through the QA browser (same cookies as the tab), without the token."""
     return orq.page.request.get(BASE + path).status
 
 
@@ -74,12 +75,12 @@ def tenta_senha(orq, senha: str) -> None:
 def test_sem_senha_nao_entra(orq, servidor_com_senha):
     orq.page.goto(BASE + "/")
     assert orq.page.url.rstrip("/").endswith("/login"), orq.page.url
-    assert orq.page.title() == "orq · entrar" and orq.page.is_visible("#p")
-    assert api_status(orq, "/api/state") == 403, "a API também exige entrar"
+    assert orq.page.title() == "orq · sign in" and orq.page.is_visible("#p")
+    assert api_status(orq, "/api/state") == 403, "the API also requires signing in"
     orq.shot("login-pagina")
-    orq.page.wait_for_timeout(1500)  # pausas: o vídeo é para uma pessoa conferir
-    tenta_senha(orq, "errada")
-    assert "senha incorreta" in orq.page.inner_text("body")
+    orq.page.wait_for_timeout(1500)  # pauses: the video is for a person to check
+    tenta_senha(orq, "wrong")
+    assert "wrong password" in orq.page.inner_text("body")
     assert orq.page.url.rstrip("/").endswith("/login") and api_status(orq, "/api/state") == 403
     orq.shot("login-senha-errada")
     orq.page.wait_for_timeout(1500)
@@ -87,31 +88,31 @@ def test_sem_senha_nao_entra(orq, servidor_com_senha):
 
 def test_cinco_erros_bloqueiam(orq, servidor_com_senha):
     orq.page.goto(BASE + "/")
-    for i in range(5):  # cada erro custa 1 s de espera no servidor; o quinto bloqueia o IP por um minuto
-        tenta_senha(orq, f"errada-{i}")
-        assert "senha incorreta" in orq.page.inner_text("body"), i
-    tenta_senha(orq, SENHA)  # a senha certa não entra enquanto o bloqueio durar
-    assert "muitas tentativas" in orq.page.inner_text("body")
+    for i in range(5):  # each error costs a 1 s wait on the server; the fifth blocks the IP for one minute
+        tenta_senha(orq, f"wrong-{i}")
+        assert "wrong password" in orq.page.inner_text("body"), i
+    tenta_senha(orq, SENHA)  # the right password does not get in while the block lasts
+    assert "too many attempts" in orq.page.inner_text("body")
     assert api_status(orq, "/api/state") == 403
     orq.shot("login-bloqueado")
     orq.page.wait_for_timeout(2000)
 
 
 def test_entra_pelo_celular_e_sai(orq, servidor_com_senha):
-    orq.page.goto(BASE + "/m")  # pedida pela página do celular: o login volta para ela
+    orq.page.goto(BASE + "/m")  # requested through the phone page: the login returns to it
     assert orq.page.url.endswith("/login?next=/m"), orq.page.url
     tenta_senha(orq, SENHA)
-    assert orq.page.url.rstrip("/").endswith("/m") and orq.page.title() == "orq · celular", orq.page.url
+    assert orq.page.url.rstrip("/").endswith("/m") and orq.page.title() == "orq · phone", orq.page.url
     orq.page.wait_for_selector("#tabs .tab.plus", timeout=20000)
-    assert api_status(orq, "/api/state") == 200, "o cookie vale para a API"
+    assert api_status(orq, "/api/state") == 200, "the cookie is valid for the API"
     orq.shot("login-entrou-celular")
     orq.page.wait_for_timeout(1500)
-    orq.page.goto(BASE + "/")  # a página normal abre com o mesmo cookie, sem pedir senha de novo
+    orq.page.goto(BASE + "/")  # the normal page opens with the same cookie, no password asked again
     orq.page.wait_for_selector("#tabs .tab.plus", timeout=20000)
     assert orq.page.title() == "orq"
     orq.shot("login-entrou")
     orq.page.wait_for_timeout(1500)
-    # sair: o cookie deixa de valer
+    # log out: the cookie stops being valid
     orq.page.evaluate("() => fetch('/logout', { method: 'POST' })")
     orq.page.wait_for_timeout(500)
     orq.page.goto(BASE + "/")

@@ -1,4 +1,4 @@
-"""Conjuntos (orqweb/server/sets.py): formato, validação, catálogo em disco, conflitos, plano e fotografia."""
+"""Sets (orqweb/server/sets.py): format, validation, catalog on disk, conflicts, plan and snapshot."""
 
 import json
 
@@ -39,7 +39,7 @@ def test_validate_normalizes_defaults_and_strips():
     assert a1["pasta"] == "~/Projects/kaggle" and a1["modo"] == "resume" and a1["tarefa"] == ""
     assert a2["conta"] is None and a2["modo"] == "new" and a2["prompt"] == ""
     assert out["lider"] == {"receita": "professor-executores", "prompt": "chefe", "tarefa": "coordene"}
-    # sem líder, sem permissão, receita padrão quando `lider` vem vazio
+    # no leader, no permission, default recipe when `lider` comes empty
     d = good()
     del d["lider"], d["permissao"]
     out = sets.validate(d, HOSTS, ACCS, RECIPES)
@@ -52,23 +52,23 @@ def test_validate_normalizes_defaults_and_strips():
     "mutate, needle",
     [
         (lambda d: d.update(nome=""), "`nome`"),
-        (lambda d: d.update(extra=1), "campo desconhecido: extra"),
+        (lambda d: d.update(extra=1), "unknown field: extra"),
         (lambda d: d.update(permissao="tudo"), "`permissao`"),
         (lambda d: d.update(agentes=[]), "`agentes`"),
         (lambda d: d.update(agentes="x"), "`agentes`"),
-        (lambda d: d["agentes"].append("x"), "agente 3: precisa ser um objeto"),
+        (lambda d: d["agentes"].append("x"), "agent 3: must be an object"),
         (lambda d: d["agentes"][0].update(maquina="marte"), "`maquina` 'marte'"),
         (lambda d: d["agentes"][0].update(pasta=""), "`pasta`"),
         (lambda d: d["agentes"][0].update(modo="talvez"), "`modo`"),
         (lambda d: d["agentes"][0].update(conta="ninguem"), "`conta` 'ninguem'"),
-        (lambda d: d["agentes"][0].update(cor="azul"), "agente 1: campo desconhecido: cor"),
+        (lambda d: d["agentes"][0].update(cor="azul"), "agent 1: unknown field: cor"),
         (
             lambda d: d["agentes"].append({"maquina": "server0", "pasta": "/home/x/Projects/kaggle"}),
-            "repetido",
+            "repeated",
         ),
         (lambda d: d.update(lider="prof"), "`lider`"),
         (lambda d: d["lider"].update(receita="nao-existe"), "`receita` 'nao-existe'"),
-        (lambda d: d["lider"].update(cor="x"), "lider: campo desconhecido"),
+        (lambda d: d["lider"].update(cor="x"), "lider: unknown field"),
     ],
 )
 def test_validate_reports_each_problem(mutate, needle):
@@ -151,7 +151,7 @@ def test_plan_gives_unique_labels_and_assigns_accounts_for_the_whole_set():
     usage = {"gmail": {"7d": 10, "7d_pace": 50}, "work3": {"7d": 40, "7d_pace": 50}}
     items = sets.plan(d, {"kaggle@server0"}, usage, ACCS, [])
     assert [it["label"] for it in items] == ["kaggle-2@server0", "paper@node3"]
-    assert items[0]["acc"] == "work3" and items[0]["why"] == "fixa no conjunto"
+    assert items[0]["acc"] == "work3" and items[0]["why"] == "fixed in the set"
     assert items[1]["acc"] == "gmail" and items[1]["mode"] == "new" and items[1]["tarefa"] == "comece"
     assert (
         items[0]["prompt"] == "modelo"
@@ -173,7 +173,7 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
     live = [
         agent("a@laptop", "laptop", "/p/a", permission="auto", role="sou o a", set="velho"),
         agent("b@server0", "server0", "/p/b", permission="auto"),
-        agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor"),  # sem `pipeline`
+        agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor"),  # no `pipeline`
         agent("morto@laptop", "laptop", "/p/m", state="closed"),
         {"label": "t@laptop", "host": "laptop", "dir": "/t", "state": "waiting", "kind": "term"},
     ]
@@ -185,7 +185,7 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
         {"maquina": "laptop", "pasta": "/p/a", "modo": "resume", "conta": "gmail", "prompt": "sou o a"},
         {"maquina": "server0", "pasta": "/p/b", "modo": "resume", "conta": "gmail"},
     ]
-    # sem vínculo, a receita de um executor só; o b vem primeiro porque é ele que tem níveis
+    # without a link, the single-executor recipe; b comes first because it is the one with levels
     live2 = [
         agent("a@laptop", "laptop", "/p/a", permission="auto"),
         agent("b@server0", "server0", "/p/b", permission="manual"),
@@ -196,11 +196,11 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
     assert (
         [a["maquina"] for a in out["agentes"]] == ["server0", "laptop"] and avisos and "permiss" in avisos[0]
     )
-    # dois professores: só o primeiro vira líder, com aviso
+    # two teachers: only the first becomes leader, with a warning
     live3 = live2 + [agent("a~professor@laptop", "laptop", "/p/a", parent="a@laptop", level="professor")]
     out, avisos = sets.snapshot(live3, [], cat)
     assert out["agentes"][0]["maquina"] == "laptop" and any("b@server0" in w for w in avisos)
-    # nível que gravou a receita: ela vale, sem inferir (mesmo sem vínculo de pé)
+    # level that recorded the recipe: it counts, without inferring (even with no link up)
     live4 = [
         agent("a@laptop", "laptop", "/p/a"),
         agent(
@@ -213,7 +213,7 @@ def test_snapshot_from_open_tabs_with_levels_and_links():
         ),
     ]
     assert sets.snapshot(live4, [], cat)[0]["lider"] == {"receita": "professor-executores"}
-    # nada aberto: conjunto vazio, sem líder
+    # nothing open: empty set, no leader
     out, avisos = sets.snapshot([], [], cat)
     assert out["agentes"] == [] and "lider" not in out
 
